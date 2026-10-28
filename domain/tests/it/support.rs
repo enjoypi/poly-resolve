@@ -69,6 +69,15 @@ impl Reader for Rows {
                     (row.occurred_at_ms(), row.key()) < (mark.occurred_at_ms(), mark.key())
                 })
             })
+            .filter(|row| {
+                let window = query.window();
+                window
+                    .since()
+                    .is_none_or(|since| row.occurred_at_ms() >= since)
+                    && window
+                        .until()
+                        .is_none_or(|until| row.occurred_at_ms() < until)
+            })
             .take(limit)
             .cloned()
             .collect())

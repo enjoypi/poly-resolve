@@ -4,8 +4,9 @@ use adapters::store::Archive;
 use serde_json::json;
 
 use crate::support::{
-    BAD_SCHEMA, FAILURE, FRAGMENTS, MANUAL, NOON, SEALED, Sandbox, TEXT_STAMP, barred, envelope,
-    event, feed, fragment_event, fragment_page, keys, page, run_for, run_logged, sealed, texts,
+    BAD_SCHEMA, FAILURE, FRAGMENTS, MANUAL, NOON, REFUSE_INSERT, REFUSE_UPDATE, SEALED, Sandbox,
+    TEXT_STAMP, barred, envelope, event, feed, fragment_event, fragment_page, keys, page, run_for,
+    run_logged, sealed, sealed_envelope, sealed_page, stored, texts,
 };
 
 const ASSEMBLED: &str = "title\nalice:hello\nbob:world";
@@ -13,8 +14,10 @@ const FORWARDS: &str = r#"{"messages":[{"messageId":"m1","forwarded":[{"sender":
 const HUGE: u64 = 9_000_000_000_000_000_000;
 const LONG: u64 = 20_000;
 const LONG_BACKOFF: u64 = 60_000;
-const SHORT: u64 = 2_500;
+const SHORT: u64 = 4_000;
 const SHORT_CHILD: u64 = 100;
+
+type Case = (&'static str, u32, [&'static str; 3]);
 
 #[tokio::test]
 async fn event_fragments_are_assembled_from_forwards() {
@@ -74,9 +77,28 @@ async fn failed_decrypt_keeps_ciphertext() {
         let (code, logs) = run_logged(&config, SHORT).await.unwrap();
         assert_eq!(code, 0);
         assert_eq!(texts(&sandbox.database()).unwrap(), [SEALED]);
-        assert!(logs.contains("event decrypt failed"));
+        assert!(logs.contains("message decrypt failed"));
         assert!(!logs.contains(SEALED));
     }
+}
+
+#[tokio::test]
+async fn failed_heal_keeps_ciphertext() {
+    let sandbox = Sandbox::new("ingest-heal-fail").unwrap();
+    let store = Archive::open(&sandbox.database()).unwrap();
+    assert_eq!(store.save_event(&sealed_envelope("k1", NOON)).unwrap(), 1);
+    let barred = stored("k2", NOON + 5, "x||1||2||3");
+    assert_eq!(store.save_event(&barred).unwrap(), 1);
+    let config = sandbox
+        .config(&json!({"dws": {"env": {"FAKE_DECRYPT": "fail"}}}))
+        .unwrap();
+    let (code, logs) = run_logged(&config, SHORT).await.unwrap();
+    assert_eq!(code, 0);
+    assert_eq!(texts(&sandbox.database()).unwrap(), [SEALED, "x||1||2||3"]);
+    let args = sandbox.read("decrypt-args.txt").unwrap();
+    assert_eq!(args.trim(), format!("decrypt --text={SEALED}"));
+    assert!(logs.contains("message decrypt failed"));
+    assert!(!logs.contains("stored message decrypted"));
 }
 
 #[tokio::test]
@@ -94,6 +116,24 @@ async fn failed_lookup_keeps_fragments() {
             .unwrap();
         assert_eq!(run_for(&config, SHORT).await.unwrap(), 0);
         assert_eq!(texts(&sandbox.database()).unwrap(), [FRAGMENTS]);
+    }
+}
+
+#[tokio::test]
+async fn heal_respects_limit() {
+    let cases: [Case; 2] = [
+        ("ingest-heal-one", 1, [SEALED, SEALED, "CLEARTEXT"]),
+        ("ingest-heal-two", 2, [SEALED, "CLEARTEXT", "CLEARTEXT"]),
+    ];
+    for (name, limit, expected) in cases {
+        let sandbox = Sandbox::new(name).unwrap();
+        let store = Archive::open(&sandbox.database()).unwrap();
+        for (key, millis) in [("k1", NOON), ("k2", NOON + 5), ("k3", NOON + 10)] {
+            assert_eq!(store.save_event(&sealed_envelope(key, millis)).unwrap(), 1);
+        }
+        let config = sandbox.config(&json!({"heal_limit": limit})).unwrap();
+        assert_eq!(run_for(&config, SHORT).await.unwrap(), 0);
+        assert_eq!(texts(&sandbox.database()).unwrap(), expected);
     }
 }
 
@@ -259,9 +299,23 @@ async fn sealed_event_is_decrypted_before_storing() {
     assert_eq!(texts(&sandbox.database()).unwrap(), ["CLEARTEXT", "hello"]);
     let args = sandbox.read("decrypt-args.txt").unwrap();
     assert_eq!(args.trim(), format!("decrypt --text={SEALED}"));
-    assert!(logs.contains("event decrypted"));
+    assert!(logs.contains("message decrypted"));
     assert!(!logs.contains(SEALED));
     assert!(!logs.contains("CLEARTEXT"));
+}
+
+#[tokio::test]
+async fn sealed_page_message_is_decrypted_before_storing() {
+    let sandbox = Sandbox::new("ingest-decrypt-page").unwrap();
+    sandbox.write("pull.json", &sealed_page(&["m1"])).unwrap();
+    let config = sandbox.config(&json!({})).unwrap();
+    let (code, logs) = run_logged(&config, SHORT).await.unwrap();
+    assert_eq!(code, 0);
+    assert_eq!(texts(&sandbox.database()).unwrap(), ["CLEARTEXT"]);
+    let args = sandbox.read("decrypt-args.txt").unwrap();
+    assert_eq!(args.trim(), format!("decrypt --text={SEALED}"));
+    assert!(logs.contains("message decrypted"));
+    assert!(!logs.contains(SEALED));
 }
 
 #[tokio::test]
@@ -300,6 +354,18 @@ async fn stop_during_decrypt_ends_run() {
 }
 
 #[tokio::test]
+async fn stop_during_heal_ends_run() {
+    let sandbox = Sandbox::new("ingest-heal-stop").unwrap();
+    let store = Archive::open(&sandbox.database()).unwrap();
+    assert_eq!(store.save_event(&sealed_envelope("k1", NOON)).unwrap(), 1);
+    let config = sandbox
+        .config(&json!({"dws": {"env": {"FAKE_DECRYPT": "slow"}}}))
+        .unwrap();
+    assert_eq!(run_for(&config, SHORT).await.unwrap(), 0);
+    assert_eq!(texts(&sandbox.database()).unwrap(), [SEALED]);
+}
+
+#[tokio::test]
 async fn stop_during_lookup_ends_run() {
     let sandbox = Sandbox::new("ingest-lookup-stop").unwrap();
     sandbox
@@ -307,6 +373,17 @@ async fn stop_during_lookup_ends_run() {
         .unwrap();
     let config = sandbox
         .config(&json!({"dws": {"env": {"FAKE_LOOKUP": "slow"}}}))
+        .unwrap();
+    assert_eq!(run_for(&config, SHORT).await.unwrap(), 0);
+    assert_eq!(keys(&sandbox.database()).unwrap(), Vec::<String>::new());
+}
+
+#[tokio::test]
+async fn stop_during_page_decrypt_ends_run() {
+    let sandbox = Sandbox::new("ingest-page-decrypt-stop").unwrap();
+    sandbox.write("pull.json", &sealed_page(&["m1"])).unwrap();
+    let config = sandbox
+        .config(&json!({"dws": {"env": {"FAKE_DECRYPT": "slow"}}}))
         .unwrap();
     assert_eq!(run_for(&config, SHORT).await.unwrap(), 0);
     assert_eq!(keys(&sandbox.database()).unwrap(), Vec::<String>::new());
@@ -335,8 +412,17 @@ async fn stop_during_pull_ends_run() {
 #[tokio::test]
 async fn store_failure_is_fatal_for_events() {
     let sandbox = Sandbox::new("ingest-store-events").unwrap();
-    sandbox.seed(BAD_SCHEMA).unwrap();
+    drop(Archive::open(&sandbox.database()).unwrap());
+    sandbox.seed(REFUSE_INSERT).unwrap();
     sandbox.write("listen.txt", &feed(&[event("m1")])).unwrap();
+    let config = sandbox.config(&json!({})).unwrap();
+    assert_eq!(run_for(&config, LONG).await.unwrap(), FAILURE);
+}
+
+#[tokio::test]
+async fn store_failure_is_fatal_for_heal() {
+    let sandbox = Sandbox::new("ingest-store-heal").unwrap();
+    sandbox.seed(BAD_SCHEMA).unwrap();
     let config = sandbox.config(&json!({})).unwrap();
     assert_eq!(run_for(&config, LONG).await.unwrap(), FAILURE);
 }
@@ -344,8 +430,19 @@ async fn store_failure_is_fatal_for_events() {
 #[tokio::test]
 async fn store_failure_is_fatal_for_pages() {
     let sandbox = Sandbox::new("ingest-store-pages").unwrap();
-    sandbox.seed(BAD_SCHEMA).unwrap();
+    drop(Archive::open(&sandbox.database()).unwrap());
+    sandbox.seed(REFUSE_INSERT).unwrap();
     sandbox.write("pull.json", &page(&["m1"], None)).unwrap();
+    let config = sandbox.config(&json!({})).unwrap();
+    assert_eq!(run_for(&config, LONG).await.unwrap(), FAILURE);
+}
+
+#[tokio::test]
+async fn store_failure_is_fatal_for_replace() {
+    let sandbox = Sandbox::new("ingest-store-replace").unwrap();
+    let store = Archive::open(&sandbox.database()).unwrap();
+    assert_eq!(store.save_event(&sealed_envelope("k1", NOON)).unwrap(), 1);
+    sandbox.seed(REFUSE_UPDATE).unwrap();
     let config = sandbox.config(&json!({})).unwrap();
     assert_eq!(run_for(&config, LONG).await.unwrap(), FAILURE);
 }
@@ -365,6 +462,22 @@ async fn store_open_failure_is_fatal() {
         .config(&json!({"store_path": "/nonexistent/dir/store.db"}))
         .unwrap();
     assert_eq!(run_for(&config, LONG).await.unwrap(), FAILURE);
+}
+
+#[tokio::test]
+async fn stored_ciphertext_is_decrypted_on_start() {
+    let sandbox = Sandbox::new("ingest-heal").unwrap();
+    let store = Archive::open(&sandbox.database()).unwrap();
+    assert_eq!(store.save_event(&sealed_envelope("k1", NOON)).unwrap(), 1);
+    assert_eq!(store.save_event(&envelope("k2", NOON + 5)).unwrap(), 1);
+    let config = sandbox.config(&json!({})).unwrap();
+    let (code, logs) = run_logged(&config, SHORT).await.unwrap();
+    assert_eq!(code, 0);
+    assert_eq!(texts(&sandbox.database()).unwrap(), ["CLEARTEXT", "hello"]);
+    let args = sandbox.read("decrypt-args.txt").unwrap();
+    assert_eq!(args.trim(), format!("decrypt --text={SEALED}"));
+    assert!(logs.contains("stored message decrypted"));
+    assert!(!logs.contains(SEALED));
 }
 
 #[tokio::test]

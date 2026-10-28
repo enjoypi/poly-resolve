@@ -3,13 +3,15 @@ use serde::{Deserialize, Serialize};
 
 use crate::AppError;
 use crate::features::Context;
-use crate::inbox::{Mark, Query, Row};
+use crate::inbox::{Mark, Query, Row, Window};
 
 #[derive(Deserialize, JsonSchema)]
 #[schemars(rename = "MessagesListRequest")]
 pub(crate) struct ListRequest {
     cursor: Option<String>,
+    from_ms: Option<u64>,
     limit: Option<u32>,
+    to_ms: Option<u64>,
 }
 
 #[derive(JsonSchema, Serialize)]
@@ -22,13 +24,14 @@ pub(crate) struct ListResponse {
 pub(crate) fn list(req: &ListRequest, context: &Context<'_>) -> Result<ListResponse, AppError> {
     let paging = context.paging();
     let limit = req.limit.unwrap_or_else(|| paging.default_limit());
-    if limit == 0 || limit > paging.max_limit() {
+    let window = Window::new(req.from_ms, req.to_ms);
+    if limit == 0 || limit > paging.max_limit() || !window.is_valid() {
         return Err(AppError::BadRequest);
     }
     let cursor = req.cursor.as_deref().map(Mark::parse).transpose()?;
     let mut items = context
         .reader()
-        .page(&Query::new(cursor, limit.saturating_add(1)))?;
+        .page(&Query::new(cursor, limit.saturating_add(1), window))?;
     let size = usize::try_from(limit).unwrap_or(usize::MAX);
     let more = items.len() > size;
     items.truncate(size);

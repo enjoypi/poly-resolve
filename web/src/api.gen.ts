@@ -478,7 +478,9 @@ export interface components {
         };
         MessagesListRequest: {
             cursor?: string | null;
+            from_ms?: number | null;
             limit?: number | null;
+            to_ms?: number | null;
         };
         MessagesListResponse: {
             items: components["schemas"]["MessagesListItem"][];

@@ -3,3 +3,8 @@ adapters-store-warn:
   最近: 2026-10-28 14:26:10 UTC+8
   计数: 3
   错误片段: '{"level":"WARN","fields":{"message":"messages read failed","error":"unable to open database file: .debug/poly-resolve.db"},"target":"adapters::store"}'
+adapters-ingest-warn:
+  首发: 2026-10-28 16:46:08 UTC+8
+  最近: 2026-10-28 16:46:08 UTC+8
+  计数: 1
+  错误片段: '{"level":"WARN","fields":{"message":"event decrypt failed","len":2027},"target":"adapters::ingest"}'

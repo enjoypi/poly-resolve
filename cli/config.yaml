@@ -40,6 +40,7 @@ ingest:
       args: [chat, message, list-all, --limit, "100", --page-all, --page-limit, "20", --no-reactions, -f, json]
       bin: dws
   failure_exit_code: 6
+  heal_limit: 50
   initial_backfill_ms: 3600000
   lookup_batch: 50
   manual_exit_code: 7
