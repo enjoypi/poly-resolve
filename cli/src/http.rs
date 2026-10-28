@@ -11,13 +11,14 @@ use axum::extract::{Path, State};
 use axum::http::header::CONTENT_TYPE;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse as _, Response};
-use axum::routing::post;
+use axum::routing::{get, post};
 use axum::serve;
 use domain::features::{self, Call, Origin, Target};
 use tokio::net::TcpListener;
 use tokio::time::sleep;
 use tracing::dispatcher::with_default;
 
+use crate::assets;
 use crate::config::Settings;
 use crate::signal::shutdown;
 
@@ -46,9 +47,9 @@ async fn handle(
         header(&headers, USER_HEADER),
     );
     let call = Call::new(origin, Target::new(&feature, &action), &body);
-    let result = with_default(settings.log(), || {
-        features::dispatch(settings.errors(), &call)
-    });
+    let shelf = settings.ingest().shelf();
+    let context = settings.context(&shelf);
+    let result = with_default(settings.log(), || features::dispatch(&context, &call));
     let (status, response) = match result {
         Ok(response) => (StatusCode::OK, response),
         Err(err) => (
@@ -70,6 +71,8 @@ pub(crate) async fn run(listener: TcpListener, settings: Arc<Settings>) -> (u8, 
         .map_or_default(|addr| addr.to_string());
     with_default(settings.log(), || tracing::info!(addr, "listening"));
     let app = Router::new()
+        .route("/", get(assets::index))
+        .route("/{file}", get(assets::file))
         .route("/{feature}/{action}", post(handle))
         .with_state(Arc::clone(&settings));
     let mut server = pin!(

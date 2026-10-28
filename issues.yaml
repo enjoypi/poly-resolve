@@ -1,0 +1,5 @@
+adapters-store-warn:
+  首发: 2026-10-28 14:25:23 UTC+8
+  最近: 2026-10-28 14:26:10 UTC+8
+  计数: 3
+  错误片段: '{"level":"WARN","fields":{"message":"messages read failed","error":"unable to open database file: .debug/poly-resolve.db"},"target":"adapters::store"}'

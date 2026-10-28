@@ -1,7 +1,6 @@
-use domain::features::dispatch;
 use serde_json::{Error, Value, from_str, json};
 
-use crate::support::{cli, errors};
+use crate::support::{Fixture, cli};
 
 const LATER: u64 = 1_783_483_240_000;
 const LINE: &str = r#"{"type":"user_im_message_receive_o2o_all","event_id":"e1","message_id":"m1","conversation_id":"c1","sender":"alice","sender_open_dingtalk_id":"u1","content":"hello","create_time":"2026-07-08 12:00:35","event_time":1783483235983}"#;
@@ -13,8 +12,7 @@ const STAMPED: u64 = 1_783_483_235_983;
 type Reply = Result<Value, u16>;
 
 fn call(action: &str, request: &str) -> Result<Reply, Error> {
-    let errors = errors()?;
-    match dispatch(&errors, &cli("ingest", action, request)) {
+    match Fixture::new()?.dispatch(&cli("ingest", action, request)) {
         Ok(response) => Ok(Ok(from_str(&response)?)),
         Err(err) => Ok(Err(err.status())),
     }

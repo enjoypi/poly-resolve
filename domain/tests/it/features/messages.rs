@@ -1,0 +1,125 @@
+use domain::inbox::{Reader, Row};
+use serde_json::{Error, Value, from_str, json};
+
+use crate::support::{Broken, Fixture, Rows, cli, row};
+
+const FIRST: &str = "10:dingtalk:acct:m1";
+const LATEST: u64 = 30;
+const SECOND: &str = "20:dingtalk:acct:m2";
+const SINGLE: u32 = 1;
+
+type Reply = Result<Value, u16>;
+
+#[test]
+fn bad_cursor_is_rejected() {
+    let rows = newest_first().unwrap();
+    for cursor in ["no-colon", "abc:key", ":key", "-1:key"] {
+        let request = json!({"cursor": cursor}).to_string();
+        assert_eq!(call(&rows, &request).unwrap(), Err(400));
+    }
+}
+
+fn call(reader: &dyn Reader, request: &str) -> Result<Reply, Error> {
+    match Fixture::new()?.dispatch_with(reader, &cli("messages", "list", request)) {
+        Ok(response) => Ok(Ok(from_str(&response)?)),
+        Err(err) => Ok(Err(err.status())),
+    }
+}
+
+#[test]
+fn cursor_key_may_contain_colons() {
+    let rows = newest_first().unwrap();
+    let request = json!({"cursor": SECOND}).to_string();
+    let reply = call(&rows, &request).unwrap().unwrap();
+    assert_eq!(keys(&reply), ["dingtalk:acct:m1"]);
+}
+
+#[test]
+fn empty_store_gives_empty_page() {
+    let reply = call(&Rows::default(), "{}").unwrap().unwrap();
+    assert_eq!(reply, json!({"items": [], "next_cursor": null}));
+}
+
+#[test]
+fn exact_page_has_no_next_cursor() {
+    let rows = newest_first().unwrap();
+    let reply = call(&rows, r#"{"limit":3}"#).unwrap().unwrap();
+    assert_eq!(keys(&reply).len(), 3);
+    assert_eq!(reply.get("next_cursor"), Some(&Value::Null));
+}
+
+#[test]
+fn first_page_uses_default_limit() {
+    let rows = newest_first().unwrap();
+    let reply = call(&rows, "{}").unwrap().unwrap();
+    assert_eq!(keys(&reply), ["dingtalk:acct:m3", "dingtalk:acct:m2"]);
+    assert_eq!(reply.get("next_cursor"), Some(&json!(SECOND)));
+    assert_eq!(
+        reply.pointer("/items/0"),
+        Some(&json!({
+            "account": "acct",
+            "conversation_id": "c1",
+            "key": "dingtalk:acct:m3",
+            "occurred_at_ms": LATEST,
+            "received_at_ms": LATEST,
+            "sender_id": "u1",
+            "sender_name": "alice",
+            "source": "dingtalk",
+            "text": "hello",
+        }))
+    );
+}
+
+#[test]
+fn invalid_request_is_rejected() {
+    let rows = newest_first().unwrap();
+    assert_eq!(call(&rows, "not json").unwrap(), Err(400));
+    assert_eq!(call(&rows, r#"{"limit":"x"}"#).unwrap(), Err(400));
+}
+
+fn keys(reply: &Value) -> Vec<&str> {
+    reply
+        .get("items")
+        .and_then(Value::as_array)
+        .map_or_default(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.get("key").and_then(Value::as_str))
+                .collect()
+        })
+}
+
+#[test]
+fn limit_must_be_within_bounds() {
+    let rows = newest_first().unwrap();
+    assert_eq!(call(&rows, r#"{"limit":0}"#).unwrap(), Err(400));
+    assert_eq!(call(&rows, r#"{"limit":4}"#).unwrap(), Err(400));
+    let reply = call(&rows, r#"{"limit":1}"#).unwrap().unwrap();
+    assert_eq!(keys(&reply), ["dingtalk:acct:m3"]);
+}
+
+fn newest_first() -> Result<Rows, Error> {
+    let rows: Vec<Row> = vec![
+        row("dingtalk:acct:m3", 30)?,
+        row("dingtalk:acct:m2", 20)?,
+        row("dingtalk:acct:m1", 10)?,
+    ];
+    Ok(Rows::new(rows))
+}
+
+#[test]
+fn next_page_follows_cursor() {
+    let rows = newest_first().unwrap();
+    let request = json!({"cursor": SECOND, "limit": SINGLE}).to_string();
+    let reply = call(&rows, &request).unwrap().unwrap();
+    assert_eq!(keys(&reply), ["dingtalk:acct:m1"]);
+    assert_eq!(reply.get("next_cursor"), Some(&Value::Null));
+    let beyond = json!({"cursor": FIRST}).to_string();
+    let last = call(&rows, &beyond).unwrap().unwrap();
+    assert_eq!(keys(&last), Vec::<&str>::new());
+}
+
+#[test]
+fn storage_failure_is_reported() {
+    assert_eq!(call(&Broken, "{}").unwrap(), Err(503));
+}

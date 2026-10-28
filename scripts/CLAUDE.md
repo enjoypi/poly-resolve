@@ -10,7 +10,7 @@
 
 ## check.ts
 
-- 并发跑 `lints.ts --check`、`forbid.ts`、`cargo fmt --all --check`、`cov.ts`、web（`bun install --frozen-lockfile`、`bun x tsc --noEmit`、`bun test`）
+- 并发跑 `lints.ts --check`、`forbid.ts`、`cargo fmt --all --check`、`cov.ts`、web（`bun install --frozen-lockfile`、`bun x tsc --noEmit`、`bun test`、`bun run build`）
 - 成功步骤只打印 `ok 名称`（lints、cov 附末行摘要），失败步骤整段打印输出并滤掉 clippy-driver 超长命令行，任一步失败即非 0 退出
 - 非 TTY 时 `CARGO_TERM_COLOR=never`
 

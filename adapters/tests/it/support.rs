@@ -11,6 +11,8 @@ use std::sync::{LazyLock, Mutex, PoisonError};
 use adapters::config::Settings;
 use adapters::ingest::run;
 use domain::Errors;
+use domain::features::Context;
+use domain::inbox::Paging;
 use rusqlite::Connection;
 use serde_json::{Value, from_str, from_value, json};
 use tokio::time::sleep;
@@ -25,15 +27,17 @@ const BACKFILL: u64 = 3_600_000;
 const BACKOFF_INITIAL: u64 = 5;
 const BACKOFF_MAX: u64 = 20;
 pub(crate) const BAD_SCHEMA: &str = "CREATE TABLE messages (key TEXT PRIMARY KEY, source TEXT, account TEXT, occurred_at_ms INTEGER);";
+pub(crate) const BAD_STAMP: &str = "CREATE TABLE messages (key TEXT PRIMARY KEY, source TEXT, account TEXT, conversation_id TEXT, sender_id TEXT, sender_name TEXT, text TEXT, occurred_at_ms TEXT, received_at_ms INTEGER, raw TEXT); INSERT INTO messages VALUES ('k', 'dingtalk', 'acct', 'c', 'u', 'n', 't', 'abc', 1, '{}');";
 pub(crate) const BIN: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/it/fixtures/fake-dws.sh");
 const CHILD_EXIT: u64 = 300;
-const ERRORS: &str = r#"{"bad_request":{"code":"invalid","exit_code":13},"unknown_action":{"code":"missing","exit_code":14}}"#;
+const ERRORS: &str = r#"{"bad_request":{"code":"invalid","exit_code":13},"storage":{"code":"unavailable","exit_code":15},"unknown_action":{"code":"missing","exit_code":14}}"#;
 pub(crate) const FAILURE: u8 = 7;
 pub(crate) const MANUAL: u8 = 6;
 const MANUAL_CODES: [i32; 2] = [2, 4];
 pub(crate) const NOON: u64 = 1_783_483_235_000;
 const OFFSET: i16 = 480;
 const OVERLAP: u64 = 1_000;
+const PAGING: &str = r#"{"default":2,"max":3}"#;
 pub(crate) const TEXT_STAMP: &str = "CREATE TABLE messages (key TEXT PRIMARY KEY, source TEXT, account TEXT, occurred_at_ms TEXT); INSERT INTO messages VALUES ('k', 'dingtalk', 'acct', 'abc');";
 
 #[derive(Clone, Default)]
@@ -220,8 +224,11 @@ pub(crate) async fn run_logged(config: &Settings, millis: u64) -> Fallible<(u8, 
         .with_writer(capture.clone())
         .finish();
     let errors: Errors = from_str(ERRORS)?;
+    let paging: Paging = from_str(PAGING)?;
+    let shelf = config.shelf();
+    let context = Context::new(&errors, &paging, &shelf);
     let mut stop = Box::pin(sleep(Duration::from_millis(millis)));
-    let code = run(config, &errors, &mut stop)
+    let code = run(config, &context, &mut stop)
         .with_subscriber(subscriber)
         .await;
     Ok((code, capture.text()))

@@ -21,6 +21,29 @@ fn spec_declares_openapi_and_info() {
 }
 
 #[test]
+fn spec_declares_storage_failure_for_messages() {
+    let document = document().unwrap();
+    let statuses = |path: &str| -> Vec<String> {
+        document
+            .pointer(path)
+            .and_then(Value::as_object)
+            .map_or_default(|responses| responses.keys().cloned().collect())
+    };
+    assert_eq!(
+        statuses("/paths/~1messages~1list/post/responses"),
+        ["200", "400", "503"]
+    );
+    assert_eq!(
+        document.pointer("/paths/~1messages~1list/post/responses/503/description"),
+        Some(&json!("storage unavailable"))
+    );
+    assert_eq!(
+        statuses("/paths/~1health~1check/post/responses"),
+        ["200", "400"]
+    );
+}
+
+#[test]
 fn spec_describes_health_check_operation() {
     let header = |name: &str| {
         json!({
@@ -71,7 +94,10 @@ fn spec_lists_schemas() {
             "IngestParsePageResponse",
             "IngestParseRequest",
             "IngestWindowRequest",
-            "IngestWindowResponse"
+            "IngestWindowResponse",
+            "MessagesListItem",
+            "MessagesListRequest",
+            "MessagesListResponse"
         ]
     );
     assert_eq!(

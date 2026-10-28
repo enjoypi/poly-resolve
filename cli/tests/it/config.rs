@@ -55,6 +55,26 @@ async fn missing_ingest_fails() {
 }
 
 #[tokio::test]
+async fn missing_messages_fails() {
+    let yaml = YAML.replace("messages:\n  default: 2\n  max: 3\n", "");
+    let path = config("missing-messages.yaml", &yaml).unwrap();
+    assert_eq!(
+        call(&path, ["health", "check"], "{}").await,
+        ExitCode::from(2)
+    );
+}
+
+#[tokio::test]
+async fn missing_web_dir_fails() {
+    let yaml = YAML.replace("web_dir: /nonexistent/web\n", "");
+    let path = config("missing-web-dir.yaml", &yaml).unwrap();
+    assert_eq!(
+        call(&path, ["health", "check"], "{}").await,
+        ExitCode::from(2)
+    );
+}
+
+#[tokio::test]
 async fn non_loopback_addr_fails() {
     for (name, addr) in [
         ("non-loopback.yaml", "0.0.0.0:0"),
@@ -87,6 +107,16 @@ async fn unknown_field_fails() {
 async fn unknown_ingest_field_fails() {
     let yaml = YAML.replace("  source: dingtalk\n", "  source: dingtalk\n  extra: 1\n");
     let path = config("unknown-ingest-field.yaml", &yaml).unwrap();
+    assert_eq!(
+        call(&path, ["health", "check"], "{}").await,
+        ExitCode::from(2)
+    );
+}
+
+#[tokio::test]
+async fn zero_default_limit_fails() {
+    let yaml = YAML.replace("default: 2", "default: 0");
+    let path = config("zero-limit.yaml", &yaml).unwrap();
     assert_eq!(
         call(&path, ["health", "check"], "{}").await,
         ExitCode::from(2)

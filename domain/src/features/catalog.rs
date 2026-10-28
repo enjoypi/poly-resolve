@@ -3,11 +3,12 @@ use schemars::generate::SchemaSettings;
 use serde_json::{Map, Value};
 
 use super::ROUTES;
-use crate::Body;
+use crate::{AppError, Body};
 
 #[derive(Debug)]
 pub struct Entry {
     action: &'static str,
+    failures: &'static [AppError],
     feature: &'static str,
     request: Value,
     response: Value,
@@ -17,6 +18,11 @@ impl Entry {
     #[must_use = "动作名需写入接口说明"]
     pub const fn action(&self) -> &'static str {
         self.action
+    }
+
+    #[must_use = "错误清单需写入接口说明"]
+    pub const fn failures(&self) -> &'static [AppError] {
+        self.failures
     }
 
     #[must_use = "功能名需写入接口说明"]
@@ -72,6 +78,7 @@ pub fn build() -> Listing {
             let (request, response) = (route.schema)(&mut generator);
             Entry {
                 action: route.action,
+                failures: route.failures,
                 feature: route.feature,
                 request: request.into(),
                 response: response.into(),

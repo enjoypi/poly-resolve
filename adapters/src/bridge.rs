@@ -1,5 +1,5 @@
-use domain::features::{Call, Origin, Target, dispatch};
-use domain::{AppError, Errors};
+use domain::AppError;
+use domain::features::{Call, Context, Origin, Target, dispatch};
 use serde::Deserialize;
 use serde_json::{from_str, json};
 
@@ -10,13 +10,13 @@ const TRANSPORT: &str = "adapters";
 
 pub(crate) struct Bridge<'bridge> {
     config: &'bridge Settings,
-    errors: &'bridge Errors,
+    context: &'bridge Context<'bridge>,
 }
 
 impl<'bridge> Bridge<'bridge> {
     fn call(&self, action: &str, request: &str) -> Result<String, AppError> {
         dispatch(
-            self.errors,
+            self.context,
             &Call::new(
                 Origin::new(TRANSPORT, None, None),
                 Target::new(FEATURE, action),
@@ -25,8 +25,8 @@ impl<'bridge> Bridge<'bridge> {
         )
     }
 
-    pub(crate) const fn new(config: &'bridge Settings, errors: &'bridge Errors) -> Self {
-        Self { config, errors }
+    pub(crate) const fn new(config: &'bridge Settings, context: &'bridge Context<'bridge>) -> Self {
+        Self { config, context }
     }
 
     pub(crate) fn parse_event(&self, line: &str, received_at_ms: u64) -> Result<String, AppError> {

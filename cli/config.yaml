@@ -3,10 +3,17 @@ log_level: debug
 serve_exit_code: 1
 shutdown_timeout_exit_code: 5
 shutdown_timeout_ms: 10000
+web_dir: web/dist
+messages:
+  default: 50
+  max: 200
 errors:
   bad_request:
     code: bad_request
     exit_code: 3
+  storage:
+    code: storage
+    exit_code: 10
   unknown_action:
     code: unknown_action
     exit_code: 4

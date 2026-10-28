@@ -6,7 +6,7 @@ const steps = [
   { name: "forbid", summary: false, run: $`bun scripts/forbid.ts` },
   { name: "fmt", summary: false, run: $`cargo fmt --all --check` },
   { name: "cov", summary: true, run: $`bun scripts/cov.ts` },
-  { name: "web", summary: false, run: $`bun install --frozen-lockfile && bun x tsc --noEmit && bun test`.cwd("web") },
+  { name: "web", summary: false, run: $`bun install --frozen-lockfile && bun x tsc --noEmit && bun test && bun run build`.cwd("web") },
 ].map(({ name, summary, run }) => ({ name, summary, run: run.env(env).nothrow().quiet() }));
 const noise = /process didn't exit successfully: `clippy-driver/;
 const clean = (text: string) =>
