@@ -401,6 +401,202 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/triage/ask": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: {
+            parameters: {
+                query?: never;
+                header?: {
+                    "x-session-id"?: string;
+                    "x-user"?: string;
+                };
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["TriageAskRequest"];
+                };
+            };
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TriageAskResponse"];
+                    };
+                };
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ErrorBody"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/triage/brief": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: {
+            parameters: {
+                query?: never;
+                header?: {
+                    "x-session-id"?: string;
+                    "x-user"?: string;
+                };
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["TriageBriefRequest"];
+                };
+            };
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TriageBriefResponse"];
+                    };
+                };
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ErrorBody"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/triage/notice": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: {
+            parameters: {
+                query?: never;
+                header?: {
+                    "x-session-id"?: string;
+                    "x-user"?: string;
+                };
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["TriageNoticeRequest"];
+                };
+            };
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TriageNoticeResponse"];
+                    };
+                };
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ErrorBody"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/triage/score": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: {
+            parameters: {
+                query?: never;
+                header?: {
+                    "x-session-id"?: string;
+                    "x-user"?: string;
+                };
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["TriageScoreRequest"];
+                };
+            };
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TriageScoreResponse"];
+                    };
+                };
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ErrorBody"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -467,9 +663,11 @@ export interface components {
         };
         MessagesListItem: {
             account: string;
+            analysis?: string | null;
             conversation_id: string;
             key: string;
             occurred_at_ms: number;
+            priority?: number | null;
             received_at_ms: number;
             sender_id: string;
             sender_name: string;
@@ -486,6 +684,65 @@ export interface components {
             items: components["schemas"]["MessagesListItem"][];
             next_cursor?: string | null;
         };
+        TriageAskRequest: {
+            cipher_min_length: number;
+            input_max_chars: number;
+            message: components["schemas"]["TriageSubject"];
+            model: string;
+            notify_conversation_id: string;
+            question: components["schemas"]["TriageQuestion"];
+            self_sender_id: string;
+        };
+        TriageAskResponse: {
+            body?: string | null;
+            skip?: components["schemas"]["TriageSkip"] | null;
+        };
+        TriageBriefRequest: {
+            max_chars: number;
+            rows: components["schemas"]["TriageLine"][];
+            template: string;
+            trigger_ms: number;
+            window_ms: number;
+        };
+        TriageBriefResponse: {
+            prompt: string;
+        };
+        TriageLine: {
+            occurred_at_ms: number;
+            sender_id: string;
+            sender_name: string;
+            text: string;
+        };
+        TriageNoticeRequest: {
+            analysis: string;
+            conversation_id: string;
+            max_chars: number;
+            probability: number;
+            template: string;
+        };
+        TriageNoticeResponse: {
+            text: string;
+        };
+        TriageQuestion: {
+            instructions: string;
+            name: string;
+        };
+        TriageScoreRequest: {
+            body: string;
+            name: string;
+            threshold: number;
+        };
+        TriageScoreResponse: {
+            probability: number;
+            verdict: components["schemas"]["TriageVerdict"];
+        };
+        TriageSkip: "empty" | "notice" | "own" | "sealed";
+        TriageSubject: {
+            conversation_id: string;
+            sender_id: string;
+            text: string;
+        };
+        TriageVerdict: "normal" | "urgent";
     };
     responses: never;
     parameters: never;

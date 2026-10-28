@@ -151,6 +151,17 @@ fn serves_http_until_signal() {
     }
 }
 
+#[test]
+fn serves_with_triage_enabled() {
+    let dir = sandbox("serve-triage").unwrap();
+    let yaml = live(&dir).replace("mode: disabled", "mode: enabled");
+    let path = config("serve-triage.yaml", &yaml).unwrap();
+    let server = start(&path).unwrap();
+    let sync = post(&server.addr, ["/health/check", IDENTITY], "{}").unwrap();
+    assert!(sync.starts_with("HTTP/1.1 200"));
+    assert!(stop(server).unwrap());
+}
+
 fn start(config: &str) -> io::Result<Server> {
     let mut child = Guard(
         Command::new(env!("CARGO_BIN_EXE_cli"))

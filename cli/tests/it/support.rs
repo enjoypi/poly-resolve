@@ -30,6 +30,34 @@ errors:
   unknown_action:
     code: missing
     exit_code: 14
+triage:
+  codex: {args: [x], bin: /nonexistent/triage, env: {}, timeout_ms: 1000, vars: {PATH: \"${PATH}\"}}
+  decide: {args: [x], bin: /nonexistent/triage, env: {}, timeout_ms: 1000, vars: {PATH: \"${PATH}\"}}
+  limits:
+    batch: 1
+    handoff_cooldown_ms: 0
+    lookback_ms: 1000
+    max_attempts: 1
+    max_decisions_per_hour: 1
+    max_handoffs_per_hour: 1
+    poll_ms: 10
+    retry_after_ms: 0
+  mode: disabled
+  model: m
+  notice: n
+  notify: {args: [x], bin: /nonexistent/triage, env: {}, timeout_ms: 1000, vars: {PATH: \"${PATH}\"}}
+  notify_conversation_id: \"${HOME}\"
+  notify_target: \"${HOME}\"
+  prompt: p
+  question: {instructions: i, name: urgent}
+  self_sender_id: \"${HOME}\"
+  sizes:
+    context_max_chars: 1000
+    context_messages: 5
+    context_window_ms: 1000
+    input_max_chars: 100
+    result_max_chars: 100
+  threshold: 0.8
 ingest:
   account: acct
   backoff_initial_ms: 5

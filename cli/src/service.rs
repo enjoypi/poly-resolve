@@ -6,6 +6,7 @@ use std::io;
 
 use adapters::ingest::run as ingest_run;
 use adapters::race::Stop;
+use adapters::triage::{Setup, run as triage_run};
 use tokio::net::TcpListener;
 use tracing::instrument::WithSubscriber as _;
 
@@ -25,10 +26,13 @@ pub(crate) async fn collect(settings: &Settings, stop: Stop<'_>) -> u8 {
 
 pub(crate) async fn run(listener: TcpListener, settings: Arc<Settings>) -> Outcome {
     let mut stop = pin!(shutdown());
+    let mut halt = pin!(shutdown());
     let mut collecting = pin!(collect(&settings, &mut stop));
+    let mut working = pin!(work(&settings, &mut halt));
     let mut serving = pin!(http::run(listener, Arc::clone(&settings)));
     let mut collected: Option<u8> = None;
     let mut served: Option<Outcome> = None;
+    let mut worked: Option<()> = None;
     poll_fn(|context| {
         if served.is_none()
             && let Poll::Ready(done) = serving.as_mut().poll(context)
@@ -40,14 +44,26 @@ pub(crate) async fn run(listener: TcpListener, settings: Arc<Settings>) -> Outco
         {
             collected = Some(code);
         }
-        match (collected, served.take()) {
-            (Some(code), _) if code != 0 => Poll::Ready((code, Ok(()))),
-            (Some(_), Some(done)) => Poll::Ready(done),
-            (_, held) => {
+        if worked.is_none() && working.as_mut().poll(context).is_ready() {
+            worked = Some(());
+        }
+        match (collected, worked, served.take()) {
+            (Some(code), _, _) if code != 0 => Poll::Ready((code, Ok(()))),
+            (Some(_), Some(()), Some(done)) => Poll::Ready(done),
+            (_, _, held) => {
                 served = held;
                 Poll::Pending
             }
         }
     })
     .await
+}
+
+async fn work(settings: &Settings, stop: Stop<'_>) {
+    let shelf = settings.ingest().shelf();
+    let context = settings.context(&shelf);
+    let setup = Setup::new(settings.ingest(), settings.triage(), &context);
+    triage_run(setup, stop)
+        .with_subscriber(settings.log().clone())
+        .await;
 }

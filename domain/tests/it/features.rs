@@ -1,6 +1,7 @@
 mod health;
 mod ingest;
 mod messages;
+mod triage;
 
 use domain::features::{Call, Origin, Target};
 use serde::Deserialize;
@@ -129,6 +130,36 @@ fn dispatch_redacts_message_payloads() {
         Some(&json!(format!("redacted:{}", body.len())))
     );
     assert_eq!(line.fields.get("ok"), Some(&json!(true)));
+}
+
+#[test]
+fn dispatch_redacts_triage_payloads() {
+    let capture = Capture::default();
+    let (min, max): (u32, u32) = (32, 100);
+    let request = json!({
+        "cipher_min_length": min,
+        "input_max_chars": max,
+        "message": {"conversation_id": "c1", "sender_id": "u1", "text": "top-secret-body"},
+        "model": "m",
+        "notify_conversation_id": "n1",
+        "question": {"instructions": "i", "name": "urgent"},
+        "self_sender_id": "me",
+    })
+    .to_string();
+    let call = cli("triage", "ask", &request);
+    let body = capture
+        .record(|| Fixture::new().unwrap().dispatch(&call))
+        .unwrap();
+    let line = parse(&capture).unwrap();
+    assert!(!capture.text().contains("top-secret-body"));
+    assert_eq!(
+        line.fields.get("request"),
+        Some(&json!(format!("redacted:{}", request.len())))
+    );
+    assert_eq!(
+        line.fields.get("response"),
+        Some(&json!(format!("redacted:{}", body.len())))
+    );
 }
 
 fn parse(capture: &Capture) -> Result<Line, Error> {

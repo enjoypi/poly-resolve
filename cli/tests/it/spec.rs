@@ -1,6 +1,7 @@
 use std::fs;
 use std::io;
 
+use domain::features::catalog::build;
 use serde_json::{Value, from_slice, json};
 
 use crate::support::spec;
@@ -85,25 +86,11 @@ fn spec_lists_schemas() {
         .pointer("/components/schemas")
         .and_then(Value::as_object)
         .unwrap();
+    let listing = build();
+    let expected: Vec<&str> = listing.schemas().keys().map(String::as_str).collect();
     assert_eq!(
         schemas.keys().map(String::as_str).collect::<Vec<_>>(),
-        [
-            "ErrorBody",
-            "HealthCheckResponse",
-            "IngestAssembleRequest",
-            "IngestChild",
-            "IngestCipherRequest",
-            "IngestCipherResponse",
-            "IngestEnvelope",
-            "IngestParsePageResponse",
-            "IngestParseRequest",
-            "IngestRevealRequest",
-            "IngestWindowRequest",
-            "IngestWindowResponse",
-            "MessagesListItem",
-            "MessagesListRequest",
-            "MessagesListResponse"
-        ]
+        expected
     );
     assert_eq!(
         schemas.get("ErrorBody"),

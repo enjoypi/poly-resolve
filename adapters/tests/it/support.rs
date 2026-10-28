@@ -10,6 +10,8 @@ use std::sync::{LazyLock, Mutex, PoisonError};
 
 use adapters::config::Settings;
 use adapters::ingest::run;
+use adapters::triage::config::Settings as Triage;
+use adapters::triage::{Setup, run as run_triage};
 use domain::Errors;
 use domain::features::Context;
 use domain::inbox::Paging;
@@ -23,18 +25,29 @@ use tracing_subscriber::fmt;
 use tracing_subscriber::fmt::MakeWriter;
 
 static ANCHOR: LazyLock<Dispatch> = LazyLock::new(|| Dispatch::new(NoSubscriber::default()));
+const ATTEMPTS: u32 = 2;
 const BACKFILL: u64 = 3_600_000;
 const BACKOFF_INITIAL: u64 = 5;
 const BACKOFF_MAX: u64 = 20;
 pub(crate) const BAD_SCHEMA: &str = "CREATE TABLE messages (key TEXT PRIMARY KEY, source TEXT, account TEXT, occurred_at_ms INTEGER);";
-pub(crate) const BAD_STAMP: &str = "CREATE TABLE messages (key TEXT PRIMARY KEY, source TEXT, account TEXT, conversation_id TEXT, sender_id TEXT, sender_name TEXT, text TEXT, occurred_at_ms TEXT, received_at_ms INTEGER, raw TEXT); INSERT INTO messages VALUES ('k', 'dingtalk', 'acct', 'c', 'u', 'n', 't', 'abc', 1, '{}');";
+pub(crate) const BAD_STAMP: &str = "CREATE TABLE messages (key TEXT PRIMARY KEY, source TEXT, account TEXT, conversation_id TEXT, sender_id TEXT, sender_name TEXT, text TEXT, occurred_at_ms TEXT, received_at_ms INTEGER, raw TEXT); INSERT INTO messages VALUES ('k', 'dingtalk', 'acct', 'c', 'u', 'n', 't', 'abc', 1, '{}'); CREATE TABLE decisions (key TEXT, probability REAL); CREATE TABLE handoffs (key TEXT, analysis TEXT);";
+const BATCH: u32 = 10;
 pub(crate) const BIN: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/it/fixtures/fake-dws.sh");
+const CAP_CHARS: u32 = 1_000;
 const CHILD_EXIT: u64 = 300;
 const CIPHER_MIN: u32 = 32;
+const CONTEXT_CHARS: u32 = 10_000;
+const CONTEXT_ROWS: u32 = 20;
 const ERRORS: &str = r#"{"bad_request":{"code":"invalid","exit_code":13},"storage":{"code":"unavailable","exit_code":15},"unknown_action":{"code":"missing","exit_code":14}}"#;
+const EXEC_TIMEOUT: u64 = 5_000;
 pub(crate) const FAILURE: u8 = 7;
+const FAKE: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/it/fixtures/fake-triage.sh"
+);
 pub(crate) const FRAGMENTS: &str = "title\nalice:QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo0MTIzNDU2\nQUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo0MTIzNDU2\nQUJDREVGR0hJSktMTU5PUFFSU1RV";
 const HEAL_LIMIT: u32 = 2;
+const LOOKBACK: u64 = 1_000_000_000_000;
 const LOOKUP_BATCH: u32 = 2;
 pub(crate) const MANUAL: u8 = 6;
 const MANUAL_CODES: [i32; 2] = [2, 4];
@@ -42,12 +55,16 @@ pub(crate) const NOON: u64 = 1_783_483_235_000;
 const OFFSET: i16 = 480;
 const OVERLAP: u64 = 1_000;
 const PAGING: &str = r#"{"default":2,"max":3}"#;
+const POLL: u64 = 20;
+const QUOTA: u32 = 100;
 pub(crate) const REFUSE_INSERT: &str =
     "CREATE TRIGGER refuse BEFORE INSERT ON messages BEGIN SELECT RAISE(ABORT, 'refused'); END;";
 pub(crate) const REFUSE_UPDATE: &str =
     "CREATE TRIGGER refuse BEFORE UPDATE ON messages BEGIN SELECT RAISE(ABORT, 'refused'); END;";
 pub(crate) const SEALED: &str = "QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo0MTIzNDU2||2||1||196";
 pub(crate) const TEXT_STAMP: &str = "CREATE TABLE messages (key TEXT PRIMARY KEY, source TEXT, account TEXT, occurred_at_ms TEXT); INSERT INTO messages VALUES ('k', 'dingtalk', 'acct', 'abc');";
+const THRESHOLD: f64 = 0.8;
+const ZERO: u64 = 0;
 
 #[derive(Clone, Default)]
 struct Capture(Arc<Mutex<Vec<u8>>>);
@@ -140,6 +157,51 @@ impl Sandbox {
 
     pub(crate) fn seed(&self, sql: &str) -> Fallible<()> {
         Ok(Connection::open(self.database())?.execute_batch(sql)?)
+    }
+
+    pub(crate) fn triage(&self, patch: &Value) -> Fallible<Triage> {
+        let exec = |role: &str| {
+            json!({
+                "args": [role],
+                "bin": FAKE,
+                "env": {"FAKE_DIR": self.dir.to_string_lossy()},
+                "timeout_ms": EXEC_TIMEOUT,
+                "vars": {"PATH": "${PATH}", "TRIAGE_KEY": "${PATH}", "TRIAGE_URL": "${HOME}"},
+            })
+        };
+        let mut base = json!({
+            "codex": exec("codex"),
+            "decide": exec("decide"),
+            "limits": {
+                "batch": BATCH,
+                "handoff_cooldown_ms": ZERO,
+                "lookback_ms": LOOKBACK,
+                "max_attempts": ATTEMPTS,
+                "max_decisions_per_hour": QUOTA,
+                "max_handoffs_per_hour": QUOTA,
+                "poll_ms": POLL,
+                "retry_after_ms": ZERO,
+            },
+            "mode": "enabled",
+            "model": "m",
+            "notice": "[{probability}] {conversation}|{analysis}",
+            "notify": exec("send"),
+            "notify_conversation_id": "${CARGO_PKG_NAME}",
+            "notify_target": "${CARGO_PKG_VERSION}",
+            "prompt": "ctx:{messages}",
+            "question": {"instructions": "is it urgent", "name": "urgent"},
+            "self_sender_id": "${HOME}",
+            "sizes": {
+                "context_max_chars": CONTEXT_CHARS,
+                "context_messages": CONTEXT_ROWS,
+                "context_window_ms": LOOKBACK,
+                "input_max_chars": CAP_CHARS,
+                "result_max_chars": CAP_CHARS,
+            },
+            "threshold": THRESHOLD,
+        });
+        merge(&mut base, patch);
+        Ok(from_value(base)?)
     }
 
     pub(crate) fn write(&self, file: &str, body: &str) -> io::Result<()> {
@@ -358,4 +420,27 @@ pub(crate) fn texts(database: &Path) -> Fallible<Vec<String>> {
         texts.push(row.get(0)?);
     }
     Ok(texts)
+}
+
+pub(crate) async fn triage_logged(
+    ingest: &Settings,
+    triage: &Triage,
+    millis: u64,
+) -> Fallible<String> {
+    let _: &Dispatch = LazyLock::force(&ANCHOR);
+    let capture = Capture::default();
+    let subscriber = fmt()
+        .json()
+        .with_max_level(Level::DEBUG)
+        .with_writer(capture.clone())
+        .finish();
+    let errors: Errors = from_str(ERRORS)?;
+    let paging: Paging = from_str(PAGING)?;
+    let shelf = ingest.shelf();
+    let context = Context::new(&errors, &paging, &shelf);
+    let mut stop = Box::pin(sleep(Duration::from_millis(millis)));
+    run_triage(Setup::new(ingest, triage, &context), &mut stop)
+        .with_subscriber(subscriber)
+        .await;
+    Ok(capture.text())
 }

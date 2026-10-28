@@ -8,3 +8,13 @@ adapters-ingest-warn:
   最近: 2026-10-28 16:46:08 UTC+8
   计数: 1
   错误片段: '{"level":"WARN","fields":{"message":"event decrypt failed","len":2027},"target":"adapters::ingest"}'
+cli-http-info:
+  首发: 2026-10-28 19:02:02 UTC+8
+  最近: 2026-10-28 19:02:02 UTC+8
+  计数: 1
+  错误片段: '{"level":"INFO","fields":{"message":"listening","addr":"127.0.0.1:15801"},"target":"cli::http"}'
+adapters-ingest-info:
+  首发: 2026-10-28 19:02:02 UTC+8
+  最近: 2026-10-28 19:02:02 UTC+8
+  计数: 1
+  错误片段: '{"level":"INFO","fields":{"message":"reconciled","inserted":0,"skipped":0,"incomplete":false},"target":"adapters::ingest"}'

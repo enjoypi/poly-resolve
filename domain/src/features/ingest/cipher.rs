@@ -16,7 +16,7 @@ fn plain_base64(body: &str) -> bool {
     })
 }
 
-pub(super) fn sealed(text: &str, min_length: usize) -> bool {
+pub(in crate::features) fn sealed(text: &str, min_length: usize) -> bool {
     let parts: Vec<&str> = text.trim().rsplitn(4, "||").collect();
     let Ok([length, kind, version, raw]) = <[&str; 4]>::try_from(parts) else {
         return false;

@@ -46,6 +46,14 @@
 - 游标是不透明字符串 `<occurred_at_ms>:<key>`，按第一个冒号切分（key 自带冒号）；解析失败按请求无效处理
 - `Paging` 字段名不带相同后缀（`struct_field_names`），故为 `default`、`max`
 
+## triage
+
+- 四个路由，请求都带消息内容，均标 `Trace::Redacted`：`ask`（`typed`）请求 `{message{conversation_id,sender_id,text}, model, question{name,instructions}, self_sender_id, notify_conversation_id, input_max_chars, cipher_min_length}`，响应 `{body, skip}`——依次判本人发送（`own`）、通知会话（`notice`）、空正文（`empty`）、仍是密文（`sealed`，复用 `ingest/cipher::sealed`）则只给 `skip`，否则 `body` 为决策请求 JSON（`input` 按字符截断）；`score`（`fallible`）请求 `{body, name, threshold}`，响应 `{probability, verdict}`（`urgent`｜`normal`，概率不低于阈值为 `urgent`），找不到同名答案、概率缺失或不在 [0,1] 按请求无效；`brief`（`typed`，`triage/prompt.rs`）取 `[trigger_ms - window_ms, trigger_ms]` 内的行、旧到新排序、以 JSON 数组按 `max_chars` 丢最旧的，代入模板的 `{messages}`（只替换一次，消息里的占位符保持原样）；`notice` 代入 `{conversation}`、`{probability}`（两位小数）、最后才代入截断后的 `{analysis}`
+- 提示词模板里的“不可信数据”说明在配置里；domain 只做占位符替换
+- handler 按值收请求以满足 `needless_pass_by_value`：`ask`、`brief`、`notice` 用解构或移动字段消耗请求；`json!` 按引用取值不算消耗，需要消耗时用 `Serialize` 结构体
+- `inbox::Row` 增 `priority`（决策概率）、`analysis`（转交的分析结果）两个可空字段，由 adapters 连表填入；其他 reader 缺省为空
+- `ingest::clock`、`ingest/cipher::sealed` 对 `features` 内可见，供 triage 复用
+
 ## 错误
 
 - 错误码与退出码由调用方经 `Errors`（从配置反序列化）传入；退出码用 `NonZeroU8`，拒绝 0

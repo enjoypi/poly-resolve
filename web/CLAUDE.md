@@ -15,7 +15,8 @@
 
 - `index.html` 是入口，`<link>` 引入 `src/style.css`，`src/main.ts` 用 `connect(location.origin)` 调 `renderMessages`；`bun run build` 把产物（含平铺的 css、js）写到 `dist/`（已忽略），由 `cli serve` 的 `web_dir` 托管，不会清旧产物；`scripts/check.ts` 的 web 步骤会跑 build
 - `src/` 保持平铺（contract 测试只扫这一层；改成子目录须同步改扫描范围）；一个模块一件事：`messages.ts`（`renderMessages(client, root, timeZone?)`，只构造 `Board`）、`board.ts`（`Board`：状态、加载、重绘、事件接线）、`table.ts`（表头、表体、tip 内容）、`toolbar.ts`、`status.ts`、`detail.ts`、`tip.ts`、`copy.ts`、`columns.ts`（列推断与显示值）、`view.ts`（排序、筛选，纯函数）、`range.ts`、`markdown.ts`、`links.ts`、`badge.ts`、`stamp.ts`、`config.ts`
-- `config.ts` 是前端唯一的常量源：字段呈现表 `FIELDS`（标签、类型、默认隐藏、回退字段、占位、`look`、`primary`）、详情用的列 `DETAIL`、可点击筛选的列 `PIN`、文案 `TEXT`、`PAGE_LIMIT`（须不超过 `cli/config.yaml` 的 `messages.max`）、`MAX_ROWS`、`MD_LIMIT`、`PLAIN_LIMIT`、`TIP_DELAY_MS`、`COPY_FEEDBACK_MS`、时间范围预设；新增字段不必改它，未登记的字段按值推断（键以 `_ms` 结尾的整数为时间，全数值为数字，其余为文本）并默认显示
+- `api.gen.ts`、`api/openapi.json` 是生成物，不受 512 行限制
+- `config.ts` 是前端唯一的常量源：字段呈现表 `FIELDS`（标签、类型、默认隐藏、回退字段、占位、`look`、`primary`）、详情用的列 `DETAIL`、可点击筛选的列 `PIN`、文案 `TEXT`、`PAGE_LIMIT`（须不超过 `cli/config.yaml` 的 `messages.max`）、`MAX_ROWS`、`MD_LIMIT`、`PLAIN_LIMIT`、`TIP_DELAY_MS`、`COPY_FEEDBACK_MS`、时间范围预设；新增字段不必改它，已登记 `priority`（数字，默认显示）与 `analysis`（默认隐藏，详情的“全部字段”里看）；未登记的字段按值推断（键以 `_ms` 结尾的整数为时间，全数值为数字，其余为文本）并默认显示
 - 数据流：`Board` 持有已加载的行（按 `key` 去重、至多 `MAX_ROWS` 条），每次变化重推断列，列集合变化才重建表头（否则筛选框会丢焦点），其余只重绘表体与状态栏；时间范围经请求的 `from_ms`、`to_ms` 交给服务端，排序与筛选只在已加载行上做；默认顺序即服务端返回的时间降序，不额外排序，排序必须稳定、空值始终在最后、文本用 `Intl.Collator("zh-CN", { numeric: true })`
 - 正文、发送人等一律 `textContent`、`createElement`、`createTextNode` 写入，禁 `innerHTML`；出错只显示错误 `code`，网络失败显示 `unreachable`；空值占位在 `FIELDS` 配置里
 - `markdown.ts`：`plain`（单元格用，去标记压成一行，只取前 `PLAIN_LIMIT` 字符）、`blocks`（详情用，标题、引用、围栏代码块、段落）、`inline`（粗体、行内代码、链接）；超过 `MD_LIMIT` 的正文不格式化；正则全部带长度上限，避免病态输入的二次方耗时；图片写法按链接显示，不加载外链；只认 http、https

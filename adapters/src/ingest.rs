@@ -303,7 +303,7 @@ fn lookup_of(envelope: &Value) -> Option<String> {
         .map(str::to_owned)
 }
 
-fn now_ms() -> u64 {
+pub(crate) fn now_ms() -> u64 {
     let elapsed = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default();

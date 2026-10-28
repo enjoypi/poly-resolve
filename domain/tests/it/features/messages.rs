@@ -58,9 +58,11 @@ fn first_page_uses_default_limit() {
         reply.pointer("/items/0"),
         Some(&json!({
             "account": "acct",
+            "analysis": null,
             "conversation_id": "c1",
             "key": "dingtalk:acct:m3",
             "occurred_at_ms": LATEST,
+            "priority": null,
             "received_at_ms": LATEST,
             "sender_id": "u1",
             "sender_name": "alice",
