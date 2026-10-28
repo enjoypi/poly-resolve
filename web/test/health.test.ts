@@ -4,7 +4,7 @@ import spec from "../../api/openapi.json";
 import { connect } from "../src/client";
 import { renderHealth } from "../src/health";
 
-GlobalRegistrator.register();
+if (!GlobalRegistrator.isRegistered) GlobalRegistrator.register();
 
 const [path = ""] = Object.keys(spec.paths);
 

@@ -91,6 +91,8 @@ allow 只限下列各项，新增须归入其一并写进本节：
 - `absolute_paths`（阈值 1）：多段路径一律 `use` 导入具体项；与本地项重名时改名或用 `as` 别名
 - `too_many_arguments`（阈值 3，含 `self`）、`fn_params_excessive_bools`（阈值 0）：多参数打包为 `Copy` 结构体，字段私有，`new` 不超过 3 个参数，范例 `domain::features::Call`；不传 bool 参数，用 `&io::Result<()>` 等替代
 - `arbitrary_source_item_ordering`：同类条目按名字母序（const 与 static 同组，struct、enum、type 同组，函数同组），impl 紧跟其类型，字段与方法同样按字母序
+- `struct_field_names`：结构体字段不全带相同前后缀（`default_limit`、`max_limit` 改为 `default`、`max`）；`similar_names`：形参名不与 `self` 等相近（`shelf` 与 `self` 相近，改 `reader`）；`unused_trait_names`：只为调方法导入的 trait 写 `as _`
+- `panic_in_result_fn`：返回 `Result` 的测试 helper 不写 assert，改返回 `bool` 或 `String` 由测试函数断言；`large_stack_arrays`：测试里超过 256 字节的数组字面量拆成多次 helper 调用
 - `pub_use`：crate 对外导出用 `pub mod`，不写 `pub use`；`module_name_repetitions`：类型名不重复所在模块名（如 `config::Settings`、`store::Archive`）
 - `result_large_err`（阈值 32 字节）：`rusqlite::Error` 等大错误装箱 `Box<Error>`，需闭包时用 `query_row_and_then` 让闭包返回装箱错误；`future_not_send`：async fn 签名含 `dyn Future` 时加 `+ Send`
 - `arithmetic_side_effects`：整数运算用 `saturating_*`、`checked_*`；`unused_results`、`let_underscore_*`：丢弃返回值用 `drop(…)` 或带类型的 `let _: T`

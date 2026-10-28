@@ -1,4 +1,5 @@
 pub mod features;
+pub mod inbox;
 
 use core::num::NonZeroU8;
 
@@ -10,6 +11,7 @@ use serde_json::to_string;
 #[non_exhaustive]
 pub enum AppError {
     BadRequest,
+    Storage,
     UnknownAction,
 }
 
@@ -28,6 +30,7 @@ impl AppError {
     const fn spec(self, errors: &Errors) -> &ErrorSpec {
         match self {
             Self::BadRequest => &errors.bad_request,
+            Self::Storage => &errors.storage,
             Self::UnknownAction => &errors.unknown_action,
         }
     }
@@ -36,7 +39,17 @@ impl AppError {
     pub const fn status(self) -> u16 {
         match self {
             Self::BadRequest => 400,
+            Self::Storage => 503,
             Self::UnknownAction => 404,
+        }
+    }
+
+    #[must_use = "说明需写入接口说明"]
+    pub const fn summary(self) -> &'static str {
+        match self {
+            Self::BadRequest => "bad request",
+            Self::Storage => "storage unavailable",
+            Self::UnknownAction => "unknown action",
         }
     }
 }
@@ -58,5 +71,6 @@ struct ErrorSpec {
 #[serde(deny_unknown_fields)]
 pub struct Errors {
     bad_request: ErrorSpec,
+    storage: ErrorSpec,
     unknown_action: ErrorSpec,
 }

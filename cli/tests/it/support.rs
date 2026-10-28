@@ -1,19 +1,32 @@
 use std::ffi::OsString;
 use std::fs;
 use std::io::{self, BufReader, Lines};
+use std::path::Path;
 use std::process::{Child, ChildStderr, Command, ExitCode, Output};
 
 use cli::run as run_cli;
 
+pub(crate) const EVENT: &str = r#"{"message_id":"m1","conversation_id":"c1","sender":"alice","sender_open_dingtalk_id":"u1","content":"hello","create_time":"2026-07-08 12:00:35"}"#;
+const FAKE: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../adapters/tests/it/fixtures/fake-dws.sh"
+);
 pub(crate) const YAML: &str = "addr: \"127.0.0.1:0\"
 log_level: debug
 serve_exit_code: 9
 shutdown_timeout_exit_code: 8
 shutdown_timeout_ms: 10000
+web_dir: /nonexistent/web
+messages:
+  default: 2
+  max: 3
 errors:
   bad_request:
     code: invalid
     exit_code: 13
+  storage:
+    code: unavailable
+    exit_code: 15
   unknown_action:
     code: missing
     exit_code: 14
@@ -66,8 +79,23 @@ pub(crate) fn config(name: &str, body: &str) -> io::Result<String> {
     Ok(path)
 }
 
+pub(crate) fn live(dir: &str) -> String {
+    YAML.replace("/nonexistent/dws", FAKE)
+        .replace("FAKE_DIR: /nonexistent", &format!("FAKE_DIR: {dir}"))
+        .replace("/nonexistent/dir/store.db", &format!("{dir}/store.db"))
+}
+
 pub(crate) async fn run(args: &[&str]) -> ExitCode {
     run_cli(args.iter().map(OsString::from).collect()).await
+}
+
+pub(crate) fn sandbox(name: &str) -> io::Result<String> {
+    let dir = format!("{}/{name}", env!("CARGO_TARGET_TMPDIR"));
+    if Path::new(&dir).exists() {
+        fs::remove_dir_all(&dir)?;
+    }
+    fs::create_dir_all(&dir)?;
+    Ok(dir)
 }
 
 pub(crate) fn spec() -> io::Result<Output> {

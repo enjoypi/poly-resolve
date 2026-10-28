@@ -1,8 +1,33 @@
 use domain::features::catalog::build;
-use domain::features::dispatch;
 use serde_json::json;
 
-use crate::support::{cli, errors};
+use crate::support::{Fixture, cli};
+
+type Failure<'name> = (&'name str, Vec<u16>);
+
+#[test]
+fn lists_failures_per_route() {
+    let failures: Vec<Failure<'_>> = build()
+        .entries()
+        .iter()
+        .map(|entry| {
+            (
+                entry.feature(),
+                entry.failures().iter().map(|err| err.status()).collect(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        failures,
+        [
+            ("health", vec![]),
+            ("ingest", vec![]),
+            ("ingest", vec![]),
+            ("ingest", vec![]),
+            ("messages", vec![503])
+        ]
+    );
+}
 
 #[test]
 fn lists_routes_with_schemas() {
@@ -18,7 +43,8 @@ fn lists_routes_with_schemas() {
             ("health", "check"),
             ("ingest", "parse_event"),
             ("ingest", "parse_page"),
-            ("ingest", "window")
+            ("ingest", "window"),
+            ("messages", "list")
         ]
     );
     let entry = listing.entries().first().unwrap();
@@ -47,7 +73,10 @@ fn lists_routes_with_schemas() {
             "IngestParsePageResponse",
             "IngestParseRequest",
             "IngestWindowRequest",
-            "IngestWindowResponse"
+            "IngestWindowResponse",
+            "MessagesListItem",
+            "MessagesListRequest",
+            "MessagesListResponse"
         ]
     );
     assert_eq!(
@@ -62,7 +91,9 @@ fn lists_routes_with_schemas() {
 
 #[test]
 fn unknown_action_of_known_feature_is_rejected() {
-    let errors = errors().unwrap();
-    let err = dispatch(&errors, &cli("health", "nope", "{}")).unwrap_err();
+    let err = Fixture::new()
+        .unwrap()
+        .dispatch(&cli("health", "nope", "{}"))
+        .unwrap_err();
     assert_eq!(err.status(), 404);
 }

@@ -7,6 +7,8 @@
 ## 配置
 
 - `config.rs` 的 `File` 带 `#[serde(deny_unknown_fields)]`；新增字段同时改 `File`、`config.yaml`、`tests/it/support.rs` 的 `YAML` 与 `tests/it/config.rs` 用例
+- `messages`（`domain::inbox::Paging`）与 `web_dir` 写在 `ingest` 段之前（`missing_ingest_fails` 以 `ingest:` 截断 YAML）
+- `Settings::context(&reader)` 构造 `domain::features::Context`；`call`、`handle`、`ingest` 各用 `settings.ingest().shelf()` 作 reader
 - `addr` 为 `SocketAddr`，`config::load` 拒绝非回环 IP（IPv4、IPv6 均支持），`call` 同样校验
 - `${...}` 环境变量展开尚未实现，引入首个 secret 时在 `config::load` 实现
 
@@ -31,7 +33,14 @@
 
 ## ingest
 
+- `service.rs`：`collect(settings, stop)` 由 `ingest` 子命令与 `serve` 共用；`run(listener, settings)` 在同进程里跑 `http::run` 与 `collect`，不 spawn，用 `poll_fn` 轮询两者：先 serve 后 collect（`listening` 是首行日志，测试的 `start` 依赖它）；collect 以非 0 返回（须人工处理、存储失败）即返回该码并丢弃 server，为 0（停机信号）则等 server 排空后返回 server 的结果；server 先完成也要等 collect（让 dws 正常退出，直接丢弃会留下 dws 子进程与订阅）；两种完成顺序都要有用例
 - `ingest --config`：`ingest` 段是 `adapters::config::Settings`，字段与校验在 adapters，cli 只在 `File` 里引用；停机信号取 `signal.rs` 的 `shutdown()`，经 `pin!` 以 `&mut` 传入 `adapters::ingest::run`；日志用 `with_subscriber(settings.log().clone())` 绑定（跨 await 有效，`with_default` 只管同步闭包）
+
+## 页面
+
+- `assets.rs`：`GET /` 取 `web_dir/index.html`，`GET /{file}` 取 `web_dir/<file>`，不经 dispatch、不打日志；`file` 须全由字母、数字、`.`、`_`、`-` 组成且不以 `.` 开头（axum 的 `Path` 已百分号解码，`%2F`、`..` 都在此被拒）；读失败一律 404 空响应体
+- content-type 按扩展名查 `TYPES`（css、html、js），其余 `application/octet-stream`；`bun build` 产物平铺在输出目录，单段路径够用，不支持子目录
+- `GET /a/b` 命中接口路径只收 POST 的路由，故 405；POST 到 `/{file}` 同样 405
 
 ## 停机
 
@@ -50,6 +59,8 @@
 
 - helper 放 `tests/it/support.rs`，临时文件写 `CARGO_TARGET_TMPDIR`
 - 子进程测试用 `CARGO_BIN_EXE_cli`，须以 SIGINT 或 SIGTERM 让进程正常退出（被 kill 的进程不写 profraw）；serve 监听 `127.0.0.1:0`，从 listening 日志取地址
+- serve 随带采集：测试须用 `support::live(dir)` 的配置（假 dws、`dir` 下可写库），默认 YAML 的库目录不存在会令 serve 以 `ingest.failure_exit_code` 退出（`ingest.rs` 的 `serve_stops_when_collection_fails`）；日志含采集行，断言用 `index_of` 按内容找，不数行；503 用例在启动后删库文件制造；排空用例覆盖 collect 先完成，`FAKE_LISTEN: hang` 用例覆盖 server 先完成
+- serve 的页面与消息测试放 `tests/it/serve/`（`assets.rs`、`messages.rs`），作为 `serve.rs` 的子模块以访问其私有的 `Server`、`start`、`get`、`post`、`stop`；页面用临时 `web_dir`（含目录外的 `secret.txt` 验证不可越界）；消息用 `adapters::store::Archive` 播种临时库，同一份配置分别走 `call` 子进程与 HTTP，断言响应一致
 - ingest 测试：假 dws 夹具复用 `../adapters/tests/it/fixtures/fake-dws.sh`，配置里把 `bin`、`FAKE_DIR`、`store_path` 换成临时目录；等到 `event stored` 日志再发 SIGTERM；存储失败用例用默认的不存在目录
 - 停机测试：
   - 在途连接：连接 A 发完整请求头与不足 `Content-Length` 的请求体并保持

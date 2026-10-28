@@ -1,3 +1,5 @@
+use core::iter::once;
+
 use domain::AppError;
 use domain::features::catalog::{Entry, Listing, build};
 use serde_json::{Map, Value, json, to_string_pretty};
@@ -15,22 +17,30 @@ fn header(name: &str) -> Value {
 }
 
 fn operation(entry: &Entry, listing: &Listing) -> Value {
+    let mut responses = Map::new();
+    drop(responses.insert(
+        "200".to_owned(),
+        json!({
+            "content": {"application/json": {"schema": entry.response()}},
+            "description": "success"
+        }),
+    ));
+    for failure in once(AppError::BadRequest).chain(entry.failures().iter().copied()) {
+        drop(responses.insert(
+            failure.status().to_string(),
+            json!({
+                "content": {"application/json": {"schema": listing.error()}},
+                "description": failure.summary()
+            }),
+        ));
+    }
     json!({
         "parameters": [header(SESSION_HEADER), header(USER_HEADER)],
         "requestBody": {
             "content": {"application/json": {"schema": entry.request()}},
             "required": true
         },
-        "responses": {
-            "200": {
-                "content": {"application/json": {"schema": entry.response()}},
-                "description": "success"
-            },
-            AppError::BadRequest.status().to_string(): {
-                "content": {"application/json": {"schema": listing.error()}},
-                "description": "bad request"
-            }
-        }
+        "responses": responses
     })
 }
 

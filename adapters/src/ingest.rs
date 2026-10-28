@@ -4,7 +4,7 @@ use core::time::Duration;
 use std::process::Output;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use domain::Errors;
+use domain::features::Context;
 use tokio::time::sleep;
 
 use crate::bridge::{Bridge, Summary, Window};
@@ -199,11 +199,11 @@ fn now_ms() -> u64 {
     u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
 }
 
-pub async fn run(config: &Settings, errors: &Errors, stop: Stop<'_>) -> u8 {
+pub async fn run(config: &Settings, context: &Context<'_>, stop: Stop<'_>) -> u8 {
     match Archive::open(config.store_path()) {
         Ok(store) => {
             Run {
-                bridge: Bridge::new(config, errors),
+                bridge: Bridge::new(config, context),
                 config,
                 dws: Dws::new(config.dws()),
                 stop,

@@ -1,10 +1,12 @@
 use core::net::SocketAddr;
 use core::num::{NonZeroU8, NonZeroU64};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use adapters::config::Settings as Ingest;
 use domain::Errors;
+use domain::features::Context;
+use domain::inbox::{Paging, Reader};
 use serde::Deserialize;
 use serde_saphyr::from_str;
 use tracing::Dispatch;
@@ -19,9 +21,11 @@ struct File {
     errors: Errors,
     ingest: Ingest,
     log_level: String,
+    messages: Paging,
     serve_exit_code: NonZeroU8,
     shutdown_timeout_exit_code: NonZeroU8,
     shutdown_timeout_ms: NonZeroU64,
+    web_dir: PathBuf,
 }
 
 pub(crate) struct Settings {
@@ -29,14 +33,20 @@ pub(crate) struct Settings {
     errors: Errors,
     ingest: Ingest,
     log: Dispatch,
+    messages: Paging,
     serve_exit_code: u8,
     shutdown_timeout_exit_code: u8,
     shutdown_timeout_ms: u64,
+    web_dir: PathBuf,
 }
 
 impl Settings {
     pub(crate) const fn addr(&self) -> SocketAddr {
         self.addr
+    }
+
+    pub(crate) const fn context<'ctx>(&'ctx self, reader: &'ctx dyn Reader) -> Context<'ctx> {
+        Context::new(&self.errors, &self.messages, reader)
     }
 
     pub(crate) const fn errors(&self) -> &Errors {
@@ -62,6 +72,10 @@ impl Settings {
     pub(crate) const fn shutdown_timeout_ms(&self) -> u64 {
         self.shutdown_timeout_ms
     }
+
+    pub(crate) fn web_dir(&self) -> &Path {
+        &self.web_dir
+    }
 }
 
 pub(crate) fn load(path: &Path) -> Result<Settings, String> {
@@ -83,8 +97,10 @@ pub(crate) fn load(path: &Path) -> Result<Settings, String> {
         errors: file.errors,
         ingest: file.ingest,
         log: log::dispatch(level),
+        messages: file.messages,
         serve_exit_code: file.serve_exit_code.get(),
         shutdown_timeout_exit_code: file.shutdown_timeout_exit_code.get(),
         shutdown_timeout_ms: file.shutdown_timeout_ms.get(),
+        web_dir: file.web_dir,
     })
 }

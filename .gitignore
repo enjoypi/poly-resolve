@@ -4,3 +4,4 @@ rustc-ice-*.txt
 *.profraw
 node_modules
 .debug/
+web/dist

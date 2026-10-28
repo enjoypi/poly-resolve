@@ -1,9 +1,11 @@
 extern crate alloc;
 
 mod args;
+mod assets;
 mod config;
 mod http;
 mod log;
+mod service;
 mod signal;
 mod spec;
 
@@ -14,12 +16,10 @@ use std::ffi::OsString;
 use std::io::{self, Write as _};
 use std::process::ExitCode;
 
-use adapters::ingest::run as ingest_run;
 use clap::Parser as _;
 use domain::features::{self, Call};
 use tokio::net::TcpListener;
 use tracing::dispatcher::with_default;
-use tracing::instrument::WithSubscriber as _;
 
 use crate::args::Command;
 use crate::config::Settings;
@@ -28,9 +28,9 @@ use crate::signal::shutdown;
 const CONFIG_ERROR: u8 = 2;
 
 fn call(settings: &Settings, call: &Call<'_>) -> ExitCode {
-    let result = with_default(settings.log(), || {
-        features::dispatch(settings.errors(), call)
-    });
+    let shelf = settings.ingest().shelf();
+    let context = settings.context(&shelf);
+    let result = with_default(settings.log(), || features::dispatch(&context, call));
     let (code, body) = result.map_or_else(
         |err| {
             (
@@ -71,9 +71,7 @@ fn fail(code: u8, err: &dyn Display) -> ExitCode {
 
 async fn ingest(settings: &Settings) -> ExitCode {
     let mut stop = pin!(shutdown());
-    let code = ingest_run(settings.ingest(), settings.errors(), &mut stop)
-        .with_subscriber(settings.log().clone())
-        .await;
+    let code = service::collect(settings, &mut stop).await;
     emit(code, &Ok(()))
 }
 
@@ -90,7 +88,7 @@ pub async fn run(args: Vec<OsString>) -> ExitCode {
 async fn serve(settings: Settings) -> ExitCode {
     match TcpListener::bind(settings.addr()).await {
         Ok(listener) => {
-            let (code, result) = http::run(listener, Arc::new(settings)).await;
+            let (code, result) = service::run(listener, Arc::new(settings)).await;
             emit(code, &result)
         }
         Err(err) => fail(settings.serve_exit_code(), &err),

@@ -4,6 +4,8 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
+use crate::store::Shelf;
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Dws {
@@ -100,6 +102,11 @@ impl Settings {
 
     pub(crate) const fn reconcile_overlap_ms(&self) -> u64 {
         self.reconcile_overlap_ms
+    }
+
+    #[must_use = "货架需交给 Context"]
+    pub fn shelf(&self) -> Shelf<'_> {
+        Shelf::new(&self.store_path, &self.source, &self.account)
     }
 
     pub(crate) fn source(&self) -> &str {
