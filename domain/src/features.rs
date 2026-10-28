@@ -13,7 +13,7 @@ use serde_json::{Map, Value, from_str, to_string};
 use crate::inbox::{Paging, Reader};
 use crate::{AppError, Errors};
 
-static ROUTES: [Route; 5] = [
+static ROUTES: [Route; 8] = [
     Route {
         action: "check",
         call: |request, _context| typed(request, health::check),
@@ -21,6 +21,22 @@ static ROUTES: [Route; 5] = [
         feature: "health",
         schema: schemas::<Map<String, Value>, health::Response>,
         trace: Trace::Full,
+    },
+    Route {
+        action: "assemble",
+        call: |request, _context| typed(request, ingest::assemble),
+        failures: &[],
+        feature: "ingest",
+        schema: schemas::<ingest::AssembleRequest, ingest::Envelope>,
+        trace: Trace::Redacted,
+    },
+    Route {
+        action: "cipher",
+        call: |request, _context| typed(request, ingest::cipher),
+        failures: &[],
+        feature: "ingest",
+        schema: schemas::<ingest::CipherRequest, ingest::CipherResponse>,
+        trace: Trace::Redacted,
     },
     Route {
         action: "parse_event",
@@ -36,6 +52,14 @@ static ROUTES: [Route; 5] = [
         failures: &[],
         feature: "ingest",
         schema: schemas::<ingest::ParseRequest, ingest::PageResponse>,
+        trace: Trace::Redacted,
+    },
+    Route {
+        action: "reveal",
+        call: |request, _context| typed(request, ingest::reveal),
+        failures: &[],
+        feature: "ingest",
+        schema: schemas::<ingest::RevealRequest, ingest::Envelope>,
         trace: Trace::Redacted,
     },
     Route {

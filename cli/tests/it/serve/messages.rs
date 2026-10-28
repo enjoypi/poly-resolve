@@ -1,10 +1,7 @@
 use core::error::Error;
-use core::time::Duration;
 use std::fs;
-use std::io::{self, Write as _};
 use std::path::Path;
 use std::process::{Command, ExitCode};
-use std::thread::sleep;
 
 use adapters::store::Archive;
 use serde_json::{Value, from_slice, from_str, json};
@@ -12,7 +9,6 @@ use serde_json::{Value, from_slice, from_str, json};
 use super::{post, start, stop};
 use crate::support::{EVENT, YAML, await_log, call, config, live, sandbox};
 
-const ATTEMPTS: u32 = 200;
 const LIMIT: u32 = 2;
 
 type Fallible<T> = Result<T, Box<dyn Error>>;
@@ -112,10 +108,9 @@ fn seeded(name: &str) -> Fallible<String> {
 fn storage_failure_is_service_unavailable() {
     let dir = sandbox("cli-messages-http").unwrap();
     let path = config("cli-messages-http.yaml", &live(&dir)).unwrap();
-    let server = start(&path).unwrap();
-    let store = format!("{dir}/store.db");
-    wait_for(&store).unwrap();
-    fs::remove_file(&store).unwrap();
+    let mut server = start(&path).unwrap();
+    await_log(&mut server.lines, "page rejected").unwrap();
+    fs::remove_file(format!("{dir}/store.db")).unwrap();
     let response = post(&server.addr, ["/messages/list", ""], "{}").unwrap();
     assert!(response.starts_with("HTTP/1.1 503"));
     assert_eq!(body(&response).unwrap(), json!({"code": "unavailable"}));
@@ -129,15 +124,4 @@ async fn storage_failure_uses_configured_exit_code() {
     let path = config("cli-messages-call.yaml", YAML).unwrap();
     let code = call(&path, ["messages", "list"], "{}").await;
     assert_eq!(code, ExitCode::from(15));
-}
-
-fn wait_for(path: &str) -> io::Result<()> {
-    for _ in 0..ATTEMPTS {
-        if Path::new(path).exists() {
-            return Ok(());
-        }
-        sleep(Duration::from_millis(10));
-    }
-    writeln!(io::stderr(), "missing: {path}")?;
-    Err(io::Error::other("file not created"))
 }

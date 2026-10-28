@@ -86,10 +86,11 @@ fn dispatch_redacts_ingest_errors() {
 #[test]
 fn dispatch_redacts_ingest_payloads() {
     let capture = Capture::default();
-    let (offset, received): (i16, u64) = (480, 1);
+    let (offset, received, min): (i16, u64, u32) = (480, 1, 32);
     let request = json!({
         "account": "acct",
         "body": r#"{"message_id":"m1","conversation_id":"c1","content":"top-secret-body","create_time":"2026-07-08 12:00:35"}"#,
+        "cipher_min_length": min,
         "received_at_ms": received,
         "source": "dingtalk",
         "utc_offset_minutes": offset,

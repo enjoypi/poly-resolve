@@ -1,15 +1,17 @@
 use core::fmt::Display;
 use core::pin::pin;
+use core::slice::from_mut;
 use core::time::Duration;
 use std::process::Output;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use domain::features::Context;
+use serde_json::{Value, from_str};
 use tokio::time::sleep;
 
-use crate::bridge::{Bridge, Summary, Window};
+use crate::bridge::{Bridge, Page, Window};
 use crate::config::Settings;
-use crate::dws::{Dws, Listener};
+use crate::dws::{Dws, Found, Listener, children, plaintext};
 use crate::race::{Stop, race};
 use crate::store::Archive;
 
@@ -28,23 +30,55 @@ struct Run<'run> {
 }
 
 impl Run<'_> {
-    fn absorb(&self, body: &str) -> Result<(), u8> {
-        let Ok(page) = self.bridge.parse_page(body, now_ms()) else {
+    async fn absorb(&mut self, body: &str) -> Result<(), u8> {
+        let Ok(parsed) = self.bridge.parse_page(body, now_ms()) else {
             tracing::warn!(len = body.len(), "page rejected");
             return Ok(());
         };
+        let mut page = Page::parse(&parsed);
+        self.assemble(page.envelopes_mut()).await?;
         let inserted = self
             .store
-            .save_page(&page)
+            .save_page(&page.render())
             .map_err(|err| self.fatal(&err))?;
-        let summary = Summary::parse(&page);
         tracing::info!(
             inserted,
-            skipped = summary.skipped(),
-            incomplete = summary.next_cursor().is_some(),
+            skipped = page.skipped(),
+            incomplete = page.next_cursor().is_some(),
             "reconciled"
         );
         Ok(())
+    }
+
+    async fn assemble(&mut self, envelopes: &mut [Value]) -> Result<(), u8> {
+        let ids: Vec<String> = envelopes.iter().filter_map(lookup_of).collect();
+        if ids.is_empty() {
+            return Ok(());
+        }
+        let found = self.looked(&ids).await?;
+        for envelope in envelopes {
+            self.attach(envelope, &found);
+        }
+        Ok(())
+    }
+
+    async fn assembled(&mut self, envelope: String) -> Result<String, u8> {
+        let mut value: Value = from_str(&envelope).unwrap_or_default();
+        if lookup_of(&value).is_none() {
+            return Ok(envelope);
+        }
+        self.assemble(from_mut(&mut value)).await?;
+        Ok(value.to_string())
+    }
+
+    fn attach(&self, envelope: &mut Value, found: &Found) {
+        let assembled = lookup_of(envelope)
+            .and_then(|ident| found.get(&ident))
+            .filter(|kids| !kids.is_empty())
+            .and_then(|kids| self.bridge.assemble(&envelope.to_string(), kids));
+        if let Some(next) = assembled {
+            *envelope = next;
+        }
     }
 
     fn checked(&self, output: &Output) -> Result<Option<String>, u8> {
@@ -70,18 +104,39 @@ impl Run<'_> {
         self.config.failure_exit_code()
     }
 
-    fn ingest(&self, line: &str) -> Result<(), u8> {
+    async fn ingest(&mut self, line: &str) -> Result<(), u8> {
         match self.bridge.parse_event(line, now_ms()) {
-            Ok(envelope) => self
-                .store
-                .save_event(&envelope)
-                .map(|inserted| tracing::debug!(inserted, "event stored"))
-                .map_err(|err| self.fatal(&err)),
+            Ok(parsed) => {
+                let sealed = self.unsealed(parsed).await?;
+                let envelope = self.assembled(sealed).await?;
+                self.store
+                    .save_event(&envelope)
+                    .map(|inserted| tracing::debug!(inserted, "event stored"))
+                    .map_err(|err| self.fatal(&err))
+            }
             Err(rejected) => {
                 tracing::warn!(len = line.len(), error = ?rejected, "event rejected");
                 Ok(())
             }
         }
+    }
+
+    async fn looked(&mut self, ids: &[String]) -> Result<Found, u8> {
+        let mut found = Found::new();
+        for chunk in ids.chunks(self.config.lookup_batch()) {
+            let dws = &self.dws;
+            let mut work = pin!(dws.lookup(chunk));
+            let Some(done) = race(&mut *self.stop, work.as_mut()).await else {
+                return Err(0);
+            };
+            found.extend(done.ok().map_or_default(|output| children(&output)));
+        }
+        tracing::debug!(
+            requested = ids.len(),
+            found = found.len(),
+            "forwards looked up"
+        );
+        Ok(found)
     }
 
     async fn pause(&mut self, millis: u64) -> Option<()> {
@@ -113,7 +168,7 @@ impl Run<'_> {
             };
             match read {
                 Ok(Some(line)) => {
-                    self.ingest(&line)?;
+                    self.ingest(&line).await?;
                     received = received.saturating_add(1);
                 }
                 Ok(None) | Err(_) => return Ok(received),
@@ -128,7 +183,7 @@ impl Run<'_> {
         let Some(body) = self.pull(&window).await? else {
             return Ok(());
         };
-        self.absorb(&body)
+        self.absorb(&body).await
     }
 
     async fn serve(&mut self) -> u8 {
@@ -174,6 +229,24 @@ impl Run<'_> {
         })
     }
 
+    async fn unsealed(&mut self, envelope: String) -> Result<String, u8> {
+        let Some(cipher) = self.bridge.cipher(&envelope) else {
+            return Ok(envelope);
+        };
+        let dws = &self.dws;
+        let mut work = pin!(dws.decrypt(&cipher));
+        let Some(done) = race(&mut *self.stop, work.as_mut()).await else {
+            return Err(0);
+        };
+        if let Some(clear) = done.ok().and_then(|output| plaintext(&output)) {
+            tracing::debug!(len = cipher.len(), "event decrypted");
+            Ok(self.bridge.reveal(&envelope, &clear).unwrap_or(envelope))
+        } else {
+            tracing::warn!(len = cipher.len(), "event decrypt failed");
+            Ok(envelope)
+        }
+    }
+
     fn window(&self) -> Result<Option<Window>, u8> {
         let to_ms = now_ms();
         let mark = self
@@ -190,6 +263,13 @@ impl Run<'_> {
             .map_err(|err| tracing::warn!(error = ?err, "window rejected"))
             .ok())
     }
+}
+
+fn lookup_of(envelope: &Value) -> Option<String> {
+    envelope
+        .get("lookup")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
 }
 
 fn now_ms() -> u64 {

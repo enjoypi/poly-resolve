@@ -35,11 +35,18 @@ ingest:
   backoff_initial_ms: 5
   backoff_max_ms: 20
   child_exit_timeout_ms: 300
+  cipher_min_length: 32
   dws:
+    decrypt:
+      args: [decrypt]
+      bin: /nonexistent/dws
     env:
       FAKE_DIR: /nonexistent
     listen:
       args: [listen]
+      bin: /nonexistent/dws
+    lookup:
+      args: [lookup]
       bin: /nonexistent/dws
     manual_exit_codes: [2, 4]
     pull:
@@ -47,6 +54,7 @@ ingest:
       bin: /nonexistent/dws
   failure_exit_code: 16
   initial_backfill_ms: 3600000
+  lookup_batch: 50
   manual_exit_code: 17
   reconcile_overlap_ms: 1000
   source: dingtalk

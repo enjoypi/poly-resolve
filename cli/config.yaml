@@ -22,11 +22,18 @@ ingest:
   backoff_initial_ms: 3000
   backoff_max_ms: 60000
   child_exit_timeout_ms: 5000
+  cipher_min_length: 32
   dws:
+    decrypt:
+      args: [chat, crypto, decrypt, -f, json]
+      bin: dws
     env:
       DO_NOT_TRACK: "1"
     listen:
       args: [event, consume, user_im_message_receive_o2o_all, user_im_message_receive_group_all, --flatten, -f, ndjson]
+      bin: dws
+    lookup:
+      args: [chat, +messages-mget, --no-reactions, --no-threads, -f, json]
       bin: dws
     manual_exit_codes: [2, 4]
     pull:
@@ -34,6 +41,7 @@ ingest:
       bin: dws
   failure_exit_code: 6
   initial_backfill_ms: 3600000
+  lookup_batch: 50
   manual_exit_code: 7
   reconcile_overlap_ms: 300000
   source: dingtalk

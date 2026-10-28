@@ -1,4 +1,7 @@
+mod cipher;
 mod stamp;
+
+use core::iter::once;
 
 use chrono::DateTime;
 use schemars::JsonSchema;
@@ -20,6 +23,33 @@ const SENDER_KEYS: [&str; 2] = ["sender", "senderName"];
 const STAMP_KEYS: [&str; 2] = ["create_time", "createTime"];
 const TEXT_KEYS: [&str; 2] = ["content", "text"];
 const WINDOW_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
+
+#[derive(Deserialize, JsonSchema)]
+#[schemars(rename = "IngestAssembleRequest")]
+pub(crate) struct AssembleRequest {
+    children: Vec<Child>,
+    envelope: Envelope,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[schemars(rename = "IngestChild")]
+pub(crate) struct Child {
+    sender: String,
+    text: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[schemars(rename = "IngestCipherRequest")]
+pub(crate) struct CipherRequest {
+    envelope: Envelope,
+    min_length: u32,
+}
+
+#[derive(JsonSchema, Serialize)]
+#[schemars(rename = "IngestCipherResponse")]
+pub(crate) struct CipherResponse {
+    cipher: Option<String>,
+}
 
 struct Entry {
     conversation_id: String,
@@ -48,12 +78,13 @@ impl Entry {
     }
 }
 
-#[derive(JsonSchema, Serialize)]
+#[derive(Deserialize, JsonSchema, Serialize)]
 #[schemars(rename = "IngestEnvelope")]
 pub(crate) struct Envelope {
     account: String,
     conversation_id: String,
     key: String,
+    lookup: Option<String>,
     occurred_at_ms: u64,
     raw: String,
     received_at_ms: u64,
@@ -99,6 +130,7 @@ pub(crate) struct PageResponse {
 pub(crate) struct ParseRequest {
     account: String,
     body: String,
+    cipher_min_length: u32,
     received_at_ms: u64,
     source: String,
     utc_offset_minutes: i16,
@@ -106,10 +138,13 @@ pub(crate) struct ParseRequest {
 
 impl ParseRequest {
     fn envelope(&self, entry: Entry) -> Result<Envelope, AppError> {
+        let min_length = usize::try_from(self.cipher_min_length).unwrap_or(usize::MAX);
+        let lookup = cipher::fragments(&entry.text, min_length).then(|| entry.message_id.clone());
         Ok(Envelope {
             account: self.account.clone(),
             conversation_id: entry.conversation_id,
             key: format!("{}:{}:{}", self.source, self.account, entry.message_id),
+            lookup,
             occurred_at_ms: entry.create_time.millis(self.utc_offset_minutes)?,
             raw: entry.raw,
             received_at_ms: self.received_at_ms,
@@ -129,6 +164,13 @@ impl ParseRequest {
 }
 
 #[derive(Deserialize, JsonSchema)]
+#[schemars(rename = "IngestRevealRequest")]
+pub(crate) struct RevealRequest {
+    envelope: Envelope,
+    plaintext: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
 #[schemars(rename = "IngestWindowRequest")]
 pub(crate) struct WindowRequest {
     from_ms: u64,
@@ -143,8 +185,34 @@ pub(crate) struct WindowResponse {
     start: String,
 }
 
+pub(crate) fn assemble(req: AssembleRequest) -> Envelope {
+    let title = req
+        .envelope
+        .text
+        .lines()
+        .next()
+        .unwrap_or_default()
+        .to_owned();
+    let lines = req
+        .children
+        .iter()
+        .map(|child| format!("{}:{}", child.sender, child.text));
+    Envelope {
+        lookup: None,
+        text: once(title).chain(lines).collect::<Vec<_>>().join("\n"),
+        ..req.envelope
+    }
+}
+
 fn bad<T>(_err: T) -> AppError {
     AppError::BadRequest
+}
+
+pub(crate) fn cipher(req: CipherRequest) -> CipherResponse {
+    let min_length = usize::try_from(req.min_length).unwrap_or(usize::MAX);
+    CipherResponse {
+        cipher: Some(req.envelope.text).filter(|text| cipher::sealed(text, min_length)),
+    }
 }
 
 fn clock(millis: u64, offset_minutes: i16) -> Result<String, AppError> {
@@ -189,6 +257,13 @@ fn pick(map: &Map<String, Value>, keys: &[&str]) -> Option<String> {
     keys.iter()
         .find_map(|key| map.get(*key).and_then(Value::as_str))
         .map(str::to_owned)
+}
+
+pub(crate) fn reveal(req: RevealRequest) -> Envelope {
+    Envelope {
+        text: req.plaintext,
+        ..req.envelope
+    }
 }
 
 pub(crate) fn window(req: &WindowRequest) -> Result<WindowResponse, AppError> {

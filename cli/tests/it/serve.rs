@@ -1,6 +1,7 @@
 mod assets;
 mod messages;
 
+use core::ops::{Deref, DerefMut};
 use std::io::{self, BufRead as _, BufReader, Read as _, Write as _};
 use std::net::{TcpListener, TcpStream};
 use std::process::{Child, Command, ExitCode, Stdio};
@@ -12,9 +13,31 @@ use crate::support::{Stderr, YAML, await_log, config, live, run, sandbox, termin
 const IDENTITY: &str = "x-session-id: s1\r\nx-user: u1\r\n";
 const JSON: &str = "\r\ncontent-type: application/json\r\n";
 
+struct Guard(Child);
+
+impl Deref for Guard {
+    type Target = Child;
+
+    fn deref(&self) -> &Child {
+        &self.0
+    }
+}
+
+impl DerefMut for Guard {
+    fn deref_mut(&mut self) -> &mut Child {
+        &mut self.0
+    }
+}
+
+impl Drop for Guard {
+    fn drop(&mut self) {
+        drop(self.0.kill());
+    }
+}
+
 struct Server {
     addr: String,
-    child: Child,
+    child: Guard,
     lines: Stderr,
 }
 
@@ -129,11 +152,13 @@ fn serves_http_until_signal() {
 }
 
 fn start(config: &str) -> io::Result<Server> {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_cli"))
-        .args(["serve", "--config"])
-        .arg(config)
-        .stderr(Stdio::piped())
-        .spawn()?;
+    let mut child = Guard(
+        Command::new(env!("CARGO_BIN_EXE_cli"))
+            .args(["serve", "--config"])
+            .arg(config)
+            .stderr(Stdio::piped())
+            .spawn()?,
+    );
     let stderr = child
         .stderr
         .take()

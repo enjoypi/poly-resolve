@@ -1,3 +1,4 @@
+use alloc::collections::BTreeMap;
 use core::future::poll_fn;
 use core::pin::Pin;
 use core::task::Poll;
@@ -5,6 +6,8 @@ use core::time::Duration;
 use std::io;
 use std::process::{Output, Stdio};
 
+use serde::{Deserialize, Serialize};
+use serde_json::from_slice;
 use tokio::io::{AsyncBufReadExt as _, BufReader, Lines};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::time::timeout;
@@ -16,6 +19,15 @@ pub(crate) struct Dws<'dws> {
 }
 
 impl<'dws> Dws<'dws> {
+    pub(crate) async fn decrypt(&self, cipher: &str) -> io::Result<Output> {
+        let mut command = Command::new(self.config.decrypt().bin());
+        self.prepare(&mut command, self.config.decrypt())
+            .arg(format!("--text={cipher}"))
+            .stdin(Stdio::null())
+            .output()
+            .await
+    }
+
     pub(crate) fn listen(&self) -> io::Result<Listener> {
         let mut command = Command::new(self.config.listen().bin());
         let mut child = self
@@ -34,6 +46,15 @@ impl<'dws> Dws<'dws> {
             lines,
             stdin,
         })
+    }
+
+    pub(crate) async fn lookup(&self, ids: &[String]) -> io::Result<Output> {
+        let mut command = Command::new(self.config.lookup().bin());
+        self.prepare(&mut command, self.config.lookup())
+            .arg(format!("--msg-ids={}", ids.join(",")))
+            .stdin(Stdio::null())
+            .output()
+            .await
     }
 
     pub(crate) fn manual(&self, code: Option<i32>) -> bool {
@@ -59,6 +80,16 @@ impl<'dws> Dws<'dws> {
             .output()
             .await
     }
+}
+
+pub(crate) type Found = BTreeMap<String, Vec<Kid>>;
+
+#[derive(Deserialize, Serialize)]
+pub(crate) struct Kid {
+    #[serde(default)]
+    sender: String,
+    #[serde(default)]
+    text: String,
 }
 
 pub(crate) struct Listener {
@@ -88,4 +119,38 @@ impl Listener {
             }
         }
     }
+}
+
+#[derive(Deserialize)]
+struct Looked {
+    #[serde(default)]
+    forwarded: Vec<Kid>,
+    #[serde(rename = "messageId")]
+    message_id: String,
+}
+
+#[derive(Deserialize)]
+struct Lookup {
+    #[serde(default)]
+    messages: Vec<Looked>,
+}
+
+#[derive(Deserialize)]
+struct Revealed {
+    plaintext: Option<String>,
+}
+
+pub(crate) fn children(output: &Output) -> Found {
+    from_slice::<Lookup>(&output.stdout).map_or_default(|lookup| {
+        lookup
+            .messages
+            .into_iter()
+            .map(|looked| (looked.message_id, looked.forwarded))
+            .collect()
+    })
+}
+
+pub(crate) fn plaintext(output: &Output) -> Option<String> {
+    let revealed: Revealed = from_slice(&output.stdout).ok()?;
+    revealed.plaintext
 }
