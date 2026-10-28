@@ -1,0 +1,67 @@
+absolute-paths-max-segments = 1
+accept-comment-above-attributes = false
+accept-comment-above-statement = false
+allow-comparison-to-zero = false
+allow-exact-repetitions = false
+allow-expect-in-consts = false
+allow-expect-in-tests = true
+allow-large-stack-frames-in-tests = false
+allow-mixed-uninlined-format-args = false
+allow-panic-in-tests = true
+allow-renamed-params-for = []
+allow-unwrap-in-consts = false
+allow-unwrap-in-tests = true
+allowed-idents-below-min-chars = []
+allowed-prefixes = []
+array-size-threshold = 256
+avoid-breaking-exported-api = false
+check-incompatible-msrv-in-tests = true
+check-inconsistent-struct-field-initializers = true
+cognitive-complexity-threshold = 8
+disallowed-macros = [
+  { path = "tokio::select", reason = "展开含不可达 branch，覆盖率无法达标", allow-invalid = true },
+]
+disallowed-methods = [
+  { path = "tokio::signal::ctrl_c", reason = "只覆盖 SIGINT，停机须同时处理 SIGINT 与 SIGTERM", allow-invalid = true },
+  { path = "tokio::task::spawn", reason = "日志靠 with_default 绑定当前作用域，新任务会丢日志", allow-invalid = true },
+  { path = "tokio::task::spawn_blocking", reason = "日志靠 with_default 绑定当前作用域，新任务会丢日志", allow-invalid = true },
+  { path = "tokio::task::spawn_local", reason = "日志靠 with_default 绑定当前作用域，新任务会丢日志", allow-invalid = true },
+  { path = "tracing::dispatcher::set_default", reason = "subscriber 不设全局，用 with_default 绑定", allow-invalid = true },
+  { path = "tracing::dispatcher::set_global_default", reason = "subscriber 不设全局，用 with_default 绑定", allow-invalid = true },
+  { path = "tracing::subscriber::set_default", reason = "subscriber 不设全局，用 with_default 绑定", allow-invalid = true },
+  { path = "tracing::subscriber::set_global_default", reason = "subscriber 不设全局，用 with_default 绑定", allow-invalid = true },
+  { path = "tracing_subscriber::fmt::SubscriberBuilder::init", reason = "subscriber 不设全局，用 with_default 绑定", allow-invalid = true },
+  { path = "tracing_subscriber::fmt::SubscriberBuilder::try_init", reason = "subscriber 不设全局，用 with_default 绑定", allow-invalid = true },
+  { path = "tracing_subscriber::fmt::init", reason = "subscriber 不设全局，用 with_default 绑定", allow-invalid = true },
+  { path = "tracing_subscriber::fmt::try_init", reason = "subscriber 不设全局，用 with_default 绑定", allow-invalid = true },
+  { path = "tracing_subscriber::util::SubscriberInitExt::init", reason = "subscriber 不设全局，用 with_default 绑定", allow-invalid = true },
+  { path = "tracing_subscriber::util::SubscriberInitExt::set_default", reason = "subscriber 不设全局，用 with_default 绑定", allow-invalid = true },
+  { path = "tracing_subscriber::util::SubscriberInitExt::try_init", reason = "subscriber 不设全局，用 with_default 绑定", allow-invalid = true },
+]
+enforce-iter-loop-reborrow = true
+enum-variant-name-threshold = 2
+enum-variant-size-threshold = 64
+excessive-nesting-threshold = 4
+ignore-interior-mutability = []
+large-error-threshold = 32
+lint-commented-code = true
+literal-representation-threshold = 256
+matches-for-let-else = "AllTypes"
+max-fn-params-bools = 0
+max-include-file-size = 65536
+max-struct-bools = 0
+min-ident-chars-lint-trait-impl = true
+min-ident-chars-threshold = 2
+module-items-ordered-within-groupings = "all"
+msrv = "1.99"
+pass-by-value-size-limit = 64
+pub-underscore-fields-behavior = "AllPubFields"
+single-char-binding-names-threshold = 0
+struct-field-name-threshold = 2
+too-many-arguments-threshold = 3
+too-many-lines-threshold = 64
+trivial-copy-size-limit = 16
+type-complexity-threshold = 100
+upper-case-acronyms-aggressive = true
+warn-on-all-wildcard-imports = true
+warn-unsafe-macro-metavars-in-private-macros = true

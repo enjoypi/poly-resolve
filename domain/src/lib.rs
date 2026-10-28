@@ -1,0 +1,62 @@
+pub mod features;
+
+use core::num::NonZeroU8;
+
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+use serde_json::to_string;
+
+#[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
+pub enum AppError {
+    BadRequest,
+    UnknownAction,
+}
+
+impl AppError {
+    #[must_use = "响应体需写回调用方"]
+    pub fn body(self, errors: &Errors) -> String {
+        let code = &self.spec(errors).code;
+        to_string(&Body { code }).unwrap_or_default()
+    }
+
+    #[must_use = "退出码需返回给进程"]
+    pub const fn exit_code(self, errors: &Errors) -> u8 {
+        self.spec(errors).exit_code.get()
+    }
+
+    const fn spec(self, errors: &Errors) -> &ErrorSpec {
+        match self {
+            Self::BadRequest => &errors.bad_request,
+            Self::UnknownAction => &errors.unknown_action,
+        }
+    }
+
+    #[must_use = "状态码需写回 HTTP 响应"]
+    pub const fn status(self) -> u16 {
+        match self {
+            Self::BadRequest => 400,
+            Self::UnknownAction => 404,
+        }
+    }
+}
+
+#[derive(JsonSchema, Serialize)]
+#[schemars(rename = "ErrorBody")]
+struct Body<'code> {
+    code: &'code str,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ErrorSpec {
+    code: String,
+    exit_code: NonZeroU8,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Errors {
+    bad_request: ErrorSpec,
+    unknown_action: ErrorSpec,
+}
