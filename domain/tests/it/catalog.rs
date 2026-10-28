@@ -1,16 +1,27 @@
 use domain::features::catalog::build;
 use domain::features::dispatch;
-use serde_json::{Value, json};
+use serde_json::json;
 
 use crate::support::{cli, errors};
 
 #[test]
-fn lists_health_check_with_schemas() {
+fn lists_routes_with_schemas() {
     let listing = build();
-    assert_eq!(listing.entries().len(), 1);
+    let routes: Vec<(&str, &str)> = listing
+        .entries()
+        .iter()
+        .map(|entry| (entry.feature(), entry.action()))
+        .collect();
+    assert_eq!(
+        routes,
+        [
+            ("health", "check"),
+            ("ingest", "parse_event"),
+            ("ingest", "parse_page"),
+            ("ingest", "window")
+        ]
+    );
     let entry = listing.entries().first().unwrap();
-    assert_eq!(entry.feature(), "health");
-    assert_eq!(entry.action(), "check");
     assert_eq!(
         entry.request(),
         &json!({"additionalProperties": true, "type": "object"})
@@ -24,19 +35,28 @@ fn lists_health_check_with_schemas() {
         &json!({"$ref": "#/components/schemas/ErrorBody"})
     );
     assert_eq!(
-        Value::Object(listing.schemas().clone()),
-        json!({
-            "ErrorBody": {
-                "properties": {"code": {"type": "string"}},
-                "required": ["code"],
-                "type": "object"
-            },
-            "HealthCheckResponse": {
-                "properties": {"status": {"type": "string"}},
-                "required": ["status"],
-                "type": "object"
-            }
-        })
+        listing
+            .schemas()
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        [
+            "ErrorBody",
+            "HealthCheckResponse",
+            "IngestEnvelope",
+            "IngestParsePageResponse",
+            "IngestParseRequest",
+            "IngestWindowRequest",
+            "IngestWindowResponse"
+        ]
+    );
+    assert_eq!(
+        listing.schemas().get("HealthCheckResponse"),
+        Some(&json!({
+            "properties": {"status": {"type": "string"}},
+            "required": ["status"],
+            "type": "object"
+        }))
     );
 }
 

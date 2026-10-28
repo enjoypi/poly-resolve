@@ -55,10 +55,11 @@
 - 日常用不锁日期的 nightly（rust-toolchain.toml），随 `rustup update` 升级；不用 `#![feature]`、`cargo-features`、`[unstable]` 与 `-Z`
 - 开发环境：rustup（nightly 随 rust-toolchain.toml 自动安装；lints 步骤对照 lint 名另需 stable：`rustup toolchain install stable`）、cargo-llvm-cov（`cargo install cargo-llvm-cov`）、Bun
 - clippy.toml 的 `msrv` 取当前 stable 版本，stable 升级后同步；`incompatible_msrv` 借它拦住 stable 编不过的新 API
+- `.cargo/config.toml`（cargo 只认 toml）固定 `MACOSX_DEPLOYMENT_TARGET = "11.0"`（rustc 默认值）：内置 C 库（如 rusqlite bundled）默认按本机 SDK 编译，链接时报 linker-info，被 deny 成错误
 - release 只用 stable：`cargo +stable test --release --locked && cargo +stable build --release --locked`
 - 开服（`/serve`）默认用 debug 版，与覆盖率共用中间产物：BUILD_CMD `bun scripts/build.ts`，BIN `target/llvm-cov-target/debug/cli`（带插桩，起服命令前加 `LLVM_PROFILE_FILE=.debug/serve-%p.profraw`），ARGS `serve --config cli/config.yaml`，READY_PATTERN `listening`，BUSINESS_GREP `"level":"(WARN|ERROR)"`，SMOKE_CMD `curl -fsS -m 3 -d "{}" http://<addr>/health/check`（`<addr>` 取 `cli/config.yaml`），日志与 PID 放 `.debug/`；用户明确要求时才用 release
 - lib 设 `test = false`、`bench = false`、`doctest = false`；bin 设 `test = false`、`bench = false`；保证 RA 默认 `--all-targets` 检查通过
-- crate 依赖单向：`cli`（传输层）→ `domain`（业务）；业务代码只写在 domain
+- crate 依赖单向：`cli`（传输层）→ `adapters`（I/O：子进程、存储）→ `domain`（业务）；业务代码只写在 domain，domain 不依赖 tokio
 - 每个 crate 只有一个集成测试二进制 `tests/it/main.rs`，其余为其子模块，按被测模块或功能命名
 - 业务代码禁 unwrap、expect；clippy.toml 只对测试放开，测试 helper 不在豁免内，须返回 `Result`
 
@@ -89,4 +90,10 @@ allow 只限下列各项，新增须归入其一并写进本节：
 - `std_instead_of_core`、`std_instead_of_alloc`、`alloc_instead_of_core`：`core::`、`alloc::` 优先于 `std::`
 - `absolute_paths`（阈值 1）：多段路径一律 `use` 导入具体项；与本地项重名时改名或用 `as` 别名
 - `too_many_arguments`（阈值 3，含 `self`）、`fn_params_excessive_bools`（阈值 0）：多参数打包为 `Copy` 结构体，字段私有，`new` 不超过 3 个参数，范例 `domain::features::Call`；不传 bool 参数，用 `&io::Result<()>` 等替代
+- `arbitrary_source_item_ordering`：同类条目按名字母序（const 与 static 同组，struct、enum、type 同组，函数同组），impl 紧跟其类型，字段与方法同样按字母序
+- `pub_use`：crate 对外导出用 `pub mod`，不写 `pub use`；`module_name_repetitions`：类型名不重复所在模块名（如 `config::Settings`、`store::Archive`）
+- `result_large_err`（阈值 32 字节）：`rusqlite::Error` 等大错误装箱 `Box<Error>`，需闭包时用 `query_row_and_then` 让闭包返回装箱错误；`future_not_send`：async fn 签名含 `dyn Future` 时加 `+ Send`
+- `arithmetic_side_effects`：整数运算用 `saturating_*`、`checked_*`；`unused_results`、`let_underscore_*`：丢弃返回值用 `drop(…)` 或带类型的 `let _: T`
+- `multiple_crate_versions`：Cargo.lock 里未启用的可选依赖也参与检查，jiff 的 `jiff-static` 会带入第二个 syn，故日期用 `chrono`（仅 `std` feature）
+- 测试：JSON 取值用 `get`（`indexing_slicing`），数值用带类型的 const（`default_numeric_fallback`）；`unwrap_err()` 加 `to_string()` 断言代替 `is_err()`（`assertions_on_result_states`）
 - `exhaustive_enums`、`missing_copy_implementations`、`trivially_copy_pass_by_ref`：pub 单元枚举加 `#[non_exhaustive]`、derive `Copy`，方法按值收 `self`；跨 crate 不 match 其变体（必需的 `_` 分支无法覆盖）

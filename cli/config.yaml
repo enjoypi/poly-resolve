@@ -1,4 +1,4 @@
-addr: "127.0.0.1:42436"
+addr: "127.0.0.1:15801"
 log_level: debug
 serve_exit_code: 1
 shutdown_timeout_exit_code: 5
@@ -10,3 +10,25 @@ errors:
   unknown_action:
     code: unknown_action
     exit_code: 4
+ingest:
+  account: default
+  backoff_initial_ms: 3000
+  backoff_max_ms: 60000
+  child_exit_timeout_ms: 5000
+  dws:
+    env:
+      DO_NOT_TRACK: "1"
+    listen:
+      args: [event, consume, user_im_message_receive_o2o_all, user_im_message_receive_group_all, --flatten, -f, ndjson]
+      bin: dws
+    manual_exit_codes: [2, 4]
+    pull:
+      args: [chat, message, list-all, --limit, "100", --page-all, --page-limit, "20", --no-reactions, -f, json]
+      bin: dws
+  failure_exit_code: 6
+  initial_backfill_ms: 3600000
+  manual_exit_code: 7
+  reconcile_overlap_ms: 300000
+  source: dingtalk
+  source_utc_offset_minutes: 480
+  store_path: .debug/poly-resolve.db

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["cli", "domain"]
+members = ["adapters", "cli", "domain"]
 
 [workspace.package]
 version = "0.1.0"
@@ -8,14 +8,17 @@ edition = "2024"
 publish = false
 
 [workspace.dependencies]
+adapters = { path = "adapters" }
 axum = { version = "*", default-features = false, features = ["http1", "tokio"] }
+chrono = { version = "*", default-features = false, features = ["std"] }
 clap = { version = "*", default-features = false, features = ["std", "derive", "help", "usage", "error-context"] }
 domain = { path = "domain" }
+rusqlite = { version = "*", features = ["bundled"] }
 schemars = { version = "*", default-features = false, features = ["derive", "std"] }
 serde = { version = "*", features = ["derive"] }
 serde-saphyr = { version = "*", default-features = false, features = ["deserialize"] }
 serde_json = "*"
-tokio = { version = "*", default-features = false, features = ["rt", "net", "macros", "signal", "time"] }
+tokio = { version = "*", default-features = false, features = ["rt", "net", "macros", "signal", "time", "process", "io-util"] }
 tracing = { version = "*", default-features = false, features = ["std"] }
 tracing-subscriber = { version = "*", default-features = false, features = ["fmt", "json", "std"] }
 

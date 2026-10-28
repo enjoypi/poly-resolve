@@ -6,20 +6,29 @@
 
 ## 调用
 
-- 业务只经 `features::dispatch(errors, &Call)` 调用；`Call` 由 `Origin`（transport、session_id、user）、`Target`（feature、action）与 request 经各自的 `new` 构造；handler 签名 `fn(Req) -> Resp`，由 `typed` 统一 JSON 编解码
+- 业务只经 `features::dispatch(errors, &Call)` 调用；`Call` 由 `Origin`（transport、session_id、user）、`Target`（feature、action）与 request 经各自的 `new` 构造；handler 有两种签名：`fn(Req) -> Resp` 经 `typed`，`fn(&Req) -> Result<Resp, AppError>` 经 `fallible`，统一 JSON 编解码，共用 `decode`
 - `route` 的 `&&` 两侧都要有用例：功能不存在、功能存在而动作不存在、两者都存在
 - `catalog::build` 供 cli 拼 OpenAPI：schema 引用路径为 `/components/schemas`，错误体 `ErrorBody` 取自 `Body`
 
 ## 新功能
 
 - 新建 `src/features/<f>.rs`
-- `features.rs` 加 `mod <f>;`，每个 action 在 `ROUTES` 加一项：`call` 用 `typed`，`schema` 用 `schemas::<Req, Resp>`；路由与接口说明共用此表
+- `features.rs` 加 `mod <f>;`，每个 action 在 `ROUTES` 加一项：`call` 用 `typed` 或 `fallible`，`schema` 用 `schemas::<Req, Resp>`；路由与接口说明共用此表
 - 自定义类型的 Req、Resp 派生 `JsonSchema`，并加 `#[schemars(rename = "<Feature><Action>Request")]`（Resp 同理）避免跨功能重名
 - 对外整数可能超过 2^53 时不用 i64（生成的 TS 为 number）
 - 新建 `tests/it/features/<f>.rs`，`tests/it/features.rs` 加 `mod <f>;`；`tests/it/catalog.rs` 补条目与 schema 断言
 - 跑 `bun scripts/gen.ts` 更新 `api/openapi.json` 与 `web/src/api.gen.ts`
 - 更新 docs/requirements.md 的业务规则
-- `typed`、`schemas` 是泛型（见根“测试与覆盖率”），故每个 feature 至少有一条请求格式错误的测试，且 `catalog::build` 会走到其 schema
+- `typed`、`fallible`、`decode`、`schemas` 是泛型（见根“测试与覆盖率”），故每个 feature 至少有一条请求格式错误的测试，且 `catalog::build` 会走到其 schema
+
+## ingest
+
+- `parse_event`（钉钉实时事件一行）、`parse_page`（补拉一页）→ `IngestEnvelope`，请求共用 `IngestParseRequest`：account、source、body、received_at_ms（调用方给，保持纯函数）、utc_offset_minutes；`window` 把毫秒区间转成补拉用的 `YYYY-MM-DD HH:MM:SS`（按偏移）
+- 字段名按候选列表取首个有值的（`pick`），不用 serde alias：补拉消息可同时含 `messageId` 与 `openMessageId`，alias 会报重复字段
+- 时间 `create_time` 或 `createTime`：数字当 UTC 毫秒，字符串先试 RFC3339，再试无时区的 `%Y-%m-%d %H:%M:%S`（按偏移换算）；早于 1970 取 0
+- 补拉一页内无法解析的消息计入 `skipped`，不使整页失败；`next_cursor` 仅在 `hasMore` 为真时给出（服务端取完后仍会返回游标，不能只看游标），非空表示未取完
+- `key` 为 `<source>:<account>:<message_id>`，实时与补拉共用，供存储去重
+- 对外结构里不放 bool 字段（`struct_excessive_bools`），用可空游标等代替
 
 ## 错误
 
@@ -31,7 +40,7 @@
 - dispatch 打一条 debug 日志：target `dispatch`，字段 transport、session_id、user、feature、action、request、response、ok、elapsed_us
   - session_id、user 缺省为空串
   - request 为原始请求体；response 成功时为响应体，失败时为 `AppError::body(errors)`
-  - 二者原样入日志，故业务请求与响应不得携带 secret
+  - 二者原样入日志，故业务请求与响应不得携带 secret；含消息正文的路由在 `ROUTES` 标 `Trace::Redacted`，日志里 request、response 只记 `redacted:<字节数>`
 
 ## 测试
 

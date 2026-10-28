@@ -57,19 +57,37 @@ fn spec_describes_health_check_operation() {
 
 #[test]
 fn spec_lists_schemas() {
+    let document = document().unwrap();
+    let schemas = document
+        .pointer("/components/schemas")
+        .and_then(Value::as_object)
+        .unwrap();
     assert_eq!(
-        document().unwrap().pointer("/components/schemas"),
+        schemas.keys().map(String::as_str).collect::<Vec<_>>(),
+        [
+            "ErrorBody",
+            "HealthCheckResponse",
+            "IngestEnvelope",
+            "IngestParsePageResponse",
+            "IngestParseRequest",
+            "IngestWindowRequest",
+            "IngestWindowResponse"
+        ]
+    );
+    assert_eq!(
+        schemas.get("ErrorBody"),
         Some(&json!({
-            "ErrorBody": {
-                "properties": {"code": {"type": "string"}},
-                "required": ["code"],
-                "type": "object"
-            },
-            "HealthCheckResponse": {
-                "properties": {"status": {"type": "string"}},
-                "required": ["status"],
-                "type": "object"
-            }
+            "properties": {"code": {"type": "string"}},
+            "required": ["code"],
+            "type": "object"
+        }))
+    );
+    assert_eq!(
+        schemas.get("HealthCheckResponse"),
+        Some(&json!({
+            "properties": {"status": {"type": "string"}},
+            "required": ["status"],
+            "type": "object"
         }))
     );
 }

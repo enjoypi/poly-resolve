@@ -16,6 +16,7 @@ test = false
 bench = false
 
 [dependencies]
+adapters.workspace = true
 axum.workspace = true
 clap.workspace = true
 domain.workspace = true
