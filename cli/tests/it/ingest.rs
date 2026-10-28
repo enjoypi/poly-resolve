@@ -2,7 +2,19 @@ use std::fs;
 use std::io::{BufRead as _, BufReader};
 use std::process::{Command, ExitCode, Stdio};
 
-use crate::support::{EVENT, YAML, await_log, config, live, run, sandbox, terminate};
+use crate::support::{EVENT, TRIAGE, await_log, config, live, run, sandbox, terminate};
+
+fn absent(dir: &str) -> String {
+    live(dir).replace("fixtures/fake.sb", "fixtures/absent.sb")
+}
+
+#[tokio::test]
+async fn ingest_exits_when_sandbox_fails() {
+    let dir = sandbox("cli-ingest-sandbox").unwrap();
+    let path = config("cli-ingest-sandbox.yaml", &absent(&dir)).unwrap();
+    let code = run(&["cli", "ingest", "--config", &path]).await;
+    assert_eq!(code, ExitCode::from(18));
+}
 
 #[test]
 fn ingests_until_signal() {
@@ -28,15 +40,43 @@ async fn missing_config_fails() {
 }
 
 #[tokio::test]
+async fn serve_exits_when_sandbox_fails() {
+    let dir = sandbox("cli-serve-sandbox").unwrap();
+    let path = config("cli-serve-sandbox.yaml", &absent(&dir)).unwrap();
+    let code = run(&["cli", "serve", "--config", &path]).await;
+    assert_eq!(code, ExitCode::from(18));
+}
+
+#[tokio::test]
+async fn serve_exits_when_triage_sandbox_fails() {
+    let dir = sandbox("cli-serve-triage-sandbox").unwrap();
+    let yaml = live(&dir)
+        .replace("mode: disabled", "mode: enabled")
+        .replace(
+            &format!("decide: {{args: [x], bin: {TRIAGE}"),
+            "decide: {args: [x], bin: /nonexistent/triage",
+        );
+    let path = config("cli-serve-triage-sandbox.yaml", &yaml).unwrap();
+    let code = run(&["cli", "serve", "--config", &path]).await;
+    assert_eq!(code, ExitCode::from(18));
+}
+
+#[tokio::test]
 async fn serve_stops_when_collection_fails() {
-    let path = config("cli-serve-store.yaml", YAML).unwrap();
+    let dir = sandbox("cli-serve-store").unwrap();
+    let path = config("cli-serve-store.yaml", &unwritable(&dir)).unwrap();
     let code = run(&["cli", "serve", "--config", &path]).await;
     assert_eq!(code, ExitCode::from(16));
 }
 
 #[tokio::test]
 async fn store_failure_uses_configured_exit_code() {
-    let path = config("cli-ingest-store.yaml", YAML).unwrap();
+    let dir = sandbox("cli-ingest-store").unwrap();
+    let path = config("cli-ingest-store.yaml", &unwritable(&dir)).unwrap();
     let code = run(&["cli", "ingest", "--config", &path]).await;
     assert_eq!(code, ExitCode::from(16));
+}
+
+fn unwritable(dir: &str) -> String {
+    live(dir).replace(&format!("{dir}/store.db"), "/nonexistent/dir/store.db")
 }

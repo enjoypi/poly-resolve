@@ -1,0 +1,17 @@
+(version 1)
+(deny default)
+(import "bsd.sb")
+(allow sysctl-read)
+(allow process-exec (subpath (string-append (param "BREW") "/Cellar/curl")))
+(allow file-read*
+  (subpath (string-append (param "BREW") "/Cellar"))
+  (subpath (string-append (param "BREW") "/etc/openssl@3"))
+  (subpath (string-append (param "BREW") "/etc/ca-certificates"))
+  (subpath "/private/etc/ssl")
+  (literal "/private/etc/hosts")
+  (literal "/private/etc/resolv.conf"))
+(allow mach-lookup (global-name "com.apple.dnssd.service"))
+(allow system-socket)
+(allow network-outbound
+  (remote tcp "*:443")
+  (literal "/private/var/run/mDNSResponder"))

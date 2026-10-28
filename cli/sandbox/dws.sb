@@ -1,0 +1,53 @@
+(version 1)
+(deny default)
+(import "bsd.sb")
+(allow sysctl-read)
+(allow process-fork)
+(allow process-exec
+  (subpath (string-append (param "HOME") "/.local/bin"))
+  (literal "/bin/bash")
+  (literal "/bin/sh")
+  (literal "/usr/bin/security"))
+(allow ipc-sysv-sem)
+(allow ipc-posix-shm-read* ipc-posix-shm-write-create ipc-posix-shm-write-data
+  (ipc-posix-name "com.apple.AppleDatabaseChanged"))
+(allow file-read*
+  (subpath (string-append (param "HOME") "/.local/bin"))
+  (literal "/bin/bash")
+  (literal "/bin/sh")
+  (subpath "/private/var/db/timezone")
+  (literal "/private/etc/localtime")
+  (literal "/private/etc/hosts")
+  (literal "/private/etc/resolv.conf")
+  (literal "/private/etc/services")
+  (subpath "/private/etc/ssl"))
+(allow file-read* file-write*
+  (subpath (string-append (param "HOME") "/.dws"))
+  (subpath (string-append (param "HOME") "/Library/Application Support/dws-cli"))
+  (subpath (string-append (param "HOME") "/Library/Caches/dws"))
+  (subpath (string-append (param "HOME") "/Library/Keychains"))
+  (literal (string-append (param "HOME") "/.local/bin/.dws-runtime.lock"))
+  (literal (string-append (param "HOME") "/.local/bin/.dws-runtime-manifest.json"))
+  (regex #"^/private/tmp/dws-event-[0-9]+(/|$)"))
+(allow file-read*
+  (literal "/usr/bin")
+  (literal "/usr/bin/security")
+  (literal "/Library/Preferences/com.apple.networkd.plist")
+  (literal "/Library/Preferences/com.apple.security.plist")
+  (regex #"^/private/var/db/mds/messages/[0-9]+/"))
+(allow mach-lookup
+  (global-name "com.apple.SecurityServer")
+  (global-name "com.apple.securityd.xpc")
+  (global-name "com.apple.dnssd.service")
+  (global-name "com.apple.SystemConfiguration.configd"))
+(allow system-socket)
+(allow network-outbound
+  (remote tcp "*:443")
+  (literal "/private/var/run/mDNSResponder"))
+(allow network-bind network-inbound network-outbound
+  (regex #"^/private/tmp/dws-event-[0-9]+/"))
+(deny file-read* file-write*
+  (subpath (string-append (param "HOME") "/.ssh"))
+  (subpath (string-append (param "HOME") "/.aws"))
+  (subpath (string-append (param "HOME") "/.codex"))
+  (subpath (string-append (param "HOME") "/.config")))

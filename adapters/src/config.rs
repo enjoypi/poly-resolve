@@ -4,7 +4,10 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
+use crate::dws::Dws as Runner;
+use crate::seatbelt::Sandbox;
 use crate::store::Shelf;
+use crate::triage::config::{Var, resolved};
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -15,6 +18,7 @@ pub(crate) struct Dws {
     lookup: Process,
     manual_exit_codes: Vec<i32>,
     pull: Process,
+    vars: BTreeMap<String, Var>,
 }
 
 impl Dws {
@@ -41,6 +45,10 @@ impl Dws {
     pub(crate) const fn pull(&self) -> &Process {
         &self.pull
     }
+
+    pub(crate) fn vars(&self) -> impl Iterator<Item = (&str, String)> {
+        resolved(&self.vars)
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -48,6 +56,7 @@ impl Dws {
 pub(crate) struct Process {
     args: Vec<String>,
     bin: String,
+    sandbox: Sandbox,
 }
 
 impl Process {
@@ -57,6 +66,10 @@ impl Process {
 
     pub(crate) fn bin(&self) -> &str {
         &self.bin
+    }
+
+    pub(crate) const fn sandbox(&self) -> &Sandbox {
+        &self.sandbox
     }
 }
 
@@ -91,6 +104,10 @@ impl Settings {
 
     pub(crate) const fn backoff_max_ms(&self) -> u64 {
         self.backoff_max_ms.get()
+    }
+
+    pub async fn check(&self) -> Result<(), String> {
+        Runner::new(&self.dws).check().await
     }
 
     pub(crate) const fn child_exit_timeout_ms(&self) -> u64 {

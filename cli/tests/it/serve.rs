@@ -8,7 +8,7 @@ use std::process::{Child, Command, ExitCode, Stdio};
 
 use serde_json::{Value, from_str};
 
-use crate::support::{Stderr, YAML, await_log, config, live, run, sandbox, terminate};
+use crate::support::{Stderr, await_log, config, live, run, sandbox, terminate};
 
 const IDENTITY: &str = "x-session-id: s1\r\nx-user: u1\r\n";
 const JSON: &str = "\r\ncontent-type: application/json\r\n";
@@ -45,9 +45,10 @@ struct Server {
 async fn bind_failure_uses_configured_exit_code() {
     let taken = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = taken.local_addr().unwrap();
+    let dir = sandbox("serve-bind").unwrap();
     let path = config(
         "taken.yaml",
-        &YAML.replace("127.0.0.1:0", &addr.to_string()),
+        &live(&dir).replace("127.0.0.1:0", &addr.to_string()),
     )
     .unwrap();
     let code = run(&["cli", "serve", "--config", &path]).await;
@@ -213,7 +214,10 @@ fn times_out_with_configured_exit_code() {
 #[test]
 fn waits_for_collector_after_server_stops() {
     let dir = sandbox("serve-slow-collector").unwrap();
-    let yaml = live(&dir).replace("FAKE_DIR: ", "FAKE_LISTEN: hang\n      FAKE_DIR: ");
+    let yaml = live(&dir).replace(
+        "      FAKE_DIR: ",
+        "      FAKE_LISTEN: hang\n      FAKE_DIR: ",
+    );
     let path = config("slow-collector.yaml", &yaml).unwrap();
     let server = start(&path).unwrap();
     let sync = post(&server.addr, ["/health/check", IDENTITY], "{}").unwrap();

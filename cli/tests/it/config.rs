@@ -135,6 +135,16 @@ async fn unknown_ingest_field_fails() {
 }
 
 #[tokio::test]
+async fn unknown_sandbox_field_fails() {
+    let yaml = YAML.replace("probe: [noop]", "probe: [noop], extra: 1");
+    let path = config("unknown-sandbox-field.yaml", &yaml).unwrap();
+    assert_eq!(
+        call(&path, ["health", "check"], "{}").await,
+        ExitCode::from(2)
+    );
+}
+
+#[tokio::test]
 async fn zero_default_limit_fails() {
     let yaml = YAML.replace("default: 2", "default: 0");
     let path = config("zero-limit.yaml", &yaml).unwrap();
@@ -157,6 +167,16 @@ async fn zero_exit_code_fails() {
 async fn zero_ingest_failure_exit_code_fails() {
     let yaml = YAML.replace("failure_exit_code: 16", "failure_exit_code: 0");
     let path = config("zero-ingest-exit.yaml", &yaml).unwrap();
+    assert_eq!(
+        call(&path, ["health", "check"], "{}").await,
+        ExitCode::from(2)
+    );
+}
+
+#[tokio::test]
+async fn zero_sandbox_exit_code_fails() {
+    let yaml = YAML.replace("sandbox_exit_code: 18", "sandbox_exit_code: 0");
+    let path = config("zero-sandbox-exit.yaml", &yaml).unwrap();
     assert_eq!(
         call(&path, ["health", "check"], "{}").await,
         ExitCode::from(2)

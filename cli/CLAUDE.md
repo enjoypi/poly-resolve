@@ -7,6 +7,7 @@
 ## 配置
 
 - `config.rs` 的 `File` 带 `#[serde(deny_unknown_fields)]`；新增字段同时改 `File`、`config.yaml`、`tests/it/support.rs` 的 `YAML` 与 `tests/it/config.rs` 用例
+- 退出码 `sandbox_exit_code`（顶层，写在 `ingest` 之前）：`serve` 与 `ingest` 在读完配置、检查完 triage 变量后、绑定端口前调 `verify`——`ingest.check()`，`triage.mode` 为 `enabled` 时再 `triage.check()`；失败以该码退出并把原因写 stderr（`fail`）；`call` 不检查。新增沙箱字段时同步 `File`、`config.yaml`、`tests/it/support.rs` 的 `YAML`（锚点 `&fence` 只写一处）
 - `messages`（`domain::inbox::Paging`）与 `web_dir` 写在 `ingest` 段之前（`missing_ingest_fails` 以 `ingest:` 截断 YAML）
 - `Settings::context(&reader)` 构造 `domain::features::Context`；`call`、`handle`、`ingest` 各用 `settings.ingest().shelf()` 作 reader
 - `addr` 为 `SocketAddr`，`config::load` 拒绝非回环 IP（IPv4、IPv6 均支持），`call` 同样校验
@@ -14,7 +15,7 @@
 
 ## 退出码
 
-- 来源：成功 0；监听失败取配置 `serve_exit_code`；收集存储失败、须人工处理取配置 `ingest.failure_exit_code`、`ingest.manual_exit_code`（由 `adapters::ingest::run` 返回）；停机排空超时取 `shutdown_timeout_exit_code`；业务错误取 `AppError::exit_code(errors)`；参数或配置错误为 2，读配置前发生故写在代码（与 clap 一致）；写输出失败至少为 1
+- 来源：成功 0；启动自检失败取配置 `sandbox_exit_code`；监听失败取配置 `serve_exit_code`；收集存储失败、须人工处理取配置 `ingest.failure_exit_code`、`ingest.manual_exit_code`（由 `adapters::ingest::run` 返回）；停机排空超时取 `shutdown_timeout_exit_code`；业务错误取 `AppError::exit_code(errors)`；参数或配置错误为 2，读配置前发生故写在代码（与 clap 一致）；写输出失败至少为 1
 - 收尾用无分支写法 `emit(code, &io::Result<()>)`，即 `ExitCode::from(code.max(u8::from(written.is_err())))`
 - 用户可见取值表在 README“返回码”，改动时同步
 
@@ -59,9 +60,10 @@
 
 - helper 放 `tests/it/support.rs`，临时文件写 `CARGO_TARGET_TMPDIR`
 - 子进程测试用 `CARGO_BIN_EXE_cli`，须以 SIGINT 或 SIGTERM 让进程正常退出（被 kill 的进程不写 profraw）；serve 监听 `127.0.0.1:0`，从 listening 日志取地址
-- serve 随带采集：测试须用 `support::live(dir)` 的配置（假 dws、`dir` 下可写库），默认 YAML 的库目录不存在会令 serve 以 `ingest.failure_exit_code` 退出（`ingest.rs` 的 `serve_stops_when_collection_fails`）；日志含采集行，断言用 `index_of` 按内容找，不数行；503 用例在启动后删库文件制造；排空用例覆盖 collect 先完成，`FAKE_LISTEN: hang` 用例覆盖 server 先完成
+- serve 随带采集：测试须用 `support::live(dir)` 的配置（假 dws、`dir` 下可写库），默认 YAML 的 `bin` 都不存在，起 serve 会先在沙箱自检失败；日志含采集行，断言用 `index_of` 按内容找，不数行；503 用例在启动后删库文件制造；排空用例覆盖 collect 先完成，`FAKE_LISTEN: hang` 用例覆盖 server 先完成
 - serve 的页面与消息测试放 `tests/it/serve/`（`assets.rs`、`messages.rs`），作为 `serve.rs` 的子模块以访问其私有的 `Server`、`start`、`get`、`post`、`stop`；页面用临时 `web_dir`（含目录外的 `secret.txt` 验证不可越界）；消息用 `adapters::store::Archive` 播种临时库，同一份配置分别走 `call` 子进程与 HTTP，断言响应一致
-- ingest 测试：假 dws 夹具复用 `../adapters/tests/it/fixtures/fake-dws.sh`，配置里把 `bin`、`FAKE_DIR`、`store_path` 换成临时目录；等到 `event stored` 日志再发 SIGTERM；存储失败用例用默认的不存在目录
+- ingest 测试：假 dws 夹具复用 `../adapters/tests/it/fixtures/fake-dws.sh`，配置里把 `bin`、`FAKE_DIR`、`store_path` 换成临时目录；等到 `event stored` 日志再发 SIGTERM
+- `live(dir)` 把假 dws、假 triage、`fake.sb` 与沙箱目录换进 YAML；存储失败用例在其结果里把库路径换成不存在的目录（`ingest.rs` 的 `unwritable`）；沙箱自检失败用例把 `fixtures/fake.sb` 换成不存在的文件（`absent`），triage 的用例把 `decide` 的 `bin` 换成不存在的程序
 - 停机测试：
   - 在途连接：连接 A 发完整请求头与不足 `Content-Length` 的请求体并保持
   - 同步点：另开连接完成一次完整请求（A 的数据已先到），再发信号

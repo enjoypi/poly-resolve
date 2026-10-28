@@ -19,9 +19,33 @@ pub(crate) struct Dws<'dws> {
 }
 
 impl<'dws> Dws<'dws> {
+    fn bare(&self, process: &Process) -> Command {
+        let mut command = process.sandbox().command(process.bin());
+        let _: &mut Command = command
+            .env_clear()
+            .kill_on_drop(true)
+            .envs(self.config.env())
+            .envs(self.config.vars());
+        command
+    }
+
+    pub(crate) async fn check(&self) -> Result<(), String> {
+        for process in [
+            self.config.decrypt(),
+            self.config.listen(),
+            self.config.lookup(),
+            self.config.pull(),
+        ] {
+            process
+                .sandbox()
+                .check(self.bare(process), process.bin())
+                .await?;
+        }
+        Ok(())
+    }
+
     pub(crate) async fn decrypt(&self, cipher: &str) -> io::Result<Output> {
-        let mut command = Command::new(self.config.decrypt().bin());
-        self.prepare(&mut command, self.config.decrypt())
+        self.prepare(self.config.decrypt())
             .arg(format!("--text={cipher}"))
             .stdin(Stdio::null())
             .output()
@@ -29,9 +53,8 @@ impl<'dws> Dws<'dws> {
     }
 
     pub(crate) fn listen(&self) -> io::Result<Listener> {
-        let mut command = Command::new(self.config.listen().bin());
         let mut child = self
-            .prepare(&mut command, self.config.listen())
+            .prepare(self.config.listen())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
@@ -49,8 +72,7 @@ impl<'dws> Dws<'dws> {
     }
 
     pub(crate) async fn lookup(&self, ids: &[String]) -> io::Result<Output> {
-        let mut command = Command::new(self.config.lookup().bin());
-        self.prepare(&mut command, self.config.lookup())
+        self.prepare(self.config.lookup())
             .arg(format!("--msg-ids={}", ids.join(",")))
             .stdin(Stdio::null())
             .output()
@@ -65,16 +87,14 @@ impl<'dws> Dws<'dws> {
         Self { config }
     }
 
-    fn prepare<'cmd>(&self, command: &'cmd mut Command, process: &Process) -> &'cmd mut Command {
+    fn prepare(&self, process: &Process) -> Command {
+        let mut command = self.bare(process);
+        let _: &mut Command = command.args(process.args());
         command
-            .args(process.args())
-            .envs(self.config.env())
-            .kill_on_drop(true)
     }
 
     pub(crate) async fn pull(&self, start: &str, end: &str) -> io::Result<Output> {
-        let mut command = Command::new(self.config.pull().bin());
-        self.prepare(&mut command, self.config.pull())
+        self.prepare(self.config.pull())
             .args(["--start", start, "--end", end])
             .stdin(Stdio::null())
             .output()

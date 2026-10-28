@@ -180,44 +180,44 @@ async fn listen_exit_code_requires_manual_action() {
 }
 
 #[tokio::test]
-async fn missing_decrypt_binary_keeps_ciphertext() {
+async fn missing_decrypt_sandbox_keeps_ciphertext() {
     let sandbox = Sandbox::new("ingest-no-decrypt").unwrap();
     sandbox.write("listen.txt", &feed(&[sealed("m1")])).unwrap();
     let config = sandbox
-        .config(&json!({"dws": {"decrypt": {"bin": "/nonexistent/dws"}}}))
+        .config(&json!({"dws": {"decrypt": {"sandbox": {"bin": "/nonexistent/sandbox-exec"}}}}))
         .unwrap();
     assert_eq!(run_for(&config, SHORT).await.unwrap(), 0);
     assert_eq!(texts(&sandbox.database()).unwrap(), [SEALED]);
 }
 
 #[tokio::test]
-async fn missing_listen_binary_backs_off() {
+async fn missing_listen_sandbox_backs_off() {
     let sandbox = Sandbox::new("ingest-no-listen").unwrap();
     let config = sandbox
-        .config(&json!({"dws": {"listen": {"bin": "/nonexistent/dws"}}}))
+        .config(&json!({"dws": {"listen": {"sandbox": {"bin": "/nonexistent/sandbox-exec"}}}}))
         .unwrap();
     assert_eq!(run_for(&config, SHORT).await.unwrap(), 0);
 }
 
 #[tokio::test]
-async fn missing_lookup_binary_keeps_fragments() {
+async fn missing_lookup_sandbox_keeps_fragments() {
     let sandbox = Sandbox::new("ingest-no-lookup").unwrap();
     sandbox
         .write("listen.txt", &feed(&[fragment_event("m1")]))
         .unwrap();
     let config = sandbox
-        .config(&json!({"dws": {"lookup": {"bin": "/nonexistent/dws"}}}))
+        .config(&json!({"dws": {"lookup": {"sandbox": {"bin": "/nonexistent/sandbox-exec"}}}}))
         .unwrap();
     assert_eq!(run_for(&config, SHORT).await.unwrap(), 0);
     assert_eq!(texts(&sandbox.database()).unwrap(), [FRAGMENTS]);
 }
 
 #[tokio::test]
-async fn missing_pull_binary_is_not_fatal() {
+async fn missing_pull_sandbox_is_not_fatal() {
     let sandbox = Sandbox::new("ingest-no-pull").unwrap();
     sandbox.write("listen.txt", &feed(&[event("m1")])).unwrap();
     let config = sandbox
-        .config(&json!({"dws": {"pull": {"bin": "/nonexistent/dws"}}}))
+        .config(&json!({"dws": {"pull": {"sandbox": {"bin": "/nonexistent/sandbox-exec"}}}}))
         .unwrap();
     assert_eq!(run_for(&config, SHORT).await.unwrap(), 0);
     assert_eq!(keys(&sandbox.database()).unwrap(), ["dingtalk:acct:m1"]);

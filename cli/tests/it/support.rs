@@ -11,8 +11,18 @@ const FAKE: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../adapters/tests/it/fixtures/fake-dws.sh"
 );
+const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../adapters/tests/it/fixtures");
+const PROFILE: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../adapters/tests/it/fixtures/fake.sb"
+);
+pub(crate) const TRIAGE: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../adapters/tests/it/fixtures/fake-triage.sh"
+);
 pub(crate) const YAML: &str = "addr: \"127.0.0.1:0\"
 log_level: debug
+sandbox_exit_code: 18
 serve_exit_code: 9
 shutdown_timeout_exit_code: 8
 shutdown_timeout_ms: 10000
@@ -31,8 +41,8 @@ errors:
     code: missing
     exit_code: 14
 triage:
-  codex: {args: [x], bin: /nonexistent/triage, env: {}, timeout_ms: 1000, vars: {PATH: \"${PATH}\"}}
-  decide: {args: [x], bin: /nonexistent/triage, env: {}, timeout_ms: 1000, vars: {PATH: \"${PATH}\"}}
+  codex: {args: [x], bin: /nonexistent/triage, env: {FAKE_DIR: /nonexistent}, sandbox: &fence {bin: /usr/bin/sandbox-exec, canary: /usr/bin/true, paths: {DIR: /nonexistent/sandbox-dir, FIXTURES: /nonexistent/fixtures}, probe: [noop], profile: /nonexistent/fake.sb, vars: {HOME: \"${HOME}\"}}, timeout_ms: 1000, vars: {PATH: \"${PATH}\"}}
+  decide: {args: [x], bin: /nonexistent/triage, env: {FAKE_DIR: /nonexistent}, sandbox: *fence, timeout_ms: 1000, vars: {PATH: \"${PATH}\"}}
   limits:
     batch: 1
     handoff_cooldown_ms: 0
@@ -45,7 +55,7 @@ triage:
   mode: disabled
   model: m
   notice: n
-  notify: {args: [x], bin: /nonexistent/triage, env: {}, timeout_ms: 1000, vars: {PATH: \"${PATH}\"}}
+  notify: {args: [x], bin: /nonexistent/triage, env: {FAKE_DIR: /nonexistent}, sandbox: *fence, timeout_ms: 1000, vars: {PATH: \"${PATH}\"}}
   notify_conversation_id: \"${HOME}\"
   notify_target: \"${HOME}\"
   prompt: p
@@ -68,18 +78,24 @@ ingest:
     decrypt:
       args: [decrypt]
       bin: /nonexistent/dws
+      sandbox: *fence
     env:
       FAKE_DIR: /nonexistent
     listen:
       args: [listen]
       bin: /nonexistent/dws
+      sandbox: *fence
     lookup:
       args: [lookup]
       bin: /nonexistent/dws
+      sandbox: *fence
     manual_exit_codes: [2, 4]
     pull:
       args: [pull]
       bin: /nonexistent/dws
+      sandbox: *fence
+    vars:
+      PATH: \"${PATH}\"
   failure_exit_code: 16
   heal_limit: 50
   initial_backfill_ms: 3600000
@@ -118,6 +134,10 @@ pub(crate) fn config(name: &str, body: &str) -> io::Result<String> {
 
 pub(crate) fn live(dir: &str) -> String {
     YAML.replace("/nonexistent/dws", FAKE)
+        .replace("/nonexistent/triage", TRIAGE)
+        .replace("/nonexistent/fake.sb", PROFILE)
+        .replace("/nonexistent/fixtures", FIXTURES)
+        .replace("/nonexistent/sandbox-dir", dir)
         .replace("FAKE_DIR: /nonexistent", &format!("FAKE_DIR: {dir}"))
         .replace("/nonexistent/dir/store.db", &format!("{dir}/store.db"))
 }

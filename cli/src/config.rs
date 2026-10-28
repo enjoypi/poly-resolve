@@ -23,6 +23,7 @@ struct File {
     ingest: Ingest,
     log_level: String,
     messages: Paging,
+    sandbox_exit_code: NonZeroU8,
     serve_exit_code: NonZeroU8,
     shutdown_timeout_exit_code: NonZeroU8,
     shutdown_timeout_ms: NonZeroU64,
@@ -36,6 +37,7 @@ pub(crate) struct Settings {
     ingest: Ingest,
     log: Dispatch,
     messages: Paging,
+    sandbox_exit_code: u8,
     serve_exit_code: u8,
     shutdown_timeout_exit_code: u8,
     shutdown_timeout_ms: u64,
@@ -62,6 +64,10 @@ impl Settings {
 
     pub(crate) const fn log(&self) -> &Dispatch {
         &self.log
+    }
+
+    pub(crate) const fn sandbox_exit_code(&self) -> u8 {
+        self.sandbox_exit_code
     }
 
     pub(crate) const fn serve_exit_code(&self) -> u8 {
@@ -105,6 +111,7 @@ pub(crate) fn load(path: &Path) -> Result<Settings, String> {
         ingest: file.ingest,
         log: log::dispatch(level),
         messages: file.messages,
+        sandbox_exit_code: file.sandbox_exit_code.get(),
         serve_exit_code: file.serve_exit_code.get(),
         shutdown_timeout_exit_code: file.shutdown_timeout_exit_code.get(),
         shutdown_timeout_ms: file.shutdown_timeout_ms.get(),

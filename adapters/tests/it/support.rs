@@ -45,6 +45,7 @@ const FAKE: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/tests/it/fixtures/fake-triage.sh"
 );
+const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/it/fixtures");
 pub(crate) const FRAGMENTS: &str = "title\nalice:QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo0MTIzNDU2\nQUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo0MTIzNDU2\nQUJDREVGR0hJSktMTU5PUFFSU1RV";
 const HEAL_LIMIT: u32 = 2;
 const LOOKBACK: u64 = 1_000_000_000_000;
@@ -53,9 +54,11 @@ pub(crate) const MANUAL: u8 = 6;
 const MANUAL_CODES: [i32; 2] = [2, 4];
 pub(crate) const NOON: u64 = 1_783_483_235_000;
 const OFFSET: i16 = 480;
+pub(crate) const OPEN: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/it/fixtures/open.sb");
 const OVERLAP: u64 = 1_000;
 const PAGING: &str = r#"{"default":2,"max":3}"#;
 const POLL: u64 = 20;
+const PROFILE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/it/fixtures/fake.sb");
 const QUOTA: u32 = 100;
 pub(crate) const REFUSE_INSERT: &str =
     "CREATE TRIGGER refuse BEFORE INSERT ON messages BEGIN SELECT RAISE(ABORT, 'refused'); END;";
@@ -106,10 +109,12 @@ pub(crate) type Fallible<T> = Result<T, Box<dyn Error>>;
 
 pub(crate) struct Sandbox {
     dir: PathBuf,
+    outside: PathBuf,
 }
 
 impl Sandbox {
     pub(crate) fn config(&self, patch: &Value) -> Fallible<Settings> {
+        let process = |action: &str| json!({"args": [action], "bin": BIN, "sandbox": self.fence()});
         let mut base = json!({
             "account": "acct",
             "backoff_initial_ms": BACKOFF_INITIAL,
@@ -117,12 +122,16 @@ impl Sandbox {
             "child_exit_timeout_ms": CHILD_EXIT,
             "cipher_min_length": CIPHER_MIN,
             "dws": {
-                "decrypt": {"args": ["decrypt"], "bin": BIN},
-                "env": {"FAKE_DIR": self.dir.to_string_lossy()},
-                "listen": {"args": ["listen"], "bin": BIN},
-                "lookup": {"args": ["lookup"], "bin": BIN},
+                "decrypt": process("decrypt"),
+                "env": {
+                    "FAKE_DIR": self.dir.to_string_lossy(),
+                    "FAKE_OUTSIDE": self.outside.to_string_lossy(),
+                },
+                "listen": process("listen"),
+                "lookup": process("lookup"),
                 "manual_exit_codes": MANUAL_CODES,
-                "pull": {"args": ["pull"], "bin": BIN},
+                "pull": process("pull"),
+                "vars": {"HOME": "${HOME}", "PATH": "${PATH}"},
             },
             "failure_exit_code": FAILURE,
             "heal_limit": HEAL_LIMIT,
@@ -142,13 +151,33 @@ impl Sandbox {
         self.dir.join("store.db")
     }
 
+    fn fence(&self) -> Value {
+        json!({
+            "bin": "/usr/bin/sandbox-exec",
+            "canary": "/usr/bin/true",
+            "paths": {"DIR": self.dir.to_string_lossy(), "FIXTURES": FIXTURES},
+            "probe": ["noop"],
+            "profile": PROFILE,
+            "vars": {"HOME": "${HOME}"},
+        })
+    }
+
     pub(crate) fn new(name: &str) -> io::Result<Self> {
-        let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join(name);
-        if dir.exists() {
-            fs::remove_dir_all(&dir)?;
+        let root = Path::new(env!("CARGO_TARGET_TMPDIR"));
+        let dir = root.join(name);
+        let outside = root.join(format!("{name}-outside"));
+        for path in [&dir, &outside] {
+            if path.exists() {
+                fs::remove_dir_all(path)?;
+            }
+            fs::create_dir_all(path)?;
         }
-        fs::create_dir_all(&dir)?;
-        Ok(Self { dir })
+        fs::write(outside.join("secret.txt"), "secret")?;
+        Ok(Self { dir, outside })
+    }
+
+    pub(crate) fn outside(&self) -> &Path {
+        &self.outside
     }
 
     pub(crate) fn read(&self, file: &str) -> io::Result<String> {
@@ -164,7 +193,11 @@ impl Sandbox {
             json!({
                 "args": [role],
                 "bin": FAKE,
-                "env": {"FAKE_DIR": self.dir.to_string_lossy()},
+                "env": {
+                    "FAKE_DIR": self.dir.to_string_lossy(),
+                    "FAKE_OUTSIDE": self.outside.to_string_lossy(),
+                },
+                "sandbox": self.fence(),
                 "timeout_ms": EXEC_TIMEOUT,
                 "vars": {"PATH": "${PATH}", "TRIAGE_KEY": "${PATH}", "TRIAGE_URL": "${HOME}"},
             })

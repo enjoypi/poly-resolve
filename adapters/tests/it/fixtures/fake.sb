@@ -1,0 +1,16 @@
+(version 1)
+(deny default)
+(import "bsd.sb")
+(allow sysctl-read)
+(allow process-fork)
+(allow process-exec
+  (subpath "/bin")
+  (subpath "/usr/bin")
+  (subpath (param "FIXTURES")))
+(allow file-read*
+  (subpath "/bin")
+  (subpath "/usr/bin")
+  (subpath "/private/etc/ssl")
+  (subpath (param "FIXTURES")))
+(allow file-read* file-write* (subpath (param "DIR")))
+(deny process-exec (literal "/usr/bin/true"))

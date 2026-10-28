@@ -4,7 +4,7 @@
 
 ## 前置条件
 
-- macOS 或 Linux
+- macOS（外部命令用系统自带的 `/usr/bin/sandbox-exec` 隔离，见“子进程沙箱”）
 - rustup 与 stable 工具链：`rustup toolchain install stable`
 - 仅查看消息页面需要 Bun：构建前端用 `bun run build`
 - 仅收集钉钉消息（`ingest`）需要：钉钉工作台命令行 `dws`，安装后执行 `dws auth login` 登录；企业管理员须开通“CLI 访问管理”，补拉另需“消息搜索”权益
@@ -25,6 +25,7 @@ YAML 文件，各项均必填，不允许其他字段。示例见 `cli/config.ya
 |---|---|
 | addr | 服务监听地址，格式 `IP:端口`（IPv6 写作 `"[::1]:端口"`），不支持主机名；须为回环地址（如 127.0.0.1、::1）；端口 0 表示随机分配 |
 | log_level | 日志级别：off、error、warn、info、debug、trace；日志为 JSON 行，写 stderr，debug 级记录每次调用 |
+| sandbox_exit_code | `serve`、`ingest` 启动时沙箱自检失败的退出码，1 至 255 |
 | serve_exit_code | 服务地址绑定失败时的退出码，1 至 255 |
 | shutdown_timeout_exit_code | 停机等待超时被强制退出时的退出码，1 至 255 |
 | shutdown_timeout_ms | 收到停机信号后等待在途请求完成的最长毫秒数，至少 1 |
@@ -40,7 +41,8 @@ YAML 文件，各项均必填，不允许其他字段。示例见 `cli/config.ya
 | ingest.child_exit_timeout_ms | 停机时等待钉钉工具退出的最长毫秒数，超时强杀，至少 1 |
 | ingest.failure_exit_code | 存储失败时的退出码，1 至 255 |
 | ingest.manual_exit_code | 钉钉工具提示登录失效或需授权、须人工处理时的退出码，1 至 255 |
-| ingest.dws.env | 传给钉钉工具的环境变量，应含 DO_NOT_TRACK 以关闭其遥测 |
+| ingest.dws.env / vars | 传给钉钉工具的环境变量：env 为字面量，应含 DO_NOT_TRACK 以关闭其遥测；vars 为 `${NAME}` 写法，运行时读同名环境变量（HOME、PATH 等）；子进程环境先清空再只放这两类 |
+| ingest.dws.decrypt / listen / lookup / pull 与 triage.decide / codex / notify 的 sandbox | 子进程沙箱，必填，字段见“子进程沙箱” |
 | ingest.dws.listen / pull | 实时监听与补拉所用命令：bin 为可执行文件，args 为参数；补拉自动追加 --start、--end |
 | ingest.cipher_min_length | 判定三方密文用：去掉末尾 `||版本||类型||长度` 后的 base64 正文至少多少字符，至少 1 |
 | ingest.dws.decrypt | 解密所用命令：bin 为可执行文件，args 为参数；自动追加 `--text=<密文>`，标准输出须为含 `plaintext` 的 JSON |
@@ -53,7 +55,7 @@ YAML 文件，各项均必填，不允许其他字段。示例见 `cli/config.ya
 | triage.limits | batch 每轮最多决策条数；poll_ms 轮询间隔；lookback_ms 只处理多久以内的消息；max_attempts / retry_after_ms 失败重试次数与间隔；max_decisions_per_hour / max_handoffs_per_hour 每小时决策与转交上限；handoff_cooldown_ms 同一会话两次转交的最短间隔 |
 | triage.sizes | input_max_chars 单条消息送决策的字数上限；context_messages / context_window_ms / context_max_chars 转交时取的消息条数、时间跨度与字数上限；result_max_chars 分析结果字数上限 |
 | triage.prompt / notice | 交给 codex 的提示词模板（`{messages}` 处填入消息 JSON）与发给本人的通知模板（`{probability}`、`{conversation}`、`{analysis}`） |
-| triage.decide / codex / notify | 三个外部命令：bin、args、env（字面量环境变量）、vars（`${NAME}` 写法，运行时读同名环境变量传给子进程，不设默认值）、timeout_ms；子进程环境先清空再只放 env 与 vars；notify 的 args 以接收人参数名结尾，程序追加 `notify_target` 与 `--idempotency-key=<消息键>` |
+| triage.decide / codex / notify | 三个外部命令：bin、args、env（字面量环境变量）、sandbox、vars（`${NAME}` 写法，运行时读同名环境变量传给子进程，不设默认值）、timeout_ms；子进程环境先清空再只放 env 与 vars；notify 的 args 以接收人参数名结尾，程序追加 `notify_target` 与 `--idempotency-key=<消息键>` |
 | triage.self_sender_id / notify_conversation_id / notify_target | 本人的发送人 ID、通知所在会话 ID、通知接收人，均写成 `${NAME}`；前两者对应的消息不参与决策 |
 | errors.<错误>.code / exit_code | 该错误的响应体 code 与命令行退出码（1 至 255）；<错误> 取 bad_request、storage、unknown_action，见“返回码” |
 
@@ -160,11 +162,33 @@ sops exec-env secrets.enc.yaml './target/release/cli serve --config cli/config.y
 行为：
 
 - 本人发出的、发往通知会话的、正文为空的、仍是密文的消息不外发，只记为已跳过；其余消息调决策接口，概率不低于 `triage.threshold` 即高优先级
-- 高优先级消息按会话合并：`handoff_cooldown_ms` 内同一会话只转交一次；codex 只读（关闭其全部工具、专用 `CODEX_HOME` 与空工作目录）；通知发往 `notify_target`，带幂等标识，重试不会重复送达
+- 高优先级消息按会话合并：`handoff_cooldown_ms` 内同一会话只转交一次；codex 只读（关闭其全部工具、专用 `CODEX_HOME` 与空工作目录，并在沙箱内运行）；通知发往 `notify_target`，带幂等标识，重试不会重复送达
 - 失败按 `max_attempts` 与 `retry_after_ms` 重试，用尽后留为失败；决策或转交失败不影响收集，也不使服务退出
 - 库里 `decisions`、`handoffs` 两张表记录每条消息的决策与每次转交的状态；日志不含消息正文、提示词与分析结果
 
 试跑建议：先保持关闭，用 `sops exec-env secrets.enc.yaml 'curl …'` 对合成文本调一次决策接口，核对返回里 `answers[].probability`；再开启并把 `threshold` 临时设为大于 1，只打分不转交，观察分数；最后用合成的提示注入消息验证 codex 不读文件、不外传，并先用 `dws … --dry-run` 确认通知能发到本人。每小时限额起初设小。
+
+## 子进程沙箱
+
+采集用的 `dws`，分级用的 `curl`、`codex` 与发送通知的 `dws`，都经 macOS 自带的 `/usr/bin/sandbox-exec` 启动，策略为 `deny default`，只放行各自必需的文件、网络端口与系统服务；没有关闭沙箱的配置。策略文件在 `cli/sandbox/`（`dws.sb`、`curl.sb`、`codex.sb`），由各命令的 `sandbox` 引用：
+
+| 字段 | 说明 |
+|---|---|
+| bin | 沙箱程序，`/usr/bin/sandbox-exec` |
+| profile | 策略文件，相对路径按启动目录 |
+| paths | 路径参数（名到路径），先转成真实路径传给策略；路径不存在则沙箱拒绝启动 |
+| vars | `${NAME}` 写法的环境变量作参数（如 `HOME`）；只放路径类的值，参数在 `ps` 里可见，不放 secret |
+| probe | 自检时试跑的参数，如 `[--help]` |
+| canary | 自检时策略必须禁止执行的程序，如 `/usr/bin/true` |
+
+- 启动自检：`serve`、`ingest` 启动时，对每个会运行的命令先试跑 `canary`（须被拒）与 `bin` 加 `probe`（须退出 0），任一失败即以 `sandbox_exit_code` 退出并在 stderr 写明哪条命令、什么原因；`triage.mode: enabled` 时同样检查三个 triage 命令。自检只证明能启动、禁令生效，不证明 Keychain、DNS、TLS 的放行规则齐全
+- 路径无法解析（目录或策略文件不存在）时 `sandbox-exec` 退出 65，命令不存在时退出 71，都按命令失败处理，不会不加沙箱运行；codex 的目录须先建好：`mkdir -p .debug/codex-home .debug/codex-work`
+- `dws auth login` 在沙箱外执行
+- 只能有一层沙箱：codex 自带的 `-s read-only` 嵌套在外层沙箱内可能以 71 失败，现保留作纵深防御（codex 已关闭全部工具，一般不会触发）；若 codex 启动即 71，把 `-s` 改为 `danger-full-access`，由外层沙箱唯一把关
+- 已在真实环境验证：采集用的 `dws.sb`（监听订阅、补拉、解密、转发查询）；`curl.sb`、`codex.sb` 与发送通知的 `dws` 只在本机离线验证过 `--help` 与金丝雀，首次开启 triage 时按下条补规则
+- 事件总线：`dws` 监听时自己在 `/tmp/dws-event-<uid>/` 建 0700 目录与 socket，不要预先建这个目录，权限不对会令监听失败
+- 收敛策略：真实环境下规则可能不全（Keychain、DNS、TLS 用到的系统服务名）。另开终端看拒绝记录：`log stream --style compact --predicate 'sender == "Sandbox"'`，按 `deny(1) <操作> <对象>` 逐条补进对应 `.sb`，再用 `/usr/bin/sandbox-exec -f cli/sandbox/dws.sb -D HOME=$HOME -- dws --help` 复测
+- 残余风险：网络只能按端口限制，443 可连任意主机；沙箱内的 `dws` 仍能读 Keychain 与 `~/.dws`；基础策略放行全局文件元数据读取；`sandbox-exec` 已被系统标为弃用；升级 dws、codex、curl 后若真实路径变化，自检会失败而非裸跑
 
 ## HTTP 调用
 
@@ -202,6 +226,7 @@ curl -H 'x-session-id: s1' -H 'x-user: alice' -d '{}' http://127.0.0.1:15801/hea
 | `--help` | — | 0 | 帮助写 stdout |
 | 命令行参数错误 | — | 2 | 错误写 stderr |
 | 配置错误（文件不存在、YAML 无效、缺少或未知字段、取值无效） | — | 2 | stderr 输出 `路径: 原因` |
+| 启动时沙箱自检失败 | — | sandbox_exit_code | 错误写 stderr |
 | 服务地址绑定失败 | — | serve_exit_code | 错误写 stderr |
 | 停机等待超时 | — | shutdown_timeout_exit_code | 日志写 stderr |
 | 收集（`ingest` 或 `serve`）时存储失败 | — | ingest.failure_exit_code | 错误写 stderr 日志 |
