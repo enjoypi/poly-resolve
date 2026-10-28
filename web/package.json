@@ -1,0 +1,19 @@
+{
+  "name": "web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "gen": "bun gen.ts"
+  },
+  "dependencies": {
+    "openapi-fetch": "*"
+  },
+  "devDependencies": {
+    "@happy-dom/global-registrator": "*",
+    "@types/bun": "*",
+    "@typescript/native": "npm:typescript@*",
+    "happy-dom": "*",
+    "openapi-typescript": "*",
+    "typescript": "npm:@typescript/typescript6@*"
+  }
+}

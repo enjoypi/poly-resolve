@@ -1,0 +1,12 @@
+addr: "127.0.0.1:42436"
+log_level: debug
+serve_exit_code: 1
+shutdown_timeout_exit_code: 5
+shutdown_timeout_ms: 10000
+errors:
+  bad_request:
+    code: bad_request
+    exit_code: 3
+  unknown_action:
+    code: unknown_action
+    exit_code: 4
