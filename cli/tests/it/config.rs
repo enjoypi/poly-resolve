@@ -45,6 +45,16 @@ async fn missing_file_fails() {
 }
 
 #[tokio::test]
+async fn missing_ingest_fails() {
+    let yaml = YAML.split("ingest:").next().unwrap_or_default();
+    let path = config("missing-ingest.yaml", yaml).unwrap();
+    assert_eq!(
+        call(&path, ["health", "check"], "{}").await,
+        ExitCode::from(2)
+    );
+}
+
+#[tokio::test]
 async fn non_loopback_addr_fails() {
     for (name, addr) in [
         ("non-loopback.yaml", "0.0.0.0:0"),
@@ -74,8 +84,28 @@ async fn unknown_field_fails() {
 }
 
 #[tokio::test]
+async fn unknown_ingest_field_fails() {
+    let yaml = YAML.replace("  source: dingtalk\n", "  source: dingtalk\n  extra: 1\n");
+    let path = config("unknown-ingest-field.yaml", &yaml).unwrap();
+    assert_eq!(
+        call(&path, ["health", "check"], "{}").await,
+        ExitCode::from(2)
+    );
+}
+
+#[tokio::test]
 async fn zero_exit_code_fails() {
     let path = config("zero-exit.yaml", &YAML.replace('9', "0")).unwrap();
+    assert_eq!(
+        call(&path, ["health", "check"], "{}").await,
+        ExitCode::from(2)
+    );
+}
+
+#[tokio::test]
+async fn zero_ingest_failure_exit_code_fails() {
+    let yaml = YAML.replace("failure_exit_code: 16", "failure_exit_code: 0");
+    let path = config("zero-ingest-exit.yaml", &yaml).unwrap();
     assert_eq!(
         call(&path, ["health", "check"], "{}").await,
         ExitCode::from(2)

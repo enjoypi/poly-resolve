@@ -12,7 +12,7 @@
 
 ## 退出码
 
-- 来源：成功 0；监听失败取配置 `serve_exit_code`；停机排空超时取 `shutdown_timeout_exit_code`；业务错误取 `AppError::exit_code(errors)`；参数或配置错误为 2，读配置前发生故写在代码（与 clap 一致）；写输出失败至少为 1
+- 来源：成功 0；监听失败取配置 `serve_exit_code`；收集存储失败、须人工处理取配置 `ingest.failure_exit_code`、`ingest.manual_exit_code`（由 `adapters::ingest::run` 返回）；停机排空超时取 `shutdown_timeout_exit_code`；业务错误取 `AppError::exit_code(errors)`；参数或配置错误为 2，读配置前发生故写在代码（与 clap 一致）；写输出失败至少为 1
 - 收尾用无分支写法 `emit(code, &io::Result<()>)`，即 `ExitCode::from(code.max(u8::from(written.is_err())))`
 - 用户可见取值表在 README“返回码”，改动时同步
 
@@ -29,9 +29,13 @@
 - `POST /{feature}/{action}`，请求体即 request；状态码取 `AppError::status()`，handler 状态为 `Arc<Settings>`；响应头 `content-type: application/json`；axum 路由层 404、405 不经 dispatch、不打日志
 - `x-user`、`x-session-id` 代码不校验（部署要求见 README“HTTP 调用”）
 
+## ingest
+
+- `ingest --config`：`ingest` 段是 `adapters::config::Settings`，字段与校验在 adapters，cli 只在 `File` 里引用；停机信号取 `signal.rs` 的 `shutdown()`，经 `pin!` 以 `&mut` 传入 `adapters::ingest::run`；日志用 `with_subscriber(settings.log().clone())` 绑定（跨 await 有效，`with_default` 只管同步闭包）
+
 ## 停机
 
-- `http.rs` 的 `shutdown()` 用 `signal(kind).ok()` 加 `poll_fn` 轮询，注册失败取 Pending；不 spawn
+- `signal.rs` 的 `shutdown()`（serve 与 ingest 共用）用 `signal(kind).ok()` 加 `poll_fn` 轮询，注册失败取 Pending；不 spawn
 - `run` 在 `listening` 日志前同步调 `shutdown()` 两次，axum 优雅停机与 `deadline` 各一份（tokio 广播同一信号），避免注册前的信号按默认行为杀进程
 - `poll_fn` 内先 poll `deadline`（信号后再等 `shutdown_timeout_ms`）再 poll 服务：服务先完成退出 0；仅 `deadline` 到期返回超时码并丢弃服务
 - 返回 `ExitCode` 而非 `process::exit`，残留连接随 runtime 在 main 返回时取消
@@ -46,6 +50,7 @@
 
 - helper 放 `tests/it/support.rs`，临时文件写 `CARGO_TARGET_TMPDIR`
 - 子进程测试用 `CARGO_BIN_EXE_cli`，须以 SIGINT 或 SIGTERM 让进程正常退出（被 kill 的进程不写 profraw）；serve 监听 `127.0.0.1:0`，从 listening 日志取地址
+- ingest 测试：假 dws 夹具复用 `../adapters/tests/it/fixtures/fake-dws.sh`，配置里把 `bin`、`FAKE_DIR`、`store_path` 换成临时目录；等到 `event stored` 日志再发 SIGTERM；存储失败用例用默认的不存在目录
 - 停机测试：
   - 在途连接：连接 A 发完整请求头与不足 `Content-Length` 的请求体并保持
   - 同步点：另开连接完成一次完整请求（A 的数据已先到），再发信号

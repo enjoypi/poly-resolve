@@ -6,6 +6,10 @@ use domain::features::{Call, Origin, Target};
 #[derive(Parser)]
 pub(crate) enum Command {
     Call(Box<Invocation>),
+    Ingest {
+        #[arg(long)]
+        config: PathBuf,
+    },
     Serve {
         #[arg(long)]
         config: PathBuf,

@@ -3,6 +3,7 @@ use core::num::{NonZeroU8, NonZeroU64};
 use std::fs;
 use std::path::Path;
 
+use adapters::config::Settings as Ingest;
 use domain::Errors;
 use serde::Deserialize;
 use serde_saphyr::from_str;
@@ -16,6 +17,7 @@ use crate::log;
 struct File {
     addr: SocketAddr,
     errors: Errors,
+    ingest: Ingest,
     log_level: String,
     serve_exit_code: NonZeroU8,
     shutdown_timeout_exit_code: NonZeroU8,
@@ -25,6 +27,7 @@ struct File {
 pub(crate) struct Settings {
     addr: SocketAddr,
     errors: Errors,
+    ingest: Ingest,
     log: Dispatch,
     serve_exit_code: u8,
     shutdown_timeout_exit_code: u8,
@@ -38,6 +41,10 @@ impl Settings {
 
     pub(crate) const fn errors(&self) -> &Errors {
         &self.errors
+    }
+
+    pub(crate) const fn ingest(&self) -> &Ingest {
+        &self.ingest
     }
 
     pub(crate) const fn log(&self) -> &Dispatch {
@@ -74,6 +81,7 @@ pub(crate) fn load(path: &Path) -> Result<Settings, String> {
     Ok(Settings {
         addr: file.addr,
         errors: file.errors,
+        ingest: file.ingest,
         log: log::dispatch(level),
         serve_exit_code: file.serve_exit_code.get(),
         shutdown_timeout_exit_code: file.shutdown_timeout_exit_code.get(),

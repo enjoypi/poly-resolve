@@ -15,11 +15,11 @@ use axum::routing::post;
 use axum::serve;
 use domain::features::{self, Call, Origin, Target};
 use tokio::net::TcpListener;
-use tokio::signal::unix::{SignalKind, signal};
 use tokio::time::sleep;
 use tracing::dispatcher::with_default;
 
 use crate::config::Settings;
+use crate::signal::shutdown;
 
 pub(crate) const SESSION_HEADER: &str = "x-session-id";
 pub(crate) const USER_HEADER: &str = "x-user";
@@ -97,20 +97,4 @@ pub(crate) async fn run(listener: TcpListener, settings: Arc<Settings>) -> (u8, 
         }
     })
     .await
-}
-
-fn shutdown() -> impl Future<Output = ()> + Send {
-    let mut signals =
-        [SignalKind::interrupt(), SignalKind::terminate()].map(|kind| signal(kind).ok());
-    poll_fn(move |context| {
-        if signals
-            .iter_mut()
-            .flatten()
-            .any(|sig| sig.poll_recv(context).is_ready())
-        {
-            Poll::Ready(())
-        } else {
-            Poll::Pending
-        }
-    })
 }

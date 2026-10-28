@@ -1,4 +1,4 @@
-# harness-rs
+# PolyResolve
 
 通过命令行或 HTTP 调用业务功能。功能与规则见 [docs/requirements.md](docs/requirements.md)。
 
@@ -6,6 +6,7 @@
 
 - macOS 或 Linux
 - rustup 与 stable 工具链：`rustup toolchain install stable`
+- 仅收集钉钉消息（`ingest`）需要：钉钉工作台命令行 `dws`，安装后执行 `dws auth login` 登录；企业管理员须开通“CLI 访问管理”，补拉另需“消息搜索”权益
 
 ## 构建
 
@@ -26,6 +27,19 @@ YAML 文件，各项均必填，不允许其他字段。示例见 `cli/config.ya
 | serve_exit_code | 服务地址绑定失败时的退出码，1 至 255 |
 | shutdown_timeout_exit_code | 停机等待超时被强制退出时的退出码，1 至 255 |
 | shutdown_timeout_ms | 收到停机信号后等待在途请求完成的最长毫秒数，至少 1 |
+| ingest.account | 账号标识，写入每条消息记录，区分不同登录员工 |
+| ingest.source | 来源标识，写入每条消息记录，如 dingtalk |
+| ingest.source_utc_offset_minutes | 钉钉返回的无时区时间所属时区相对 UTC 的分钟数，北京时间为 480 |
+| ingest.store_path | SQLite 文件路径，文件不存在则创建，所在目录须已存在；内含消息正文，须限制目录权限 |
+| ingest.initial_backfill_ms | 库内无记录时，首次补拉回溯的毫秒数 |
+| ingest.reconcile_overlap_ms | 补拉从库内最新消息时间再往前多回溯的毫秒数 |
+| ingest.backoff_initial_ms / backoff_max_ms | 钉钉工具中断后重启的等待毫秒数，逐次翻倍直到上限，至少 1 |
+| ingest.child_exit_timeout_ms | 停机时等待钉钉工具退出的最长毫秒数，超时强杀，至少 1 |
+| ingest.failure_exit_code | 存储失败时的退出码，1 至 255 |
+| ingest.manual_exit_code | 钉钉工具提示登录失效或需授权、须人工处理时的退出码，1 至 255 |
+| ingest.dws.env | 传给钉钉工具的环境变量，应含 DO_NOT_TRACK 以关闭其遥测 |
+| ingest.dws.listen / pull | 实时监听与补拉所用命令：bin 为可执行文件，args 为参数；补拉自动追加 --start、--end |
+| ingest.dws.manual_exit_codes | 钉钉工具退出码落在此列表时视为须人工处理 |
 | errors.<错误>.code / exit_code | 该错误的响应体 code 与命令行退出码（1 至 255）；<错误> 取 bad_request、unknown_action，见“返回码” |
 
 ## 命令行调用
@@ -62,6 +76,16 @@ cli call <FEATURE> <ACTION> --config <CONFIG> --json <JSON> [--session-id <SESSI
 
 Ctrl+C（SIGINT）或 SIGTERM 触发停机：不再接受新连接，在途请求完成后以退出码 0 退出；超过 shutdown_timeout_ms 仍未完成则强制退出，退出码取 shutdown_timeout_exit_code，在途连接被重置。停机期间再次发信号无效。停机过程写 stderr 日志，超时记为 error 级。
 
+## 收集钉钉消息
+
+```sh
+./target/release/cli ingest --config cli/config.yaml
+```
+
+以登录员工本人身份收集其可见的全部单聊与群聊消息，写入 `ingest.store_path`：启动时先按已有记录补拉，再实时监听；钉钉工具中断后自动重启并再次补拉；同一消息只记一条。
+
+Ctrl+C（SIGINT）或 SIGTERM 触发停机：让钉钉工具正常退出后以退出码 0 结束，超过 child_exit_timeout_ms 则强杀。日志同样写 stderr，不含消息正文。
+
 ## HTTP 调用
 
 `POST /<feature>/<action>`，请求体为 JSON，响应头 `content-type: application/json`。
@@ -74,10 +98,10 @@ Ctrl+C（SIGINT）或 SIGTERM 触发停机：不再接受新连接，在途请�
 部署要求：两个请求头由前置网关鉴权后写入，网关须剥离客户端自带的同名头。
 
 ```sh
-curl -d '{}' http://127.0.0.1:42436/health/check
+curl -d '{}' http://127.0.0.1:15801/health/check
 # {"status":"ok"}
 
-curl -H 'x-session-id: s1' -H 'x-user: alice' -d '{}' http://127.0.0.1:42436/health/check
+curl -H 'x-session-id: s1' -H 'x-user: alice' -d '{}' http://127.0.0.1:15801/health/check
 # {"status":"ok"}
 ```
 
@@ -99,6 +123,8 @@ curl -H 'x-session-id: s1' -H 'x-user: alice' -d '{}' http://127.0.0.1:42436/hea
 | 配置错误（文件不存在、YAML 无效、缺少或未知字段、取值无效） | — | 2 | stderr 输出 `路径: 原因` |
 | 服务地址绑定失败 | — | serve_exit_code | 错误写 stderr |
 | 停机等待超时 | — | shutdown_timeout_exit_code | 日志写 stderr |
+| 收集时存储失败 | — | ingest.failure_exit_code | 错误写 stderr 日志 |
+| 收集时钉钉工具须人工处理 | — | ingest.manual_exit_code | 错误写 stderr 日志 |
 | 写 stdout 失败 | — | 至少 1 | — |
 | HTTP 路径不是 `/<feature>/<action>` | 404 | — | 空响应体 |
 | HTTP 方法不是 POST | 405 | — | 空响应体 |

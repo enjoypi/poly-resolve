@@ -4,21 +4,26 @@ mod args;
 mod config;
 mod http;
 mod log;
+mod signal;
 mod spec;
 
 use alloc::sync::Arc;
 use core::fmt::Display;
+use core::pin::pin;
 use std::ffi::OsString;
 use std::io::{self, Write as _};
 use std::process::ExitCode;
 
+use adapters::ingest::run as ingest_run;
 use clap::Parser as _;
 use domain::features::{self, Call};
 use tokio::net::TcpListener;
 use tracing::dispatcher::with_default;
+use tracing::instrument::WithSubscriber as _;
 
 use crate::args::Command;
 use crate::config::Settings;
+use crate::signal::shutdown;
 
 const CONFIG_ERROR: u8 = 2;
 
@@ -48,6 +53,10 @@ async fn execute(command: Command) -> ExitCode {
             Ok(settings) => call(&settings, &invocation.call()),
             Err(err) => fail(CONFIG_ERROR, &err),
         },
+        Command::Ingest { config } => match config::load(&config) {
+            Ok(settings) => ingest(&settings).await,
+            Err(err) => fail(CONFIG_ERROR, &err),
+        },
         Command::Serve { config } => match config::load(&config) {
             Ok(settings) => serve(settings).await,
             Err(err) => fail(CONFIG_ERROR, &err),
@@ -58,6 +67,14 @@ async fn execute(command: Command) -> ExitCode {
 
 fn fail(code: u8, err: &dyn Display) -> ExitCode {
     emit(code, &writeln!(io::stderr().lock(), "{err}"))
+}
+
+async fn ingest(settings: &Settings) -> ExitCode {
+    let mut stop = pin!(shutdown());
+    let code = ingest_run(settings.ingest(), settings.errors(), &mut stop)
+        .with_subscriber(settings.log().clone())
+        .await;
+    emit(code, &Ok(()))
 }
 
 pub async fn run(args: Vec<OsString>) -> ExitCode {

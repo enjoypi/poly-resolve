@@ -1,10 +1,10 @@
-use std::io::{self, BufRead as _, BufReader, Lines, Read as _, Write as _};
+use std::io::{self, BufRead as _, BufReader, Read as _, Write as _};
 use std::net::{TcpListener, TcpStream};
-use std::process::{Child, ChildStderr, Command, ExitCode, Stdio};
+use std::process::{Child, Command, ExitCode, Stdio};
 
 use serde_json::{Value, from_str};
 
-use crate::support::{YAML, config, run};
+use crate::support::{Stderr, YAML, await_log, config, run, terminate};
 
 const IDENTITY: &str = "x-session-id: s1\r\nx-user: u1\r\n";
 const JSON: &str = "\r\ncontent-type: application/json\r\n";
@@ -13,17 +13,6 @@ struct Server {
     addr: String,
     child: Child,
     lines: Stderr,
-}
-
-type Stderr = Lines<BufReader<ChildStderr>>;
-
-fn await_log(lines: &mut Stderr, needle: &str) -> io::Result<()> {
-    for line in lines {
-        if line?.contains(needle) {
-            return Ok(());
-        }
-    }
-    Err(io::Error::other(format!("log not found: {needle}")))
 }
 
 #[tokio::test]
@@ -141,16 +130,6 @@ fn start(config: &str) -> io::Result<Server> {
         .ok_or_else(|| io::Error::other("no addr in listening log"))?
         .to_owned();
     Ok(Server { addr, child, lines })
-}
-
-fn terminate(child: &Child, signal: &str) -> io::Result<()> {
-    let status = Command::new("kill")
-        .args([signal, &child.id().to_string()])
-        .status()?;
-    status
-        .success()
-        .then_some(())
-        .ok_or_else(|| io::Error::other("kill failed"))
 }
 
 #[test]

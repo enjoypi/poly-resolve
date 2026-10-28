@@ -22,6 +22,156 @@
           "status"
         ],
         "type": "object"
+      },
+      "IngestEnvelope": {
+        "properties": {
+          "account": {
+            "type": "string"
+          },
+          "conversation_id": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string"
+          },
+          "occurred_at_ms": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "raw": {
+            "type": "string"
+          },
+          "received_at_ms": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "sender_id": {
+            "type": "string"
+          },
+          "sender_name": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "account",
+          "conversation_id",
+          "key",
+          "occurred_at_ms",
+          "raw",
+          "received_at_ms",
+          "sender_id",
+          "sender_name",
+          "source",
+          "text"
+        ],
+        "type": "object"
+      },
+      "IngestParsePageResponse": {
+        "properties": {
+          "envelopes": {
+            "items": {
+              "$ref": "#/components/schemas/IngestEnvelope"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "skipped": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "envelopes",
+          "skipped"
+        ],
+        "type": "object"
+      },
+      "IngestParseRequest": {
+        "properties": {
+          "account": {
+            "type": "string"
+          },
+          "body": {
+            "type": "string"
+          },
+          "received_at_ms": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "source": {
+            "type": "string"
+          },
+          "utc_offset_minutes": {
+            "format": "int16",
+            "maximum": 32767,
+            "minimum": -32768,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "account",
+          "body",
+          "received_at_ms",
+          "source",
+          "utc_offset_minutes"
+        ],
+        "type": "object"
+      },
+      "IngestWindowRequest": {
+        "properties": {
+          "from_ms": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "to_ms": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "utc_offset_minutes": {
+            "format": "int16",
+            "maximum": 32767,
+            "minimum": -32768,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "from_ms",
+          "to_ms",
+          "utc_offset_minutes"
+        ],
+        "type": "object"
+      },
+      "IngestWindowResponse": {
+        "properties": {
+          "end": {
+            "type": "string"
+          },
+          "start": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "end",
+          "start"
+        ],
+        "type": "object"
       }
     }
   },
@@ -70,6 +220,174 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HealthCheckResponse"
+                }
+              }
+            },
+            "description": "success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "bad request"
+          }
+        }
+      }
+    },
+    "/ingest/parse_event": {
+      "post": {
+        "parameters": [
+          {
+            "description": "set by the gateway",
+            "in": "header",
+            "name": "x-session-id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "set by the gateway",
+            "in": "header",
+            "name": "x-user",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IngestParseRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IngestEnvelope"
+                }
+              }
+            },
+            "description": "success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "bad request"
+          }
+        }
+      }
+    },
+    "/ingest/parse_page": {
+      "post": {
+        "parameters": [
+          {
+            "description": "set by the gateway",
+            "in": "header",
+            "name": "x-session-id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "set by the gateway",
+            "in": "header",
+            "name": "x-user",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IngestParseRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IngestParsePageResponse"
+                }
+              }
+            },
+            "description": "success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "bad request"
+          }
+        }
+      }
+    },
+    "/ingest/window": {
+      "post": {
+        "parameters": [
+          {
+            "description": "set by the gateway",
+            "in": "header",
+            "name": "x-session-id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "set by the gateway",
+            "in": "header",
+            "name": "x-user",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IngestWindowRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IngestWindowResponse"
                 }
               }
             },

@@ -1,4 +1,5 @@
 mod health;
+mod ingest;
 
 use domain::features::{Call, Origin, Target, dispatch};
 use serde::Deserialize;
@@ -62,6 +63,50 @@ fn dispatch_logs_error_code_as_response() {
     assert_eq!(line.fields.get("session_id"), Some(&json!("")));
     assert_eq!(line.fields.get("user"), Some(&json!("")));
     assert_eq!(line.fields.get("response"), Some(&json!(err.body(&errors))));
+}
+
+#[test]
+fn dispatch_redacts_ingest_errors() {
+    let errors = errors().unwrap();
+    let capture = Capture::default();
+    let call = cli("ingest", "parse_event", "top-secret-body");
+    let err = capture.record(|| dispatch(&errors, &call)).unwrap_err();
+    let line = parse(&capture).unwrap();
+    assert!(!capture.text().contains("top-secret-body"));
+    assert_eq!(
+        line.fields.get("response"),
+        Some(&json!(format!("redacted:{}", err.body(&errors).len())))
+    );
+    assert_eq!(line.fields.get("ok"), Some(&json!(false)));
+}
+
+#[test]
+fn dispatch_redacts_ingest_payloads() {
+    let capture = Capture::default();
+    let (offset, received): (i16, u64) = (480, 1);
+    let request = json!({
+        "account": "acct",
+        "body": r#"{"message_id":"m1","conversation_id":"c1","content":"top-secret-body","create_time":"2026-07-08 12:00:35"}"#,
+        "received_at_ms": received,
+        "source": "dingtalk",
+        "utc_offset_minutes": offset,
+    })
+    .to_string();
+    let call = cli("ingest", "parse_event", &request);
+    let body = capture
+        .record(|| dispatch(&errors().unwrap(), &call))
+        .unwrap();
+    let line = parse(&capture).unwrap();
+    assert!(!capture.text().contains("top-secret-body"));
+    assert_eq!(
+        line.fields.get("request"),
+        Some(&json!(format!("redacted:{}", request.len())))
+    );
+    assert_eq!(
+        line.fields.get("response"),
+        Some(&json!(format!("redacted:{}", body.len())))
+    );
+    assert_eq!(line.fields.get("ok"), Some(&json!(true)));
 }
 
 fn parse(capture: &Capture) -> Result<Line, Error> {
