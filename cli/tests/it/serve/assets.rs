@@ -32,7 +32,7 @@ fn hides_unsafe_and_missing_paths() {
     }
     let method = get(&server.addr, "/health/check").unwrap();
     assert!(method.starts_with("HTTP/1.1 405"));
-    let write = post(&server.addr, ["/app.js", ""], "{}").unwrap();
+    let write = post(&server.addr, ["/app.js", ""], "").unwrap();
     assert!(write.starts_with("HTTP/1.1 405"));
     assert!(stop(server).unwrap());
 }

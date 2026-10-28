@@ -23,6 +23,67 @@
         ],
         "type": "object"
       },
+      "IngestAssembleRequest": {
+        "properties": {
+          "children": {
+            "items": {
+              "$ref": "#/components/schemas/IngestChild"
+            },
+            "type": "array"
+          },
+          "envelope": {
+            "$ref": "#/components/schemas/IngestEnvelope"
+          }
+        },
+        "required": [
+          "children",
+          "envelope"
+        ],
+        "type": "object"
+      },
+      "IngestChild": {
+        "properties": {
+          "sender": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sender",
+          "text"
+        ],
+        "type": "object"
+      },
+      "IngestCipherRequest": {
+        "properties": {
+          "envelope": {
+            "$ref": "#/components/schemas/IngestEnvelope"
+          },
+          "min_length": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "envelope",
+          "min_length"
+        ],
+        "type": "object"
+      },
+      "IngestCipherResponse": {
+        "properties": {
+          "cipher": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
       "IngestEnvelope": {
         "properties": {
           "account": {
@@ -33,6 +94,12 @@
           },
           "key": {
             "type": "string"
+          },
+          "lookup": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "occurred_at_ms": {
             "format": "uint64",
@@ -108,6 +175,11 @@
           "body": {
             "type": "string"
           },
+          "cipher_min_length": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
           "received_at_ms": {
             "format": "uint64",
             "minimum": 0,
@@ -126,9 +198,25 @@
         "required": [
           "account",
           "body",
+          "cipher_min_length",
           "received_at_ms",
           "source",
           "utc_offset_minutes"
+        ],
+        "type": "object"
+      },
+      "IngestRevealRequest": {
+        "properties": {
+          "envelope": {
+            "$ref": "#/components/schemas/IngestEnvelope"
+          },
+          "plaintext": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "envelope",
+          "plaintext"
         ],
         "type": "object"
       },
@@ -324,6 +412,118 @@
         }
       }
     },
+    "/ingest/assemble": {
+      "post": {
+        "parameters": [
+          {
+            "description": "set by the gateway",
+            "in": "header",
+            "name": "x-session-id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "set by the gateway",
+            "in": "header",
+            "name": "x-user",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IngestAssembleRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IngestEnvelope"
+                }
+              }
+            },
+            "description": "success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "bad request"
+          }
+        }
+      }
+    },
+    "/ingest/cipher": {
+      "post": {
+        "parameters": [
+          {
+            "description": "set by the gateway",
+            "in": "header",
+            "name": "x-session-id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "set by the gateway",
+            "in": "header",
+            "name": "x-user",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IngestCipherRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IngestCipherResponse"
+                }
+              }
+            },
+            "description": "success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "bad request"
+          }
+        }
+      }
+    },
     "/ingest/parse_event": {
       "post": {
         "parameters": [
@@ -418,6 +618,62 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/IngestParsePageResponse"
+                }
+              }
+            },
+            "description": "success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "bad request"
+          }
+        }
+      }
+    },
+    "/ingest/reveal": {
+      "post": {
+        "parameters": [
+          {
+            "description": "set by the gateway",
+            "in": "header",
+            "name": "x-session-id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "set by the gateway",
+            "in": "header",
+            "name": "x-user",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IngestRevealRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IngestEnvelope"
                 }
               }
             },

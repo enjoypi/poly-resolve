@@ -7,26 +7,22 @@ type Failure<'name> = (&'name str, Vec<u16>);
 
 #[test]
 fn lists_failures_per_route() {
-    let failures: Vec<Failure<'_>> = build()
+    let failing: Vec<Failure<'_>> = build()
         .entries()
         .iter()
         .map(|entry| {
             (
                 entry.feature(),
-                entry.failures().iter().map(|err| err.status()).collect(),
+                entry
+                    .failures()
+                    .iter()
+                    .map(|err| err.status())
+                    .collect::<Vec<u16>>(),
             )
         })
+        .filter(|entry| !entry.1.is_empty())
         .collect();
-    assert_eq!(
-        failures,
-        [
-            ("health", vec![]),
-            ("ingest", vec![]),
-            ("ingest", vec![]),
-            ("ingest", vec![]),
-            ("messages", vec![503])
-        ]
-    );
+    assert_eq!(failing, [("messages", vec![503])]);
 }
 
 #[test]
@@ -41,8 +37,11 @@ fn lists_routes_with_schemas() {
         routes,
         [
             ("health", "check"),
+            ("ingest", "assemble"),
+            ("ingest", "cipher"),
             ("ingest", "parse_event"),
             ("ingest", "parse_page"),
+            ("ingest", "reveal"),
             ("ingest", "window"),
             ("messages", "list")
         ]
@@ -69,9 +68,14 @@ fn lists_routes_with_schemas() {
         [
             "ErrorBody",
             "HealthCheckResponse",
+            "IngestAssembleRequest",
+            "IngestChild",
+            "IngestCipherRequest",
+            "IngestCipherResponse",
             "IngestEnvelope",
             "IngestParsePageResponse",
             "IngestParseRequest",
+            "IngestRevealRequest",
             "IngestWindowRequest",
             "IngestWindowResponse",
             "MessagesListItem",

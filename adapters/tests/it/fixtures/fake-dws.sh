@@ -8,6 +8,24 @@ listen)
     *) cat >/dev/null; exit 0 ;;
   esac
   ;;
+lookup)
+  echo "$@" >> "$FAKE_DIR/lookup-args.txt"
+  case "$FAKE_LOOKUP" in
+    fail) exit 1 ;;
+    junk) echo 'not json' ;;
+    slow) exec sleep 30 ;;
+    *) if [ -f "$FAKE_DIR/lookup.json" ]; then cat "$FAKE_DIR/lookup.json"; fi ;;
+  esac
+  ;;
+decrypt)
+  echo "$@" > "$FAKE_DIR/decrypt-args.txt"
+  case "$FAKE_DECRYPT" in
+    fail) echo '{"error":{"code":5,"message":"decrypt failed"}}'; exit 5 ;;
+    junk) echo 'not json' ;;
+    slow) exec sleep 30 ;;
+    *) echo '{"ok":true,"plaintext":"CLEARTEXT"}' ;;
+  esac
+  ;;
 pull)
   echo "$@" > "$FAKE_DIR/pull-args.txt"
   case "$FAKE_PULL" in

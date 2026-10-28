@@ -30,6 +30,11 @@
 - 时间 `create_time` 或 `createTime`：数字当 UTC 毫秒，字符串先试 RFC3339，再试无时区的 `%Y-%m-%d %H:%M:%S`（按偏移换算）；早于 1970 取 0
 - 补拉一页内无法解析的消息计入 `skipped`，不使整页失败；`next_cursor` 仅在 `hasMore` 为真时给出（服务端取完后仍会返回游标，不能只看游标），非空表示未取完
 - `key` 为 `<source>:<account>:<message_id>`，实时与补拉共用，供存储去重
+- `cipher`（`typed`）：请求 `{envelope, min_length}`，响应 `{cipher}`（是密文则为 `text`，否则 null）；规则同 dws 的 `IsEncrypted`（`ingest/cipher.rs`）：trim 后以 `||版本||类型||长度` 结尾（三段全是数字、非空），其余部分 trim 后不短于 `min_length` 且只含字母数字与 `+/=` 和空白；`min_length` 由 adapters 取自配置
+- `reveal`（`typed`）：请求 `{envelope, plaintext}`，响应 envelope，仅把 `text` 换成 `plaintext`，其余字段不变；如何解密由 adapters 决定，domain 只做替换
+- `fragments`（`ingest/cipher.rs`）：正文任一行（trim 后）整行只含字母数字与 `+/=` 且不短于 `cipher_min_length`，即视为留有密文片段；`parse_event`、`parse_page` 据此给 envelope 填 `lookup`（消息 ID，否则空），请求带 `cipher_min_length`
+- `assemble`（`typed`）：请求 `{envelope, children: [{sender, text}]}`，正文重组为“原正文首行 + 每条子消息的 `sender:text`”，`lookup` 置空；子消息由 adapters 向钉钉工具查询（解密后的）
+- `cipher`、`reveal`、`assemble` 都带消息内容，路由标 `Trace::Redacted`
 - 对外结构里不放 bool 字段（`struct_excessive_bools`），用可空游标等代替
 
 ## messages

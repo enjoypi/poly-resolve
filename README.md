@@ -42,6 +42,10 @@ YAML 文件，各项均必填，不允许其他字段。示例见 `cli/config.ya
 | ingest.manual_exit_code | 钉钉工具提示登录失效或需授权、须人工处理时的退出码，1 至 255 |
 | ingest.dws.env | 传给钉钉工具的环境变量，应含 DO_NOT_TRACK 以关闭其遥测 |
 | ingest.dws.listen / pull | 实时监听与补拉所用命令：bin 为可执行文件，args 为参数；补拉自动追加 --start、--end |
+| ingest.cipher_min_length | 判定三方密文用：去掉末尾 `||版本||类型||长度` 后的 base64 正文至少多少字符，至少 1 |
+| ingest.dws.decrypt | 解密所用命令：bin 为可执行文件，args 为参数；自动追加 `--text=<密文>`，标准输出须为含 `plaintext` 的 JSON |
+| ingest.lookup_batch | 一次向钉钉工具查询转发消息详情的消息数，至少 1（钉钉工具上限 50） |
+| ingest.dws.lookup | 查询消息详情所用命令：bin 为可执行文件，args 为参数；自动追加 `--msg-ids=<消息 ID,…>`，标准输出须为含 `messages[].forwarded[]` 的 JSON |
 | ingest.dws.manual_exit_codes | 钉钉工具退出码落在此列表时视为须人工处理 |
 | errors.<错误>.code / exit_code | 该错误的响应体 code 与命令行退出码（1 至 255）；<错误> 取 bad_request、storage、unknown_action，见“返回码” |
 
@@ -86,6 +90,8 @@ Ctrl+C（SIGINT）或 SIGTERM 触发停机：不再接受新连接，在途请�
 ```
 
 只收集、不提供页面时用本命令（`serve` 已包含同样的收集）。以登录员工本人身份收集其可见的全部单聊与群聊消息，写入 `ingest.store_path`：启动时先按已有记录补拉，再实时监听；钉钉工具中断后自动重启并再次补拉；同一消息只记一条。
+
+实时事件的正文可能是三方密文（单聊、群聊都有），格式为多行 base64 加末尾 `||版本||类型||长度`，与钉钉工具自身的判定一致；判为密文的入库前自动调用钉钉工具解密，普通文字（含 `||` 也不算）不会触发；解密失败则按密文入库并记 warn（日志不含正文）。合并转发消息的正文里，被加密的子消息只留有截断的密文片段（整行都是 base64）；遇到这种消息，入库前向钉钉工具查询其详情，把正文重组为“标题行 + 每条子消息的 发送人:解密后内容”；查询失败则保持原样并记 debug。补拉得到的明文不会覆盖已入库的记录，库里已有的密文或密文片段需删库后重新收集。
 
 Ctrl+C（SIGINT）或 SIGTERM 触发停机：让钉钉工具正常退出后以退出码 0 结束，超过 child_exit_timeout_ms 则强杀。日志同样写 stderr，不含消息正文。
 
