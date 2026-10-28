@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { inferColumns, type Row } from "../src/columns";
-import { applyView, nextSort, type State } from "../src/view";
+import { applyView, nextSort, pin, type State } from "../src/view";
 
 const NOON = Date.UTC(2026, 9, 28, 1, 20, 9);
 
@@ -86,4 +86,30 @@ test("nextSort 依次为升序、降序、取消，换列重新从升序开始",
   expect(desc).toEqual({ dir: "desc", key: "text" });
   expect(nextSort(desc, "text")).toBeUndefined();
   expect(nextSort(desc, "key")).toEqual({ dir: "asc", key: "key" });
+});
+
+test("筛选词用英文双引号包住时精确匹配整格，区分大小写", () => {
+  const data = [
+    { key: "k1", sender_name: "李明" },
+    { key: "k2", sender_name: "李明华" },
+    { key: "k3", sender_name: "Li" },
+    { key: "k4", sender_name: "" },
+  ];
+  expect(keys({ filters: { sender_name: '"李明"' } }, data)).toEqual(["k1"]);
+  expect(keys({ filters: { sender_name: '"li"' } }, data)).toEqual([]);
+  expect(keys({ filters: { sender_name: '""' } }, data)).toEqual(["k4"]);
+  expect(keys({ filters: { sender_name: '"李明' } }, data)).toEqual([]);
+});
+
+test("pin 只取被点列的显示值并加双引号，列不存在则为空", () => {
+  const data = [
+    { conversation_id: "c1", key: "k1", sender_id: "u2", sender_name: "" },
+    { conversation_id: "", key: "k2", sender_name: "李明" },
+  ];
+  const columns = inferColumns(data);
+  const zone = "Asia/Shanghai";
+  expect(pin(data[0] ?? {}, columns, "sender_name", zone)).toEqual({ sender_name: '"u2"' });
+  expect(pin(data[0] ?? {}, columns, "conversation_id", zone)).toEqual({ conversation_id: '"c1"' });
+  expect(pin(data[1] ?? {}, columns, "conversation_id")).toEqual({ conversation_id: '""' });
+  expect(pin(data[1] ?? {}, columns, "nope")).toEqual({});
 });

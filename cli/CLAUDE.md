@@ -39,7 +39,7 @@
 ## 页面
 
 - `assets.rs`：`GET /` 取 `web_dir/index.html`，`GET /{file}` 取 `web_dir/<file>`，不经 dispatch、不打日志；`file` 须全由字母、数字、`.`、`_`、`-` 组成且不以 `.` 开头（axum 的 `Path` 已百分号解码，`%2F`、`..` 都在此被拒）；读失败一律 404 空响应体
-- content-type 按扩展名查 `TYPES`（css、html、js），其余 `application/octet-stream`；`bun build` 产物平铺在输出目录，单段路径够用，不支持子目录
+- content-type 按扩展名查 `TYPES`（css、html、js、svg），其余 `application/octet-stream`；`bun build` 产物平铺在输出目录，单段路径够用，不支持子目录
 - `GET /a/b` 命中接口路径只收 POST 的路由，故 405；POST 到 `/{file}` 同样 405
 
 ## 停机

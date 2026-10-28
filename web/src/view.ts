@@ -2,6 +2,7 @@ import { type Column, content, display, type Row } from "./columns";
 
 const COLLATOR = new Intl.Collator("zh-CN", { numeric: true });
 const COMPARE = /^(>=|<=|>|<|=)?\s*(-?\d+(?:\.\d+)?)$/;
+const QUOTED = /^"(.*)"$/s;
 const RANGE = /^(-?\d+(?:\.\d+)?)\s*\.\.\s*(-?\d+(?:\.\d+)?)$/;
 
 export type Dir = "asc" | "desc";
@@ -36,10 +37,13 @@ function contains(haystack: string, needle: string): boolean {
 }
 
 function matches(row: Row, column: Column, text: string, timeZone?: string): boolean {
+  const shown = display(row, column, timeZone);
+  const quoted = QUOTED.exec(text.trim());
+  if (quoted) return shown === (quoted[1] ?? "");
   const test = column.kind === "number" ? predicate(text.trim()) : undefined;
   const raw = row[column.key];
   if (test) return typeof raw === "number" && test(raw);
-  return contains(display(row, column, timeZone), text);
+  return contains(shown, text);
 }
 
 function predicate(expression: string): Test | undefined {
@@ -92,4 +96,14 @@ export function applyView(rows: Row[], columns: Column[], state: State, timeZone
 export function nextSort(current: Sort | undefined, key: string): Sort | undefined {
   if (current?.key !== key) return { dir: "asc", key };
   return current.dir === "asc" ? { dir: "desc", key } : undefined;
+}
+
+export function pin(
+  row: Row,
+  columns: Column[],
+  key: string,
+  timeZone?: string,
+): Record<string, string> {
+  const column = columns.find((entry) => entry.key === key);
+  return column ? { [key]: `"${display(row, column, timeZone)}"` } : {};
 }
