@@ -39,9 +39,10 @@
 
 ## messages
 
-- `messages.list`：请求 `{cursor?, limit?}`，响应 `{items, next_cursor}`；`items` 为 `inbox::Row`（不含 raw），路由标 `Trace::Redacted`
+- `messages.list`：请求 `{cursor?, limit?, from_ms?, to_ms?}`，响应 `{items, next_cursor}`；`items` 为 `inbox::Row`（不含 raw），路由标 `Trace::Redacted`
 - `inbox::Reader` 是 domain 定义、adapters 实现的读取接口（`Debug + Sync`：`Context` 持有 `&dyn Reader` 跨 await 时须 Send）；契约：按 `occurred_at_ms` 降序、同值按 `key` 降序，返回严格小于游标的至多 `limit` 条；读失败返回 `AppError::Storage`
 - 分页规则在 domain：`limit` 缺省取 `Paging.default`，为 0 或超过 `Paging.max` 拒绝；向 reader 多取 1 条判断是否有下一页，有才给 `next_cursor`
+- 时间范围 `from_ms`、`to_ms`（UTC 毫秒）是半开区间 `[from_ms, to_ms)`，可只给一端；两端都给且 `from_ms >= to_ms` 按请求无效；经 `inbox::Window`（字段 `since`、`until`，`min_ident_chars` 不允许 `to`）放进 `Query`，由 reader 与游标条件叠加过滤
 - 游标是不透明字符串 `<occurred_at_ms>:<key>`，按第一个冒号切分（key 自带冒号）；解析失败按请求无效处理
 - `Paging` 字段名不带相同后缀（`struct_field_names`），故为 `default`、`max`
 

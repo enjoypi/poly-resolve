@@ -34,6 +34,7 @@ const CIPHER_MIN: u32 = 32;
 const ERRORS: &str = r#"{"bad_request":{"code":"invalid","exit_code":13},"storage":{"code":"unavailable","exit_code":15},"unknown_action":{"code":"missing","exit_code":14}}"#;
 pub(crate) const FAILURE: u8 = 7;
 pub(crate) const FRAGMENTS: &str = "title\nalice:QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo0MTIzNDU2\nQUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo0MTIzNDU2\nQUJDREVGR0hJSktMTU5PUFFSU1RV";
+const HEAL_LIMIT: u32 = 2;
 const LOOKUP_BATCH: u32 = 2;
 pub(crate) const MANUAL: u8 = 6;
 const MANUAL_CODES: [i32; 2] = [2, 4];
@@ -41,6 +42,10 @@ pub(crate) const NOON: u64 = 1_783_483_235_000;
 const OFFSET: i16 = 480;
 const OVERLAP: u64 = 1_000;
 const PAGING: &str = r#"{"default":2,"max":3}"#;
+pub(crate) const REFUSE_INSERT: &str =
+    "CREATE TRIGGER refuse BEFORE INSERT ON messages BEGIN SELECT RAISE(ABORT, 'refused'); END;";
+pub(crate) const REFUSE_UPDATE: &str =
+    "CREATE TRIGGER refuse BEFORE UPDATE ON messages BEGIN SELECT RAISE(ABORT, 'refused'); END;";
 pub(crate) const SEALED: &str = "QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo0MTIzNDU2||2||1||196";
 pub(crate) const TEXT_STAMP: &str = "CREATE TABLE messages (key TEXT PRIMARY KEY, source TEXT, account TEXT, occurred_at_ms TEXT); INSERT INTO messages VALUES ('k', 'dingtalk', 'acct', 'abc');";
 
@@ -103,6 +108,7 @@ impl Sandbox {
                 "pull": {"args": ["pull"], "bin": BIN},
             },
             "failure_exit_code": FAILURE,
+            "heal_limit": HEAL_LIMIT,
             "initial_backfill_ms": BACKFILL,
             "lookup_batch": LOOKUP_BATCH,
             "manual_exit_code": MANUAL,
@@ -298,6 +304,47 @@ pub(crate) fn sealed(ident: &str) -> String {
         "sender_open_dingtalk_id": "u1",
         "content": SEALED,
         "create_time": "2026-07-08 12:00:35",
+    })
+    .to_string()
+}
+
+pub(crate) fn sealed_envelope(key: &str, occurred_at_ms: u64) -> String {
+    stored(key, occurred_at_ms, SEALED)
+}
+
+pub(crate) fn sealed_page(ids: &[&str]) -> String {
+    let messages: Vec<Value> = ids
+        .iter()
+        .map(|ident| {
+            json!({
+                "messageId": ident,
+                "sender": "bob",
+                "text": SEALED,
+                "createTime": "2026-07-08 12:00:35",
+            })
+        })
+        .collect();
+    json!({
+        "result": {
+            "conversationMessagesList": [{"openConversationId": "c1", "messages": messages}],
+            "nextCursor": null,
+        }
+    })
+    .to_string()
+}
+
+pub(crate) fn stored(key: &str, occurred_at_ms: u64, text: &str) -> String {
+    json!({
+        "account": "acct",
+        "conversation_id": "c1",
+        "key": key,
+        "occurred_at_ms": occurred_at_ms,
+        "raw": "{}",
+        "received_at_ms": occurred_at_ms,
+        "sender_id": "u1",
+        "sender_name": "alice",
+        "source": "dingtalk",
+        "text": text,
     })
     .to_string()
 }

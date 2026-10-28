@@ -13,7 +13,7 @@ use crate::bridge::{Bridge, Page, Window};
 use crate::config::Settings;
 use crate::dws::{Dws, Found, Listener, children, plaintext};
 use crate::race::{Stop, race};
-use crate::store::Archive;
+use crate::store::{Archive, Scope};
 
 #[derive(Clone, Copy, Debug)]
 enum Retry {
@@ -37,6 +37,7 @@ impl Run<'_> {
         };
         let mut page = Page::parse(&parsed);
         self.assemble(page.envelopes_mut()).await?;
+        self.unseal(page.envelopes_mut()).await?;
         let inserted = self
             .store
             .save_page(&page.render())
@@ -96,12 +97,34 @@ impl Run<'_> {
 
     async fn drive(&mut self, listener: &mut Listener) -> Result<u64, u8> {
         self.reconcile().await?;
+        self.heal().await?;
         self.pump(listener).await
     }
 
     fn fatal(&self, err: &dyn Display) -> u8 {
         tracing::error!(error = %err, "store failed");
         self.config.failure_exit_code()
+    }
+
+    async fn heal(&mut self) -> Result<(), u8> {
+        let sealed = self
+            .store
+            .sealed(
+                Scope::new(self.config.source(), self.config.account()),
+                self.config.heal_limit(),
+            )
+            .map_err(|err| self.fatal(&err))?;
+        for stale in sealed {
+            let fresh = self.unsealed(stale.clone()).await?;
+            if fresh != stale {
+                let healed = self
+                    .store
+                    .replace(&stale, &fresh)
+                    .map_err(|err| self.fatal(&err))?;
+                tracing::debug!(healed, "stored message decrypted");
+            }
+        }
+        Ok(())
     }
 
     async fn ingest(&mut self, line: &str) -> Result<(), u8> {
@@ -229,6 +252,14 @@ impl Run<'_> {
         })
     }
 
+    async fn unseal(&mut self, envelopes: &mut [Value]) -> Result<(), u8> {
+        for envelope in envelopes {
+            let clear = self.unsealed(envelope.to_string()).await?;
+            *envelope = from_str(&clear).unwrap_or_default();
+        }
+        Ok(())
+    }
+
     async fn unsealed(&mut self, envelope: String) -> Result<String, u8> {
         let Some(cipher) = self.bridge.cipher(&envelope) else {
             return Ok(envelope);
@@ -239,10 +270,10 @@ impl Run<'_> {
             return Err(0);
         };
         if let Some(clear) = done.ok().and_then(|output| plaintext(&output)) {
-            tracing::debug!(len = cipher.len(), "event decrypted");
+            tracing::debug!(len = cipher.len(), "message decrypted");
             Ok(self.bridge.reveal(&envelope, &clear).unwrap_or(envelope))
         } else {
-            tracing::warn!(len = cipher.len(), "event decrypt failed");
+            tracing::warn!(len = cipher.len(), "message decrypt failed");
             Ok(envelope)
         }
     }

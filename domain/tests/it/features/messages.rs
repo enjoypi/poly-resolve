@@ -77,6 +77,17 @@ fn invalid_request_is_rejected() {
     assert_eq!(call(&rows, r#"{"limit":"x"}"#).unwrap(), Err(400));
 }
 
+#[test]
+fn inverted_window_is_rejected() {
+    let rows = newest_first().unwrap();
+    for request in [
+        r#"{"from_ms":20,"to_ms":20}"#,
+        r#"{"from_ms":25,"to_ms":20}"#,
+    ] {
+        assert_eq!(call(&rows, request).unwrap(), Err(400));
+    }
+}
+
 fn keys(reply: &Value) -> Vec<&str> {
     reply
         .get("items")
@@ -122,4 +133,25 @@ fn next_page_follows_cursor() {
 #[test]
 fn storage_failure_is_reported() {
     assert_eq!(call(&Broken, "{}").unwrap(), Err(503));
+}
+
+#[test]
+fn window_limits_rows_to_half_open_range() {
+    let rows = newest_first().unwrap();
+    let cases = [
+        (
+            r#"{"from_ms":20}"#,
+            vec!["dingtalk:acct:m3", "dingtalk:acct:m2"],
+        ),
+        (
+            r#"{"to_ms":30}"#,
+            vec!["dingtalk:acct:m2", "dingtalk:acct:m1"],
+        ),
+        (r#"{"from_ms":15,"to_ms":25}"#, vec!["dingtalk:acct:m2"]),
+        (r#"{"from_ms":40}"#, vec![]),
+    ];
+    for (request, expected) in cases {
+        let reply = call(&rows, request).unwrap().unwrap();
+        assert_eq!(keys(&reply), expected);
+    }
 }

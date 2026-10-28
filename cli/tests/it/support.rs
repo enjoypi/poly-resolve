@@ -53,6 +53,7 @@ ingest:
       args: [pull]
       bin: /nonexistent/dws
   failure_exit_code: 16
+  heal_limit: 50
   initial_backfill_ms: 3600000
   lookup_batch: 50
   manual_exit_code: 17

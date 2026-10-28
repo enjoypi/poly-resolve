@@ -91,6 +91,19 @@ fn lists_messages_identically_on_both_channels() {
     assert!(stop(server).unwrap());
 }
 
+#[test]
+fn lists_messages_within_window() {
+    let path = seeded("cli-messages-window").unwrap();
+    let server = start(&path).unwrap();
+    let window = r#"{"from_ms":15,"to_ms":30}"#;
+    let reply = body(&post(&server.addr, ["/messages/list", ""], window).unwrap()).unwrap();
+    assert_eq!(keys(&reply), ["dingtalk:acct:m2"]);
+    let inverted = r#"{"from_ms":30,"to_ms":15}"#;
+    let bad = post(&server.addr, ["/messages/list", ""], inverted).unwrap();
+    assert!(bad.starts_with("HTTP/1.1 400"));
+    assert!(stop(server).unwrap());
+}
+
 fn seeded(name: &str) -> Fallible<String> {
     let dir = sandbox(name)?;
     let store = Archive::open(Path::new(&format!("{dir}/store.db")))?;

@@ -316,8 +316,24 @@
               "null"
             ]
           },
+          "from_ms": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
           "limit": {
             "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "to_ms": {
+            "format": "uint64",
             "minimum": 0,
             "type": [
               "integer",

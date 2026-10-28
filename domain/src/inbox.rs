@@ -61,6 +61,7 @@ impl Paging {
 pub struct Query {
     cursor: Option<Mark>,
     limit: u32,
+    window: Window,
 }
 
 impl Query {
@@ -75,8 +76,17 @@ impl Query {
     }
 
     #[must_use = "查询需交给读取方"]
-    pub const fn new(cursor: Option<Mark>, limit: u32) -> Self {
-        Self { cursor, limit }
+    pub const fn new(cursor: Option<Mark>, limit: u32, window: Window) -> Self {
+        Self {
+            cursor,
+            limit,
+            window,
+        }
+    }
+
+    #[must_use = "时间范围需交给查询"]
+    pub const fn window(&self) -> Window {
+        self.window
     }
 }
 
@@ -111,5 +121,36 @@ impl Row {
     #[must_use = "时间需用于排序与游标"]
     pub const fn occurred_at_ms(&self) -> u64 {
         self.occurred_at_ms
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Window {
+    since: Option<u64>,
+    until: Option<u64>,
+}
+
+impl Window {
+    #[must_use = "范围是否有效需判断"]
+    pub const fn is_valid(self) -> bool {
+        match (self.since, self.until) {
+            (Some(since), Some(until)) => since < until,
+            _ => true,
+        }
+    }
+
+    #[must_use = "时间范围需交给查询"]
+    pub const fn new(since: Option<u64>, until: Option<u64>) -> Self {
+        Self { since, until }
+    }
+
+    #[must_use = "时间范围需交给查询"]
+    pub const fn since(self) -> Option<u64> {
+        self.since
+    }
+
+    #[must_use = "时间范围需交给查询"]
+    pub const fn until(self) -> Option<u64> {
+        self.until
     }
 }

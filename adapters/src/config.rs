@@ -70,6 +70,7 @@ pub struct Settings {
     cipher_min_length: NonZeroU32,
     dws: Dws,
     failure_exit_code: NonZeroU8,
+    heal_limit: NonZeroU32,
     initial_backfill_ms: u64,
     lookup_batch: NonZeroU32,
     manual_exit_code: NonZeroU8,
@@ -106,6 +107,10 @@ impl Settings {
 
     pub(crate) const fn failure_exit_code(&self) -> u8 {
         self.failure_exit_code.get()
+    }
+
+    pub(crate) const fn heal_limit(&self) -> u32 {
+        self.heal_limit.get()
     }
 
     pub(crate) const fn initial_backfill_ms(&self) -> u64 {
