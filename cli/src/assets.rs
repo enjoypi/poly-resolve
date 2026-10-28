@@ -12,10 +12,11 @@ use crate::config::Settings;
 
 const FALLBACK: &str = "application/octet-stream";
 const INDEX: &str = "index.html";
-const TYPES: [(&str, &str); 3] = [
+const TYPES: [(&str, &str); 4] = [
     ("css", "text/css; charset=utf-8"),
     ("html", "text/html; charset=utf-8"),
     ("js", "text/javascript; charset=utf-8"),
+    ("svg", "image/svg+xml"),
 ];
 
 pub(crate) async fn file(

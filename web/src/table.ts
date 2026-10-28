@@ -1,6 +1,7 @@
 import { badge } from "./badge";
-import { type Column, display, type Row } from "./columns";
-import { DEFAULT_SORT, TEXT } from "./config";
+import { type Column, content, display, type Row } from "./columns";
+import { DEFAULT_SORT, DETAIL, PIN, TEXT } from "./config";
+import { copyButton } from "./copy";
 import { blocks, plain } from "./markdown";
 import { stamp, zone } from "./stamp";
 import type { State } from "./view";
@@ -8,6 +9,7 @@ import type { State } from "./view";
 const owners = new WeakMap<Element, Row>();
 
 export type Handlers = {
+  onErase: (key: string) => void;
   onFilter: (key: string, text: string) => void;
   onSort: (key: string) => void;
 };
@@ -27,16 +29,38 @@ function cell(item: Row, column: Column, timeZone?: string): HTMLElement {
     column.look ? `look-${column.look}` : "",
     column.kind === "text" ? "" : column.kind,
     column.primary ? "primary" : "",
+    PIN.includes(column.key) ? "pick" : "",
   ]
     .filter((name) => name !== "")
     .join(" ");
   if (column.look === "badge" || column.kind === "time") element.dataset.always = "";
   if (column.look === "badge") {
     if (value !== "") element.append(badge(value));
+  } else if (column.key === DETAIL.body) {
+    element.append(...bodyNodes(item, column, timeZone));
   } else {
     element.textContent = column.look === "markdown" ? plain(value) : value;
   }
   return element;
+}
+
+function bodyNodes(item: Row, column: Column, timeZone?: string): Node[] {
+  const full = content(item, column, timeZone);
+  const text = area("span", "text");
+  text.textContent = plain(display(item, column, timeZone));
+  return full === "" ? [text] : [copyButton(full), text];
+}
+
+function eraseBox(column: Column, handlers: Handlers): HTMLElement {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "clear";
+  button.dataset.col = column.key;
+  button.hidden = true;
+  button.textContent = TEXT.clearMark;
+  button.setAttribute("aria-label", `${TEXT.clear} ${column.label}`);
+  button.onclick = () => handlers.onErase(column.key);
+  return button;
 }
 
 function filterBox(column: Column, state: State, handlers: Handlers): HTMLElement {
@@ -73,7 +97,7 @@ function sortBox(column: Column, handlers: Handlers, timeZone?: string): HTMLEle
   button.textContent =
     column.kind === "time" ? `${column.label} ${zone(Date.now(), timeZone)}` : column.label;
   button.onclick = () => handlers.onSort(column.key);
-  title.append(button);
+  title.append(button, eraseBox(column, handlers));
   return title;
 }
 
@@ -99,6 +123,13 @@ export function buildHead(
   filters.append(...columns.map((column) => filterBox(column, state, handlers)));
   head.replaceChildren(titles, filters);
   markSort(head, state);
+  markFilters(head, state);
+}
+
+export function markFilters(head: HTMLTableSectionElement, state: State): void {
+  for (const erase of head.querySelectorAll<HTMLElement>("tr.titles .clear")) {
+    erase.hidden = (state.filters[erase.dataset.col ?? ""] ?? "").trim() === "";
+  }
 }
 
 export function markSort(head: HTMLTableSectionElement, state: State): void {

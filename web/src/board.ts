@@ -1,13 +1,13 @@
 import type { connect } from "./client";
 import { type Column, inferColumns, type Row } from "./columns";
-import { MAX_ROWS, PAGE_LIMIT, TEXT, TIP_DELAY_MS } from "./config";
+import { MAX_ROWS, PAGE_LIMIT, PIN, TEXT, TIP_DELAY_MS } from "./config";
 import { openDetail } from "./detail";
 import type { Span } from "./range";
 import { buildStatus, type Status } from "./status";
-import { buildBody, buildHead, markSort, rowOf, tipOf } from "./table";
+import { buildBody, buildHead, markFilters, markSort, rowOf, tipOf } from "./table";
 import { attachTip } from "./tip";
 import { buildToolbar, type Toolbar } from "./toolbar";
-import { applyView, nextSort, type State } from "./view";
+import { applyView, nextSort, pin, type State } from "./view";
 
 type Client = ReturnType<typeof connect>;
 
@@ -48,7 +48,6 @@ export class Board {
   ) {
     this.status = buildStatus({
       onAll: () => void this.loadAll(),
-      onClear: () => this.clear(),
       onMore: () => void this.load(true),
     });
     this.toolbar = buildToolbar(
@@ -64,6 +63,14 @@ export class Board {
     this.assemble(root);
   }
 
+  private activate(target: EventTarget | null): void {
+    const cell = target instanceof Element ? target.closest("td") : null;
+    const item = rowOf(cell);
+    const key = cell?.dataset.col;
+    if (item && key !== undefined && PIN.includes(key)) this.narrow(item, key);
+    else this.open(target);
+  }
+
   private assemble(root: HTMLElement): void {
     const grid = document.createElement("table");
     grid.append(this.head, this.table);
@@ -71,9 +78,12 @@ export class Board {
     this.detail.className = "detail";
     this.tip.hidden = true;
     this.tip.setAttribute("role", "tooltip");
-    this.table.onclick = (event) => this.open(event.target);
+    this.table.onclick = (event) => this.activate(event.target);
     this.table.onkeydown = (event) => {
-      if (event.key === "Enter" && event.target instanceof HTMLElement) this.open(event.target);
+      const target = event.target;
+      if (event.key === "Enter" && target instanceof HTMLElement && !target.closest("button")) {
+        this.open(target);
+      }
     };
     attachTip(
       scroller,
@@ -85,16 +95,8 @@ export class Board {
     root.replaceChildren(this.shell);
   }
 
-  private clear(): void {
-    this.state = { filters: {}, search: "", sort: this.state.sort };
-    this.toolbar.search.value = "";
-    this.headKey = "";
-    this.redraw();
-  }
-
-  private filtered(): boolean {
-    const { filters, search } = this.state;
-    return search.trim() !== "" || Object.values(filters).some((text) => text.trim() !== "");
+  private erase(key: string): void {
+    this.refilter({ [key]: "" });
   }
 
   private async load(append: boolean): Promise<boolean> {
@@ -134,6 +136,11 @@ export class Board {
     this.status.lock(locked);
   }
 
+  private narrow(item: Row, key: string): void {
+    const next = pin(item, this.columns, key, this.timeZone);
+    this.refilter(this.state.filters[key] === next[key] ? { [key]: "" } : next);
+  }
+
   private open(target: EventTarget | null): void {
     const element = target instanceof Element ? target.closest("tr") : null;
     const item = rowOf(element);
@@ -162,6 +169,7 @@ export class Board {
         this.visible,
         this.state,
         {
+          onErase: (key) => this.erase(key),
           onFilter: (key, text) => this.filter(key, text),
           onSort: (key) => this.sort(key),
         },
@@ -179,7 +187,6 @@ export class Board {
     this.status.update(
       {
         capped: this.cursor !== undefined && this.rows.length >= MAX_ROWS,
-        filtered: this.filtered(),
         loaded: this.rows.length,
         more: this.cursor !== undefined,
         shown: view.length,
@@ -187,6 +194,12 @@ export class Board {
       },
       this.timeZone,
     );
+  }
+
+  private refilter(patch: Record<string, string>): void {
+    this.state = { ...this.state, filters: { ...this.state.filters, ...patch } };
+    this.headKey = "";
+    this.redraw();
   }
 
   private search(text: string): void {
@@ -206,6 +219,7 @@ export class Board {
 
   private filter(key: string, text: string): void {
     this.state = { ...this.state, filters: { ...this.state.filters, [key]: text } };
+    markFilters(this.head, this.state);
     this.redraw();
   }
 

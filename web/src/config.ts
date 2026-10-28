@@ -14,6 +14,8 @@ export type Look = "badge" | "markdown";
 
 export type Preset = { back_ms?: number; label: string; today?: boolean };
 
+export const COPY_FEEDBACK_MS = 1500;
+
 export const DEFAULT_SORT = "occurred_at_ms";
 
 export const DETAIL = {
@@ -41,6 +43,8 @@ export const MD_LIMIT = 20000;
 
 export const PAGE_LIMIT = 200;
 
+export const PIN = [DETAIL.conversation, DETAIL.sender];
+
 export const PLAIN_LIMIT = 600;
 
 export const PRESETS: Preset[] = [
@@ -55,8 +59,12 @@ export const TEXT = {
   brand: "PolyResolve",
   capped: (max: number) => `已达 ${max} 条上限，请缩小时间范围。`,
   clear: "清除筛选",
+  clearMark: "×",
   close: "关闭",
   columns: "列",
+  copied: "已复制",
+  copy: "复制",
+  copyFailed: "复制失败",
   counts: (shown: number, loaded: number) => `显示 ${shown}／已加载 ${loaded} 条。`,
   empty: "没有消息。",
   fields: "全部字段",

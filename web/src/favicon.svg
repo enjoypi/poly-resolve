@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Poly Resolve">
+  <title>Poly Resolve</title>
+  <rect width="64" height="64" rx="12" fill="#1a2030"/>
+  <g fill="none" stroke="#9da8ff" stroke-width="6" stroke-linejoin="miter">
+    <path d="M14 48V16h6a7 7 0 0 1 0 14h-6"/>
+    <path d="M36 48V16h6a7 7 0 0 1 0 14h-6M42 30l9 18"/>
+  </g>
+</svg>

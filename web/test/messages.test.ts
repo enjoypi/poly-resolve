@@ -51,7 +51,9 @@ function button(root: HTMLElement, label: string) {
 }
 
 function column(root: HTMLElement, key: string) {
-  return [...root.querySelectorAll(`tbody td[data-col="${key}"]`)].map((entry) => entry.textContent);
+  return [...root.querySelectorAll(`tbody td[data-col="${key}"]`)].map(
+    (entry) => (entry.querySelector(".text") ?? entry).textContent,
+  );
 }
 
 function type(root: HTMLElement, selector: string, value: string, event = "input") {
@@ -86,7 +88,7 @@ test("请求路径取自 spec 并带页宽，表格按返回顺序显示默认�
   expect(column(root, "text")).toEqual(["text-a", "text-b"]);
   expect(column(root, "occurred_at_ms")[0]).toBe("2026-10-28 09:20:09");
   expect(column(root, "sender_name")).toEqual(["alice", "alice"]);
-  expect(root.querySelector('thead th[data-col="occurred_at_ms"]')?.textContent).toBe("时间 UTC+8");
+  expect(root.querySelector('thead th[data-col="occurred_at_ms"] .sort')?.textContent).toBe("时间 UTC+8");
   expect(root.querySelector('tbody td[data-col="conversation_id"] .badge')).not.toBeNull();
   expect(root.querySelector('tbody td[data-col="key"]')).toBeNull();
   expect(summary(root)).toBe("显示 2／已加载 2 条。");
@@ -181,7 +183,7 @@ test("点击表头依次升序、降序、恢复默认，时间列默认标为�
   expect(mark("occurred_at_ms")).toBe("descending");
 });
 
-test("列筛选与全局搜索叠加，状态栏显示命中数，清除筛选恢复全部", async () => {
+test("列筛选与全局搜索叠加，状态栏显示命中数，清空两者恢复全部", async () => {
   const { root } = await mount([
     page([
       item("a", { text: "Disk full", sender_name: "alice" }),
@@ -189,14 +191,14 @@ test("列筛选与全局搜索叠加，状态栏显示命中数，清除筛选�
       item("c", { text: "cpu high", sender_name: "bob" }),
     ]),
   ]);
-  expect(root.querySelector<HTMLElement>(".clear")?.hidden).toBe(true);
   type(root, 'tr.filters th[data-col="text"] input', "disk");
   expect(column(root, "text")).toEqual(["Disk full", "Disk ok"]);
   expect(summary(root)).toBe("显示 2／已加载 3 条。");
   type(root, ".search", "bob");
   expect(column(root, "text")).toEqual(["Disk ok"]);
-  expect(root.querySelector<HTMLElement>(".clear")?.hidden).toBe(false);
-  button(root, "清除筛选").click();
+  erase(root, "text")?.click();
+  expect(column(root, "text")).toEqual(["Disk ok", "cpu high"]);
+  type(root, ".search", "");
   expect(column(root, "text")).toEqual(["Disk full", "Disk ok", "cpu high"]);
   expect(root.querySelector<HTMLInputElement>(".search")?.value).toBe("");
   expect(root.querySelector<HTMLInputElement>('tr.filters th[data-col="text"] input')?.value).toBe("");
@@ -206,7 +208,7 @@ test("新增字段 zzz 前端零改动即出现列、可排序、可筛选", asy
   const { root } = await mount([
     page([item("a", { zzz: 10 }), item("b", { zzz: 9 }), item("c", { zzz: 100 })]),
   ]);
-  expect(root.querySelector('tr.titles th[data-col="zzz"]')?.textContent).toBe("zzz");
+  expect(root.querySelector('tr.titles th[data-col="zzz"] .sort')?.textContent).toBe("zzz");
   root.querySelector<HTMLElement>('tr.titles th[data-col="zzz"] button')?.click();
   expect(column(root, "zzz")).toEqual(["9", "10", "100"]);
   type(root, 'tr.filters th[data-col="zzz"] input', ">9");
@@ -320,6 +322,152 @@ test("正文为空时详情显示占位，缺少发送人与时间字段也能�
   expect(dialog?.open).toBe(true);
   expect(dialog?.querySelector(".body")?.textContent).toBe("[非文本消息]");
   expect(dialog?.querySelector(".when")?.textContent).toBe("");
+});
+
+function sender(root: HTMLElement, index: number) {
+  const found = root.querySelectorAll<HTMLElement>('tbody td[data-col="sender_name"]')[index];
+  if (!found) throw new Error(`no sender ${index}`);
+  return found;
+}
+
+function filter(root: HTMLElement, key: string) {
+  return root.querySelector<HTMLInputElement>(`tr.filters th[data-col="${key}"] input`)?.value;
+}
+
+function erase(root: HTMLElement, key: string) {
+  return root.querySelector<HTMLButtonElement>(`tr.titles th[data-col="${key}"] .clear`);
+}
+
+test("点击发送人只筛选发送人，精确匹配，不开详情，再点移除，点正文仍开详情", async () => {
+  const { root } = await mount([
+    page([
+      item("a", { conversation_id: "c1", sender_name: "李明" }),
+      item("b", { conversation_id: "c1", sender_name: "李明华" }),
+      item("c", { conversation_id: "c2", sender_name: "李明" }),
+      item("d", { conversation_id: "c1", sender_name: "李明" }),
+    ]),
+  ]);
+  document.body.append(root);
+  const dialog = root.querySelector("dialog");
+  expect(sender(root, 0).classList.contains("pick")).toBe(true);
+  sender(root, 0).click();
+  expect(column(root, "text")).toEqual(["text-a", "text-c", "text-d"]);
+  expect(filter(root, "sender_name")).toBe('"李明"');
+  expect(filter(root, "conversation_id")).toBe("");
+  expect(dialog?.open).toBe(false);
+  expect(summary(root)).toBe("显示 3／已加载 4 条。");
+  root.querySelector<HTMLElement>('tbody td[data-col="text"]')?.click();
+  expect(dialog?.open).toBe(true);
+  dialog?.close();
+  sender(root, 0).click();
+  expect(filter(root, "sender_name")).toBe("");
+  expect(column(root, "text")).toEqual(["text-a", "text-b", "text-c", "text-d"]);
+  expect(erase(root, "sender_name")?.hidden).toBe(true);
+});
+
+test("点击会话只筛选该会话，点徽记与点单元格一样，不开详情，再点移除", async () => {
+  const { root } = await mount([
+    page([
+      item("a", { conversation_id: "c1", sender_name: "alice" }),
+      item("b", { conversation_id: "c2", sender_name: "alice" }),
+      item("c", { conversation_id: "c1", sender_name: "bob" }),
+    ]),
+  ]);
+  document.body.append(root);
+  const dialog = root.querySelector("dialog");
+  const cell = root.querySelector<HTMLElement>('tbody td[data-col="conversation_id"]');
+  expect(cell?.classList.contains("pick")).toBe(true);
+  cell?.querySelector<HTMLElement>(".badge")?.click();
+  expect(column(root, "text")).toEqual(["text-a", "text-c"]);
+  expect(filter(root, "conversation_id")).toBe('"c1"');
+  expect(filter(root, "sender_name")).toBe("");
+  expect(dialog?.open).toBe(false);
+  sender(root, 1).click();
+  expect(column(root, "text")).toEqual(["text-c"]);
+  expect(filter(root, "conversation_id")).toBe('"c1"');
+  expect(filter(root, "sender_name")).toBe('"bob"');
+  root.querySelector<HTMLElement>('tbody td[data-col="conversation_id"]')?.click();
+  expect(filter(root, "conversation_id")).toBe("");
+  expect(filter(root, "sender_name")).toBe('"bob"');
+  expect(column(root, "text")).toEqual(["text-c"]);
+});
+
+test("正文单元格有复制按钮，复制完整原文，不开详情；空正文没有按钮", async () => {
+  const written: string[] = [];
+  Object.defineProperty(navigator, "clipboard", {
+    configurable: true,
+    value: {
+      writeText: async (text: string) => {
+        written.push(text);
+      },
+    },
+  });
+  const long = `# 标题\n${"字".repeat(700)}`;
+  const { root } = await mount([page([item("a", { text: long }), item("b", { text: "" })])]);
+  document.body.append(root);
+  const dialog = root.querySelector("dialog");
+  const buttons = root.querySelectorAll<HTMLButtonElement>('tbody td[data-col="text"] .copy');
+  expect(buttons).toHaveLength(1);
+  buttons[0]?.click();
+  await until(() => written.length === 1);
+  expect(written).toEqual([long]);
+  expect(dialog?.open).toBe(false);
+  buttons[0]?.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Enter" }));
+  expect(dialog?.open).toBe(false);
+  expect(column(root, "text")[0]?.startsWith("标题")).toBe(true);
+});
+
+test("每个标题上有清除筛选按钮，该列有筛选才显示，只清该列", async () => {
+  const { root } = await mount([
+    page([
+      item("a", { conversation_id: "c1", sender_name: "alice" }),
+      item("b", { conversation_id: "c2", sender_name: "alice" }),
+      item("c", { conversation_id: "c1", sender_name: "bob" }),
+    ]),
+  ]);
+  const titles = root.querySelectorAll('tr.titles th[data-col]');
+  expect(titles.length).toBeGreaterThan(0);
+  for (const title of Array.from(titles)) expect(title.querySelector<HTMLElement>(".clear")?.hidden).toBe(true);
+  expect(root.querySelector(".bar .clear")).toBeNull();
+  expect(root.querySelector(".status .clear")).toBeNull();
+  type(root, 'tr.filters th[data-col="text"] input', "text-");
+  type(root, ".search", "alice");
+  sender(root, 0).click();
+  root.querySelector<HTMLElement>('tbody td[data-col="conversation_id"]')?.click();
+  expect(erase(root, "sender_name")?.hidden).toBe(false);
+  expect(erase(root, "conversation_id")?.hidden).toBe(false);
+  expect(erase(root, "text")?.hidden).toBe(false);
+  expect(erase(root, "sender_name")?.getAttribute("aria-label")).toBe("清除筛选 发送人");
+  expect(column(root, "text")).toEqual(["text-a"]);
+  erase(root, "conversation_id")?.click();
+  expect(erase(root, "conversation_id")?.hidden).toBe(true);
+  expect(filter(root, "conversation_id")).toBe("");
+  expect(filter(root, "sender_name")).toBe('"alice"');
+  expect(column(root, "text")).toEqual(["text-a", "text-b"]);
+  type(root, 'tr.filters th[data-col="text"] input', "");
+  expect(erase(root, "text")?.hidden).toBe(true);
+  erase(root, "sender_name")?.click();
+  expect(column(root, "text")).toEqual(["text-a", "text-b"]);
+  expect(root.querySelector<HTMLInputElement>(".search")?.value).toBe("alice");
+});
+
+test("点击只设被点列的筛选，保留其他列的筛选与搜索", async () => {
+  const { root } = await mount([
+    page([
+      item("a", { conversation_id: "c1", sender_name: "alice" }),
+      item("b", { conversation_id: "c1", sender_name: "bob" }),
+      item("c", { conversation_id: "c2", sender_name: "alice" }),
+    ]),
+  ]);
+  type(root, 'tr.filters th[data-col="text"] input', "text-");
+  type(root, ".search", "alice");
+  expect(column(root, "text")).toEqual(["text-a", "text-c"]);
+  sender(root, 1).click();
+  expect(column(root, "text")).toEqual(["text-a", "text-c"]);
+  expect(filter(root, "sender_name")).toBe('"alice"');
+  expect(filter(root, "conversation_id")).toBe("");
+  expect(filter(root, "text")).toBe("text-");
+  expect(root.querySelector<HTMLInputElement>(".search")?.value).toBe("alice");
 });
 
 test("手机上的筛选按钮展开与收起表头面板", async () => {

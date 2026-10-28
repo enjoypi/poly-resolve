@@ -200,6 +200,15 @@ th .sort {
   padding: 0;
 }
 
+th .clear,
+td .copy {
+  background: none;
+  border: 0;
+  color: var(--ion);
+  font-size: var(--fs-1);
+  padding: 0 6px 0 0;
+}
+
 th[aria-sort="ascending"] .sort,
 th[aria-sort="descending"] .sort {
   color: var(--ion);
@@ -251,6 +260,14 @@ td.number {
 td.look-markdown {
   max-width: 0;
   width: 100%;
+}
+
+td.pick:hover {
+  text-decoration: underline;
+}
+
+td.pick:hover .badge {
+  outline: 1px solid var(--ion);
 }
 
 .badge {
@@ -472,6 +489,8 @@ td.look-markdown {
 
   tr.filters input,
   th .sort,
+  th .clear,
+  td .copy,
   .status button {
     font-size: var(--fs-3);
   }

@@ -60,6 +60,8 @@ fn serves_site_files_with_content_types() {
     assert!(check(addr, "/app.js", script).unwrap(), "script");
     let style = ["text/css; charset=utf-8", "body{}"];
     assert!(check(addr, "/style.css", style).unwrap(), "style");
+    let icon = ["image/svg+xml", "<svg/>"];
+    assert!(check(addr, "/icon.svg", icon).unwrap(), "icon");
     assert!(check(addr, "/data.bin", [binary, "bin"]).unwrap(), "binary");
     assert!(check(addr, "/LICENSE", [binary, "text"]).unwrap(), "plain");
     assert!(stop(server).unwrap());
@@ -73,6 +75,7 @@ fn site(name: &str) -> io::Result<String> {
         ("index.html", INDEX),
         ("app.js", "run()"),
         ("style.css", "body{}"),
+        ("icon.svg", "<svg/>"),
         ("data.bin", "bin"),
         ("LICENSE", "text"),
         (".hidden", "hidden"),
