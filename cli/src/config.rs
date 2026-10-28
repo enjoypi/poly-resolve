@@ -4,6 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use adapters::config::Settings as Ingest;
+use adapters::triage::config::Settings as Triage;
 use domain::Errors;
 use domain::features::Context;
 use domain::inbox::{Paging, Reader};
@@ -25,6 +26,7 @@ struct File {
     serve_exit_code: NonZeroU8,
     shutdown_timeout_exit_code: NonZeroU8,
     shutdown_timeout_ms: NonZeroU64,
+    triage: Triage,
     web_dir: PathBuf,
 }
 
@@ -37,6 +39,7 @@ pub(crate) struct Settings {
     serve_exit_code: u8,
     shutdown_timeout_exit_code: u8,
     shutdown_timeout_ms: u64,
+    triage: Triage,
     web_dir: PathBuf,
 }
 
@@ -73,6 +76,10 @@ impl Settings {
         self.shutdown_timeout_ms
     }
 
+    pub(crate) const fn triage(&self) -> &Triage {
+        &self.triage
+    }
+
     pub(crate) fn web_dir(&self) -> &Path {
         &self.web_dir
     }
@@ -101,6 +108,7 @@ pub(crate) fn load(path: &Path) -> Result<Settings, String> {
         serve_exit_code: file.serve_exit_code.get(),
         shutdown_timeout_exit_code: file.shutdown_timeout_exit_code.get(),
         shutdown_timeout_ms: file.shutdown_timeout_ms.get(),
+        triage: file.triage,
         web_dir: file.web_dir,
     })
 }

@@ -1,6 +1,6 @@
 use adapters::store::{Archive, Scope, Shelf};
 use domain::inbox::{Mark, Query, Reader as _, Row, Window};
-use serde_json::{Value, from_str, json};
+use serde_json::{Value, from_str, json, to_value};
 
 use crate::support::{
     BAD_SCHEMA, BAD_STAMP, NOON, Sandbox, TEXT_STAMP, envelope, keys, sealed_envelope, texts,
@@ -8,6 +8,7 @@ use crate::support::{
 
 const OTHER: &str = "INSERT INTO messages (key, source, account, conversation_id, sender_id, sender_name, text, occurred_at_ms, received_at_ms, raw) VALUES ('x1', 'dingtalk', 'other', 'c1', 'u1', 'bob', 'hi', 9, 9, '{}'), ('x2', 'slack', 'acct', 'c1', 'u1', 'bob', 'hi', 9, 9, '{}');";
 const PAGE: u32 = 10;
+const PRIORITY: f64 = 0.5;
 
 fn ids(rows: &[Row]) -> Vec<&str> {
     rows.iter().map(Row::key).collect()
@@ -161,6 +162,27 @@ fn shelf_filters_by_half_open_window() {
     assert_eq!(ids(&page(None, Some(NOON + 10))), ["k2", "k1"]);
     assert_eq!(ids(&page(Some(NOON + 5), Some(NOON + 10))), ["k2"]);
     assert!(page(Some(u64::MAX), None).is_empty());
+}
+
+#[test]
+fn shelf_joins_priority_and_analysis() {
+    let sandbox = Sandbox::new("shelf-join").unwrap();
+    let store = Archive::open(&sandbox.database()).unwrap();
+    for key in ["k1", "k2"] {
+        assert_eq!(store.save_event(&envelope(key, NOON)).unwrap(), 1);
+    }
+    sandbox
+        .seed("INSERT INTO decisions VALUES ('k1', 'scored', 0.5, 0, '', 1); INSERT INTO handoffs VALUES ('k1', 'c1', 'sent', 0, 'mulled', '', 1, 0);")
+        .unwrap();
+    let path = sandbox.database();
+    let rows = Shelf::new(&path, "dingtalk", "acct")
+        .page(&Query::new(None, PAGE, Window::default()))
+        .unwrap();
+    let shown: Vec<Value> = rows.iter().map(|row| to_value(row).unwrap()).collect();
+    let priority: Vec<Option<&Value>> = shown.iter().map(|row| row.get("priority")).collect();
+    let analysis: Vec<Option<&Value>> = shown.iter().map(|row| row.get("analysis")).collect();
+    assert_eq!(priority, [Some(&Value::Null), Some(&json!(PRIORITY))]);
+    assert_eq!(analysis, [Some(&Value::Null), Some(&json!("mulled"))]);
 }
 
 #[test]

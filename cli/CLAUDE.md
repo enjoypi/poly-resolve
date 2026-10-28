@@ -10,7 +10,7 @@
 - `messages`（`domain::inbox::Paging`）与 `web_dir` 写在 `ingest` 段之前（`missing_ingest_fails` 以 `ingest:` 截断 YAML）
 - `Settings::context(&reader)` 构造 `domain::features::Context`；`call`、`handle`、`ingest` 各用 `settings.ingest().shelf()` 作 reader
 - `addr` 为 `SocketAddr`，`config::load` 拒绝非回环 IP（IPv4、IPv6 均支持），`call` 同样校验
-- `${...}` 环境变量展开尚未实现，引入首个 secret 时在 `config::load` 实现
+- `triage` 段（`adapters::triage::config::Settings`，也写在 `ingest` 之前）里 `"${NAME}"` 写法的值是 `Var`：整串须为 `${NAME}`，加载时只校验写法、不读环境，用时才读（不存值，`Debug` 只显示名字）；`serve` 在 `triage.mode: enabled` 且有变量读不到（含空值）时以退出码 2 退出并列出变量名（`missing()`），`call`、`ingest` 与未启用时不检查；测试不能 `set_var`（`unsafe_code` forbid），用 `${HOME}`、`${PATH}`、`${CARGO_PKG_NAME}` 表示已设，一个不存在的名字表示缺失
 
 ## 退出码
 
@@ -33,7 +33,7 @@
 
 ## ingest
 
-- `service.rs`：`collect(settings, stop)` 由 `ingest` 子命令与 `serve` 共用；`run(listener, settings)` 在同进程里跑 `http::run` 与 `collect`，不 spawn，用 `poll_fn` 轮询两者：先 serve 后 collect（`listening` 是首行日志，测试的 `start` 依赖它）；collect 以非 0 返回（须人工处理、存储失败）即返回该码并丢弃 server，为 0（停机信号）则等 server 排空后返回 server 的结果；server 先完成也要等 collect（让 dws 正常退出，直接丢弃会留下 dws 子进程与订阅）；两种完成顺序都要有用例
+- `service.rs`：`collect(settings, stop)` 由 `ingest` 子命令与 `serve` 共用；`run(listener, settings)` 在同进程里跑 `http::run` 与 `collect`，不 spawn，用 `poll_fn` 轮询两者：先 serve 后 collect（`listening` 是首行日志，测试的 `start` 依赖它）；collect 以非 0 返回（须人工处理、存储失败）即返回该码并丢弃 server，为 0（停机信号）则等 server 排空后返回 server 的结果；server 先完成也要等 collect（让 dws 正常退出，直接丢弃会留下 dws 子进程与订阅）；两种完成顺序都要有用例；triage worker 是第三个 future（`work`，用另一份 `shutdown()`），collect、worker、server 都结束才返回，collect 非 0 即丢弃 worker（其子进程 `kill_on_drop`）；关闭时 `triage::run` 立即返回
 - `ingest --config`：`ingest` 段是 `adapters::config::Settings`，字段与校验在 adapters，cli 只在 `File` 里引用；停机信号取 `signal.rs` 的 `shutdown()`，经 `pin!` 以 `&mut` 传入 `adapters::ingest::run`；日志用 `with_subscriber(settings.log().clone())` 绑定（跨 await 有效，`with_default` 只管同步闭包）
 
 ## 页面

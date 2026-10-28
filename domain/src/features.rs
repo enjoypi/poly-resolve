@@ -2,6 +2,7 @@ pub mod catalog;
 mod health;
 mod ingest;
 mod messages;
+mod triage;
 
 use std::time::Instant;
 
@@ -13,7 +14,7 @@ use serde_json::{Map, Value, from_str, to_string};
 use crate::inbox::{Paging, Reader};
 use crate::{AppError, Errors};
 
-static ROUTES: [Route; 8] = [
+static ROUTES: [Route; 12] = [
     Route {
         action: "check",
         call: |request, _context| typed(request, health::check),
@@ -76,6 +77,38 @@ static ROUTES: [Route; 8] = [
         failures: &[AppError::Storage],
         feature: "messages",
         schema: schemas::<messages::ListRequest, messages::ListResponse>,
+        trace: Trace::Redacted,
+    },
+    Route {
+        action: "ask",
+        call: |request, _context| typed(request, triage::ask),
+        failures: &[],
+        feature: "triage",
+        schema: schemas::<triage::AskRequest, triage::AskResponse>,
+        trace: Trace::Redacted,
+    },
+    Route {
+        action: "brief",
+        call: |request, _context| typed(request, triage::prompt::brief),
+        failures: &[],
+        feature: "triage",
+        schema: schemas::<triage::prompt::BriefRequest, triage::prompt::BriefResponse>,
+        trace: Trace::Redacted,
+    },
+    Route {
+        action: "notice",
+        call: |request, _context| typed(request, triage::prompt::notice),
+        failures: &[],
+        feature: "triage",
+        schema: schemas::<triage::prompt::NoticeRequest, triage::prompt::NoticeResponse>,
+        trace: Trace::Redacted,
+    },
+    Route {
+        action: "score",
+        call: |request, _context| fallible(request, triage::score),
+        failures: &[],
+        feature: "triage",
+        schema: schemas::<triage::ScoreRequest, triage::ScoreResponse>,
         trace: Trace::Redacted,
     },
 ];

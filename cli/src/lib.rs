@@ -86,6 +86,14 @@ pub async fn run(args: Vec<OsString>) -> ExitCode {
 }
 
 async fn serve(settings: Settings) -> ExitCode {
+    let missing = settings.triage().missing();
+    if settings.triage().enabled() && !missing.is_empty() {
+        let names = missing.join(", ");
+        return fail(
+            CONFIG_ERROR,
+            &format!("triage: missing environment variables: {names}"),
+        );
+    }
     match TcpListener::bind(settings.addr()).await {
         Ok(listener) => {
             let (code, result) = service::run(listener, Arc::new(settings)).await;

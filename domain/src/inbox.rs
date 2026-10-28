@@ -98,9 +98,11 @@ pub trait Reader: Debug + Sync {
 #[schemars(rename = "MessagesListItem")]
 pub struct Row {
     account: String,
+    analysis: Option<String>,
     conversation_id: String,
     key: String,
     occurred_at_ms: u64,
+    priority: Option<f64>,
     received_at_ms: u64,
     sender_id: String,
     sender_name: String,

@@ -12,6 +12,7 @@
 - `store.rs`：`Archive`，SQLite；`INSERT OR IGNORE … json_each` 直接吃 domain 返回的 JSON（`save_event` 包成数组，`save_page` 取 `$.envelopes`）；水位取 `MAX(occurred_at_ms)`，不另建表；错误装箱
 - `bridge.rs` 的 `Page` 是 `parse_page` 结果的可改写副本（`envelopes_mut`、`render`），保存的是改写后的页面
 - `dws.rs`：`Dws`（`lookup` 一次性执行，ID 以 `--msg-ids=<ID,…>` 追加；`listen` 起监听子进程，stdin、stdout 管道，stderr 继承；`pull` 一次性执行并收 stdout；`decrypt` 一次性执行，密文以 `--text=<密文>` 追加）、`Listener`（`next_line`、`stop`）；`plaintext(&Output)` 从解密命令的 JSON 取 `plaintext`，缺失或非 JSON 为 `None`
+- `triage.rs`（`Setup`、`run`）与 `triage/config.rs`（`Settings`、`Exec`、`Var`）、`triage/desk.rs`（调 domain `triage` feature）：消息分级与转交的 worker，见下“分级与转交”；`ledger.rs`：`decisions`、`handoffs` 两表的读写，所有查询与写入的参数打成一个 JSON 对象经 `json_extract(?1, …)` 取值（绕开参数个数限制），读返回 `json_group_array`，失败只记 warn 并返回空或 0；`pipe.rs`：`feed(Job)` 起子进程（`env_clear` 后只放配置的 env 与 vars，stderr 置 null，stdin 写入后关闭，超时 `TimedOut`，`kill_on_drop`）
 - `race.rs`：`race(stop, work)` 用 `poll_fn` 先 poll 停机信号再 poll 工作，代替被 clippy 禁的 `select!`；返回 `None` 即被停机打断
 - `ingest.rs`：`run(settings, context, stop)` 返回退出码，单任务，不 spawn；`context` 由 cli 构造，`ingest` 只用其调 domain 的 `ingest` feature
 - `bridge.rs`：持有 `&Context`，调 domain 的 `ingest` feature
@@ -25,6 +26,16 @@
 - 转发消息：domain 的 envelope 带 `lookup`（正文里有整行 base64 且不短于 `cipher_min_length` 时为消息 ID，否则空）；实时事件在 `unsealed` 后经 `assembled`、补拉在 `absorb` 里经 `assemble` 统一处理：收集有 `lookup` 的 ID，按 `lookup_batch` 分批调 `Dws::lookup`（`--msg-ids=` 逗号分隔），`dws::children` 取 `messages[].forwarded[]` 的 `{sender, text}`，再经 domain 的 `ingest.assemble` 重组；查询失败、无子消息按原样入库；查询期间收到停机信号则该事件或整页不入库（补拉会补回）
 - 退出：停机信号 → 0；`dws` 退出码落在 `manual_exit_codes` → `manual_exit_code`；存储错误 → `failure_exit_code`
 - 退避：从 `backoff_initial_ms` 起逐次翻倍到 `backoff_max_ms`；曾收到消息的一轮结束后复位
+
+## 分级与转交
+
+- `triage::run(setup, stop)` 单任务不 spawn，返回 `()`，永不使 serve 退出；`mode: disabled` 立即返回；账本打开失败记 error 后返回；每轮 `tick`：`decide_batch` → 处理一条 pending 转交 → 处理一条 analyzed 转交 → 睡 `poll_ms`；`exec` 经 `race` 打断，被打断返回 `None` 逐层 `?` 退出
+- 决策：`Ledger::pending` 取回溯内无决策（或 `failed` 且可重试）的消息，按每小时余量与 `batch` 限量；domain `triage.ask` 给出请求体或跳过原因（own、notice、empty、sealed，记 `skipped`）；curl（URL 与 key 经 `vars` 注入 `TRIAGE_URL`、`TRIAGE_KEY`，用 `--variable %NAME` 与 `--expand-url`、`--expand-header` 取用，请求体走 stdin，argv 不含密钥）→ `triage.score`；非 0 退出、超时、启动失败记 `failed`（`reason` 为 `exit:<码>` 或 `io:<种类>`，不含正文），`attempts` 累加；答案无效记 `invalid` 不重试
+- 转交：`urgent` 时单条 SQL 建 `pending` 转交（同会话 `handoff_cooldown_ms` 内已有、或一小时内已达 `max_handoffs_per_hour` 则忽略）；analyze 取同会话触发时刻前的消息 → `triage.brief` → codex（stdin 传提示词，只读 stdout 最终回复，按 `result_max_chars` 截断；退出非 0 或输出为空都算失败，空输出的 `reason` 为 `exit:0`）→ `analyzed`；deliver 用 `triage.notice` → dws 发送（参数末尾追加 `notify_target` 与 `--idempotency-key=<消息键>`）→ `sent`；失败 `attempts+1` 并更新 `updated_at_ms`，达到 `max_attempts` 转 `failed`；阶段推进把 `attempts` 与 `updated_at_ms` 归零，故发送失败只重试发送
+- 防自循环：domain 的 `ask` 跳过本人发出的与通知会话的消息；通知经 dws 以本人身份发出，补拉可能再收到，靠这两条切断
+- 停机：在途子进程被打断并 kill，状态不改，下次启动续做（至少一次，发送靠幂等键去重）
+- 账本与采集共库，每次写单条语句、不跨 await 持事务，避免撞 5 秒 busy_timeout 让采集误判存储失败；`Archive::open` 与 `Ledger::open` 都执行 `SCHEMA`（`IF NOT EXISTS`），`Shelf` 只读、不建表
+- 日志：`rows`（变更行数）、概率、状态、次数、长度，不含正文、提示词、分析与响应
 
 ## 约定
 
@@ -40,5 +51,6 @@
 - 监听输入每行须以换行结尾（`feed`），否则 `next_line` 要到 EOF 才返回最后一行
 - 触发存储错误：预建缺列的表（`BAD_SCHEMA`，在 `heal` 的查询处失败）、对已建表加触发器 `REFUSE_INSERT`、`REFUSE_UPDATE`（`INSERT`、`UPDATE` 失败而查询正常）、水位列为 TEXT（`TEXT_STAMP`）；读取行解码失败：列齐全但 `occurred_at_ms` 为 TEXT（`BAD_STAMP`）
 - tracing 宏的字段表达式只在有 subscriber 时求值：经 `run_logged` 装 subscriber（含常驻 `ANCHOR`，原因见 domain/CLAUDE.md），否则 `Summary` 的访问方法覆盖不到
+- 假 triage：`tests/it/fixtures/fake-triage.sh`，第一个参数为角色（decide、codex、send），行为由 `env` 里的 `FAKE_DECIDE`（fail、junk、slow，`FAKE_P` 为概率，默认 0.95）、`FAKE_CODEX`（fail、empty、slow）、`FAKE_SEND`（fail、slow）控制，参数、stdin、调用次数写入 `<角色>-args.txt`、`-stdin.txt`、`-calls.txt`，`decide-env.txt` 记录注入的 `TRIAGE_URL|TRIAGE_KEY`；用例放 `tests/it/triage.rs`，helper 在 `tests/it/triage/rig.rs`，配置由 `Sandbox::triage` 生成，运行经 `triage_logged`；账本写失败靠对 `decisions` 加 `RAISE(ABORT)` 触发器，读失败靠把 `decisions` 重建成缺列表；`BAD_STAMP` 须同时建 `decisions`、`handoffs`（`Shelf` 连表）
 - 含外部命令的用例（解密、查询）停机等待 `SHORT` 取 4 秒：负载高时 0.7、2.5 秒都不够，会偶发失败；同一测试二进制不可并行跑多份（沙箱目录同名）
 - 每个测试用独立的 `Sandbox` 目录（`CARGO_TARGET_TMPDIR`）；以 `sleep` 当停机信号，时长取大值避免慢机误判

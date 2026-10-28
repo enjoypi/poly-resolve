@@ -30,6 +30,16 @@ async fn bad_yaml_fails() {
 }
 
 #[tokio::test]
+async fn invalid_triage_variable_fails() {
+    let yaml = YAML.replace("self_sender_id: \"${HOME}\"", "self_sender_id: plain");
+    let path = config("invalid-triage-var.yaml", &yaml).unwrap();
+    assert_eq!(
+        call(&path, ["health", "check"], "{}").await,
+        ExitCode::from(2)
+    );
+}
+
+#[tokio::test]
 async fn ipv6_loopback_addr_loads() {
     let path = config("ipv6.yaml", &YAML.replace("127.0.0.1:0", "[::1]:0")).unwrap();
     assert_eq!(
@@ -86,6 +96,17 @@ async fn non_loopback_addr_fails() {
             ExitCode::from(2)
         );
     }
+}
+
+#[tokio::test]
+async fn serve_refuses_enabled_triage_without_variables() {
+    let yaml = YAML.replace("mode: disabled", "mode: enabled").replace(
+        "notify_target: \"${HOME}\"",
+        "notify_target: \"${POLY_RESOLVE_UNSET_FOR_TEST}\"",
+    );
+    let path = config("triage-missing-var.yaml", &yaml).unwrap();
+    let code = run(&["cli", "serve", "--config", &path]).await;
+    assert_eq!(code, ExitCode::from(2));
 }
 
 #[tokio::test]

@@ -35,6 +35,8 @@ export const FIELDS: Record<string, Field> = {
   sender_id: { hidden: true, label: "发送人 ID" },
   source: { hidden: true, label: "来源" },
   account: { hidden: true, label: "账号" },
+  priority: { kind: "number", label: "优先级" },
+  analysis: { hidden: true, label: "分析" },
 };
 
 export const MAX_ROWS = 2000;

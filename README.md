@@ -48,6 +48,13 @@ YAML 文件，各项均必填，不允许其他字段。示例见 `cli/config.ya
 | ingest.lookup_batch | 一次向钉钉工具查询转发消息详情的消息数，至少 1（钉钉工具上限 50） |
 | ingest.dws.lookup | 查询消息详情所用命令：bin 为可执行文件，args 为参数；自动追加 `--msg-ids=<消息 ID,…>`，标准输出须为含 `messages[].forwarded[]` 的 JSON |
 | ingest.dws.manual_exit_codes | 钉钉工具退出码落在此列表时视为须人工处理 |
+| triage.mode | disabled 或 enabled；enabled 时 `serve` 启动即检查所需环境变量，缺失则以退出码 2 退出 |
+| triage.model / question / threshold | 决策接口的模型名、是非问题（`name` 为答案名，`instructions` 为问题文本）、概率不低于阈值即高优先级 |
+| triage.limits | batch 每轮最多决策条数；poll_ms 轮询间隔；lookback_ms 只处理多久以内的消息；max_attempts / retry_after_ms 失败重试次数与间隔；max_decisions_per_hour / max_handoffs_per_hour 每小时决策与转交上限；handoff_cooldown_ms 同一会话两次转交的最短间隔 |
+| triage.sizes | input_max_chars 单条消息送决策的字数上限；context_messages / context_window_ms / context_max_chars 转交时取的消息条数、时间跨度与字数上限；result_max_chars 分析结果字数上限 |
+| triage.prompt / notice | 交给 codex 的提示词模板（`{messages}` 处填入消息 JSON）与发给本人的通知模板（`{probability}`、`{conversation}`、`{analysis}`） |
+| triage.decide / codex / notify | 三个外部命令：bin、args、env（字面量环境变量）、vars（`${NAME}` 写法，运行时读同名环境变量传给子进程，不设默认值）、timeout_ms；子进程环境先清空再只放 env 与 vars；notify 的 args 以接收人参数名结尾，程序追加 `notify_target` 与 `--idempotency-key=<消息键>` |
+| triage.self_sender_id / notify_conversation_id / notify_target | 本人的发送人 ID、通知所在会话 ID、通知接收人，均写成 `${NAME}`；前两者对应的消息不参与决策 |
 | errors.<错误>.code / exit_code | 该错误的响应体 code 与命令行退出码（1 至 255）；<错误> 取 bad_request、storage、unknown_action，见“返回码” |
 
 ## 命令行调用
@@ -121,6 +128,43 @@ cd web && bun install --frozen-lockfile && bun run build
 | limit | 可选，每页条数，1 至 messages.max，缺省取 messages.default |
 
 响应含 `items`（不含原始内容）与 `next_cursor`（没有更早的消息时为 null）。
+
+## 消息分级与转交
+
+默认关闭（`triage.mode: disabled`）。开启后 `serve` 同进程对库里每条新消息调决策接口判定优先级，高优先级消息所在会话的近期消息交给 `codex exec` 只读分析，结果存库（页面“优先级”列，详情里的“分析”）并经钉钉发给本人。消息正文会发往决策接口与 codex，须先取得授权。关闭时无需 sops，照常 `serve`。
+
+准备：
+
+1. 用 sops 保存变量：在项目根执行 `sops secrets.enc.yaml`（文件名须以 `.enc.yaml` 结尾，加密规则取自上级目录的 `.sops.yaml`；已有私钥 `~/.config/sops/age/keys.txt`），写入扁平 YAML：
+
+| 变量 | 含义 |
+|---|---|
+| DECISIONS_URL | 决策接口的完整地址 |
+| OPENAI_API_KEY | 决策接口的 API key |
+| CODEX_API_KEY | codex 专用的 API key |
+| SELF_SENDER_ID | 本人的发送人 ID（消息里的 `sender_id`） |
+| NOTIFY_CONVERSATION_ID | 通知所在会话的 ID（消息里的 `conversation_id`） |
+| NOTIFY_TARGET | 通知接收人的 openDingTalkId（本人） |
+
+2. 建 codex 专用目录：`mkdir -p .debug/codex-home .debug/codex-work`
+3. 把 `cli/config.yaml` 的 `triage.mode` 改为 `enabled`
+
+启动：
+
+```sh
+sops exec-env secrets.enc.yaml './target/release/cli serve --config cli/config.yaml'
+```
+
+变量只经环境变量传给子进程，不出现在命令行参数与日志里；开启后缺任一变量，`serve` 以退出码 2 退出并列出缺的变量名。
+
+行为：
+
+- 本人发出的、发往通知会话的、正文为空的、仍是密文的消息不外发，只记为已跳过；其余消息调决策接口，概率不低于 `triage.threshold` 即高优先级
+- 高优先级消息按会话合并：`handoff_cooldown_ms` 内同一会话只转交一次；codex 只读（关闭其全部工具、专用 `CODEX_HOME` 与空工作目录）；通知发往 `notify_target`，带幂等标识，重试不会重复送达
+- 失败按 `max_attempts` 与 `retry_after_ms` 重试，用尽后留为失败；决策或转交失败不影响收集，也不使服务退出
+- 库里 `decisions`、`handoffs` 两张表记录每条消息的决策与每次转交的状态；日志不含消息正文、提示词与分析结果
+
+试跑建议：先保持关闭，用 `sops exec-env secrets.enc.yaml 'curl …'` 对合成文本调一次决策接口，核对返回里 `answers[].probability`；再开启并把 `threshold` 临时设为大于 1，只打分不转交，观察分数；最后用合成的提示注入消息验证 codex 不读文件、不外传，并先用 `dws … --dry-run` 确认通知能发到本人。每小时限额起初设小。
 
 ## HTTP 调用
 

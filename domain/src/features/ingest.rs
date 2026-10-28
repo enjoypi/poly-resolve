@@ -1,4 +1,4 @@
-mod cipher;
+pub(super) mod cipher;
 mod stamp;
 
 use core::iter::once;
@@ -215,7 +215,7 @@ pub(crate) fn cipher(req: CipherRequest) -> CipherResponse {
     }
 }
 
-fn clock(millis: u64, offset_minutes: i16) -> Result<String, AppError> {
+pub(super) fn clock(millis: u64, offset_minutes: i16) -> Result<String, AppError> {
     let shifted = i64::try_from(millis)
         .unwrap_or(i64::MAX)
         .saturating_add(offset_millis(offset_minutes));
