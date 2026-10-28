@@ -17,6 +17,17 @@ const TIMEOUT: u64 = 200;
 const ZERO: u32 = 0;
 
 #[tokio::test]
+async fn codex_cannot_leave_its_directory() {
+    let sandbox = Sandbox::new("triage-codex-escape").unwrap();
+    seed(&sandbox, &one()).unwrap();
+    let patch = json!({"codex": {"env": {"FAKE_CODEX": "escape"}}});
+    start(&sandbox, &patch, SHORT).await.unwrap();
+    assert_eq!(calls(&sandbox, "codex").unwrap(), 1);
+    assert_eq!(sandbox.read("leaked.txt").unwrap(), "");
+    assert!(!sandbox.outside().join("escaped.txt").exists());
+}
+
+#[tokio::test]
 async fn codex_empty_output_counts_as_failure() {
     let sandbox = Sandbox::new("triage-codex-empty").unwrap();
     seed(&sandbox, &one()).unwrap();
@@ -71,6 +82,9 @@ fn config_lists_missing_variables() {
     let patch = json!({"notify_target": "${POLY_RESOLVE_UNSET_FOR_TEST}"});
     let triage = sandbox.triage(&patch).unwrap();
     assert_eq!(triage.missing(), ["POLY_RESOLVE_UNSET_FOR_TEST"]);
+    let unset = json!({"codex": {"sandbox": {"vars": {"HOME": "${POLY_RESOLVE_UNSET_FOR_TEST}"}}}});
+    let sandboxed = sandbox.triage(&unset).unwrap();
+    assert_eq!(sandboxed.missing(), ["POLY_RESOLVE_UNSET_FOR_TEST"]);
 }
 
 #[test]
@@ -146,6 +160,32 @@ async fn disabled_mode_runs_nothing() {
 }
 
 #[tokio::test]
+async fn exec_missing_path_is_reported() {
+    let sandbox = Sandbox::new("triage-exec-path").unwrap();
+    seed(&sandbox, &one()).unwrap();
+    let patch = json!({"decide": {"sandbox": {"paths": {"DIR": "/nonexistent/dir"}}}});
+    start(&sandbox, &patch, QUICK).await.unwrap();
+    assert_eq!(
+        table(&sandbox, DECISIONS).unwrap(),
+        [format!("{KEY}|failed||2|exit:65")]
+    );
+    assert_eq!(calls(&sandbox, "decide").unwrap(), 0);
+}
+
+#[tokio::test]
+async fn exec_missing_profile_is_reported() {
+    let sandbox = Sandbox::new("triage-exec-profile").unwrap();
+    seed(&sandbox, &one()).unwrap();
+    let patch = json!({"decide": {"sandbox": {"profile": "/nonexistent/fake.sb"}}});
+    start(&sandbox, &patch, QUICK).await.unwrap();
+    assert_eq!(
+        table(&sandbox, DECISIONS).unwrap(),
+        [format!("{KEY}|failed||2|exit:65")]
+    );
+    assert_eq!(calls(&sandbox, "decide").unwrap(), 0);
+}
+
+#[tokio::test]
 async fn exec_missing_program_is_reported() {
     let sandbox = Sandbox::new("triage-exec-missing").unwrap();
     seed(&sandbox, &one()).unwrap();
@@ -153,8 +193,21 @@ async fn exec_missing_program_is_reported() {
     start(&sandbox, &patch, QUICK).await.unwrap();
     assert_eq!(
         table(&sandbox, DECISIONS).unwrap(),
+        [format!("{KEY}|failed||2|exit:71")]
+    );
+}
+
+#[tokio::test]
+async fn exec_missing_sandbox_is_reported() {
+    let sandbox = Sandbox::new("triage-exec-sandbox").unwrap();
+    seed(&sandbox, &one()).unwrap();
+    let patch = json!({"decide": {"sandbox": {"bin": "/nonexistent/sandbox-exec"}}});
+    start(&sandbox, &patch, QUICK).await.unwrap();
+    assert_eq!(
+        table(&sandbox, DECISIONS).unwrap(),
         [format!("{KEY}|failed||2|io:NotFound")]
     );
+    assert_eq!(calls(&sandbox, "decide").unwrap(), 0);
 }
 
 #[tokio::test]

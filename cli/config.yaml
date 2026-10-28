@@ -1,5 +1,6 @@
 addr: "127.0.0.1:15801"
 log_level: debug
+sandbox_exit_code: 8
 serve_exit_code: 1
 shutdown_timeout_exit_code: 5
 shutdown_timeout_ms: 10000
@@ -63,6 +64,18 @@ triage:
     bin: codex
     env:
       CODEX_HOME: .debug/codex-home
+    sandbox:
+      bin: /usr/bin/sandbox-exec
+      canary: /usr/bin/true
+      paths:
+        BREW: /opt/homebrew
+        CODEXHOME: .debug/codex-home
+        PROJ: .
+        WORK: .debug/codex-work
+      probe: [--help]
+      profile: cli/sandbox/codex.sb
+      vars:
+        HOME: "${HOME}"
     timeout_ms: 300000
     vars:
       CODEX_API_KEY: "${CODEX_API_KEY}"
@@ -88,6 +101,14 @@ triage:
       - "@-"
     bin: curl
     env: {}
+    sandbox:
+      bin: /usr/bin/sandbox-exec
+      canary: /usr/bin/true
+      paths:
+        BREW: /opt/homebrew
+      probe: [--help]
+      profile: cli/sandbox/curl.sb
+      vars: {}
     timeout_ms: 35000
     vars:
       PATH: "${PATH}"
@@ -120,6 +141,14 @@ triage:
     bin: dws
     env:
       DO_NOT_TRACK: "1"
+    sandbox: &dws_sandbox
+      bin: /usr/bin/sandbox-exec
+      canary: /usr/bin/true
+      paths: {}
+      probe: [--help]
+      profile: cli/sandbox/dws.sb
+      vars:
+        HOME: "${HOME}"
     timeout_ms: 30000
     vars:
       HOME: "${HOME}"
@@ -154,18 +183,25 @@ ingest:
     decrypt:
       args: [chat, crypto, decrypt, -f, json]
       bin: dws
+      sandbox: *dws_sandbox
     env:
       DO_NOT_TRACK: "1"
     listen:
       args: [event, consume, user_im_message_receive_o2o_all, user_im_message_receive_group_all, --flatten, -f, ndjson]
       bin: dws
+      sandbox: *dws_sandbox
     lookup:
       args: [chat, +messages-mget, --no-reactions, --no-threads, -f, json]
       bin: dws
+      sandbox: *dws_sandbox
     manual_exit_codes: [2, 4]
     pull:
       args: [chat, message, list-all, --limit, "100", --page-all, --page-limit, "20", --no-reactions, -f, json]
       bin: dws
+      sandbox: *dws_sandbox
+    vars:
+      HOME: "${HOME}"
+      PATH: "${PATH}"
   failure_exit_code: 6
   heal_limit: 50
   initial_backfill_ms: 3600000

@@ -7,5 +7,6 @@ pub mod ingest;
 mod ledger;
 mod pipe;
 pub mod race;
+pub mod seatbelt;
 pub mod store;
 pub mod triage;

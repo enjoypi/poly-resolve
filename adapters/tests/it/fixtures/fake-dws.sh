@@ -31,6 +31,8 @@ pull)
   case "$FAKE_PULL" in
     fail) exit "${FAKE_CODE:-1}" ;;
     slow) exec sleep 30 ;;
+    escape) cat "$FAKE_OUTSIDE/secret.txt" > "$FAKE_DIR/leaked.txt"; echo x > "$FAKE_OUTSIDE/escaped.txt" ;;
+    net) /usr/bin/curl -sS -m 2 "http://127.0.0.1:$FAKE_PORT/" > "$FAKE_DIR/net.txt" ;;
     *) if [ -f "$FAKE_DIR/pull.json" ]; then cat "$FAKE_DIR/pull.json"; fi ;;
   esac
   ;;

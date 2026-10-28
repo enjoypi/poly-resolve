@@ -13,6 +13,7 @@
 - `bridge.rs` 的 `Page` 是 `parse_page` 结果的可改写副本（`envelopes_mut`、`render`），保存的是改写后的页面
 - `dws.rs`：`Dws`（`lookup` 一次性执行，ID 以 `--msg-ids=<ID,…>` 追加；`listen` 起监听子进程，stdin、stdout 管道，stderr 继承；`pull` 一次性执行并收 stdout；`decrypt` 一次性执行，密文以 `--text=<密文>` 追加）、`Listener`（`next_line`、`stop`）；`plaintext(&Output)` 从解密命令的 JSON 取 `plaintext`，缺失或非 JSON 为 `None`
 - `triage.rs`（`Setup`、`run`）与 `triage/config.rs`（`Settings`、`Exec`、`Var`）、`triage/desk.rs`（调 domain `triage` feature）：消息分级与转交的 worker，见下“分级与转交”；`ledger.rs`：`decisions`、`handoffs` 两表的读写，所有查询与写入的参数打成一个 JSON 对象经 `json_extract(?1, …)` 取值（绕开参数个数限制），读返回 `json_group_array`，失败只记 warn 并返回空或 0；`pipe.rs`：`feed(Job)` 起子进程（`env_clear` 后只放配置的 env 与 vars，stderr 置 null，stdin 写入后关闭，超时 `TimedOut`，`kill_on_drop`）
+- `seatbelt.rs`：`Sandbox`（`bin`、`canary`、`paths`、`probe`、`profile`、`vars`，`deny_unknown_fields`）：`command(program)` 拼 `bin -f <真实路径 profile> -D 名=值 … -- program`，`paths` 与 `profile` 用 `canonicalize(..).unwrap_or_default()`，路径不存在即得空值，`sandbox-exec` 以 65 拒绝，不新增分支；`vars` 取环境变量，缺失为空；`check(probe, name)` 先跑 `canary`（须非 0）再跑 `probe`（须 0），错误是字符串。`ingest.dws` 的 4 个 `Process` 与 triage 的 3 个 `Exec` 各带一份 `sandbox`，命令一律经 `command` 起，不得绕过；`Dws::check`、`triage::config::Settings::check` 供 cli 启动自检
 - `race.rs`：`race(stop, work)` 用 `poll_fn` 先 poll 停机信号再 poll 工作，代替被 clippy 禁的 `select!`；返回 `None` 即被停机打断
 - `ingest.rs`：`run(settings, context, stop)` 返回退出码，单任务，不 spawn；`context` 由 cli 构造，`ingest` 只用其调 domain 的 `ingest` feature
 - `bridge.rs`：持有 `&Context`，调 domain 的 `ingest` feature
@@ -39,6 +40,9 @@
 
 ## 约定
 
+- 沙箱事实：一个进程只能有一层 Seatbelt（外层内再 `sandbox-exec` 更严格的策略或 `codex sandbox` 都 71）；`process-exec` 对符号链接无效，策略放行真实路径所在目录（`/opt/homebrew/Cellar/curl`、`/opt/homebrew/Caskroom/codex`）；网络规则的主机只能是 `*` 或 `localhost`，只能限端口；`-D` 值在 `ps` 可见，不传 secret；`sandbox-exec` 用 execvp，PID 与管道语义不变；失败码：策略或参数无效 65，被包装程序不存在 71；规则不全的后果是命令失败，故每条新规则都要能在 `log stream` 里对上拒绝记录；策略不写注释
+- `dws.sb` 实机收敛结果（`dws event consume` 能订阅并连上）：读写 `~/.dws`、`~/Library/Application Support/dws-cli`（令牌）、`~/Library/Caches/dws`、`~/Library/Keychains`、`~/.local/bin/.dws-runtime.lock` 与 `.dws-runtime-manifest.json`；监听时 dws 经 `/bin/sh`、`/bin/bash` 起事件总线子进程，在 `/tmp/dws-event-<uid>/` 建 0700 目录与 unix socket（须由 dws 自己建，预建 0755 的目录会令其报权限错），读 Keychain 时反复起 `/usr/bin/security`（继承沙箱，需读自身与 `/usr/bin`、`se_SecurityMessages`、共享内存 `com.apple.AppleDatabaseChanged`）；其余 mach 服务、CFPreferences、`NSIRD` 临时目录的拒绝记录不致命，不放行；排错看 `log show --predicate 'sender == "Sandbox"'`，拒绝记录里的进程名可能是 `sh`、`security` 而不是 `dws`
+- 子进程环境一律 `env_clear` 后只放配置的 env 与 vars（含采集的 dws）；命令用 `PATH` 找程序时 `vars` 须含 `PATH`
 - 停机先丢子进程 stdin（dws 视 EOF 为优雅退出并取消订阅），超过 `child_exit_timeout_ms` 才 kill；kill -9 会泄漏服务端订阅（再启报已存在、重复投递）
 - 子进程环境经 `dws.env` 配置，应含 `DO_NOT_TRACK=1` 关闭 dws 遥测
 - `Option` 的管道句柄用 `map`、`map_or`、`take` 处理，不写取不到的分支（覆盖率会缺 region）
@@ -51,6 +55,7 @@
 - 监听输入每行须以换行结尾（`feed`），否则 `next_line` 要到 EOF 才返回最后一行
 - 触发存储错误：预建缺列的表（`BAD_SCHEMA`，在 `heal` 的查询处失败）、对已建表加触发器 `REFUSE_INSERT`、`REFUSE_UPDATE`（`INSERT`、`UPDATE` 失败而查询正常）、水位列为 TEXT（`TEXT_STAMP`）；读取行解码失败：列齐全但 `occurred_at_ms` 为 TEXT（`BAD_STAMP`）
 - tracing 宏的字段表达式只在有 subscriber 时求值：经 `run_logged` 装 subscriber（含常驻 `ANCHOR`，原因见 domain/CLAUDE.md），否则 `Summary` 的访问方法覆盖不到
+- 沙箱测试：`fixtures/fake.sb`（只放行 `/bin`、`/usr/bin`、fixtures 与 `DIR`，显式禁 `/usr/bin/true` 作金丝雀，无网络，只读 `/private/etc/ssl` 让 curl 能走到连接）、`open.sb`（`allow default`，作对照）；`Sandbox::fence` 给每个命令配 sandbox，`Sandbox::outside()` 是沙箱目录外含 `secret.txt` 的目录；假脚本 `escape` 读写 `$FAKE_OUTSIDE`、`net`（dws pull）用 `/usr/bin/curl` 连 `$FAKE_PORT`，用例分别断言被拒与对照放行；`sandbox.rs` 覆盖 `check` 各分支，探测参数 `noop` 让假脚本退出 0；想让单个命令起不来，改它自己的 `sandbox.bin`（io 错误）或 `bin`（71）
 - 假 triage：`tests/it/fixtures/fake-triage.sh`，第一个参数为角色（decide、codex、send），行为由 `env` 里的 `FAKE_DECIDE`（fail、junk、slow，`FAKE_P` 为概率，默认 0.95）、`FAKE_CODEX`（fail、empty、slow）、`FAKE_SEND`（fail、slow）控制，参数、stdin、调用次数写入 `<角色>-args.txt`、`-stdin.txt`、`-calls.txt`，`decide-env.txt` 记录注入的 `TRIAGE_URL|TRIAGE_KEY`；用例放 `tests/it/triage.rs`，helper 在 `tests/it/triage/rig.rs`，配置由 `Sandbox::triage` 生成，运行经 `triage_logged`；账本写失败靠对 `decisions` 加 `RAISE(ABORT)` 触发器，读失败靠把 `decisions` 重建成缺列表；`BAD_STAMP` 须同时建 `decisions`、`handoffs`（`Shelf` 连表）
 - 含外部命令的用例（解密、查询）停机等待 `SHORT` 取 4 秒：负载高时 0.7、2.5 秒都不够，会偶发失败；同一测试二进制不可并行跑多份（沙箱目录同名）
 - 每个测试用独立的 `Sandbox` 目录（`CARGO_TARGET_TMPDIR`）；以 `sleep` 当停机信号，时长取大值避免慢机误判

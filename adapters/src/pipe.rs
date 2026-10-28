@@ -23,13 +23,17 @@ impl<'job> Job<'job> {
     }
 }
 
+fn bare(exec: &Exec) -> Command {
+    let mut command = exec.sandbox().command(exec.bin());
+    let _: &mut Command = command.env_clear().envs(exec.env()).envs(exec.vars());
+    command
+}
+
 pub(crate) async fn feed(job: Job<'_>) -> io::Result<Output> {
-    let mut child = Command::new(job.exec.bin())
+    let mut command = bare(job.exec);
+    let mut child = command
         .args(job.exec.args())
         .args(job.extra)
-        .env_clear()
-        .envs(job.exec.env())
-        .envs(job.exec.vars())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -53,4 +57,8 @@ pub(crate) async fn feed(job: Job<'_>) -> io::Result<Output> {
     })
     .await
     .unwrap_or_else(|_elapsed| Err(io::Error::from(io::ErrorKind::TimedOut)))
+}
+
+pub(crate) async fn probe(exec: &Exec) -> Result<(), String> {
+    exec.sandbox().check(bare(exec), exec.bin()).await
 }

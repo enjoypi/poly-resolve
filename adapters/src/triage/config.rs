@@ -4,12 +4,16 @@ use std::env;
 
 use serde::Deserialize;
 
+use crate::pipe::probe;
+use crate::seatbelt::Sandbox;
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Exec {
     args: Vec<String>,
     bin: String,
     env: BTreeMap<String, String>,
+    sandbox: Sandbox,
     timeout_ms: NonZeroU64,
     vars: BTreeMap<String, Var>,
 }
@@ -27,14 +31,16 @@ impl Exec {
         &self.env
     }
 
+    pub(crate) const fn sandbox(&self) -> &Sandbox {
+        &self.sandbox
+    }
+
     pub(crate) const fn timeout_ms(&self) -> u64 {
         self.timeout_ms.get()
     }
 
     pub(crate) fn vars(&self) -> impl Iterator<Item = (&str, String)> {
-        self.vars
-            .iter()
-            .filter_map(|(name, var)| var.value().map(|value| (name.as_str(), value)))
+        resolved(&self.vars)
     }
 }
 
@@ -99,6 +105,13 @@ impl Settings {
         self.limits.batch.get()
     }
 
+    pub async fn check(&self) -> Result<(), String> {
+        for exec in [&self.decide, &self.codex, &self.notify] {
+            probe(exec).await?;
+        }
+        Ok(())
+    }
+
     pub(crate) const fn codex(&self) -> &Exec {
         &self.codex
     }
@@ -159,6 +172,9 @@ impl Settings {
         .chain(self.codex.vars.values())
         .chain(self.decide.vars.values())
         .chain(self.notify.vars.values())
+        .chain(self.codex.sandbox.vars())
+        .chain(self.decide.sandbox.vars())
+        .chain(self.notify.sandbox.vars())
         .filter(|var| var.value().is_none())
         .map(|var| var.name.as_str())
         .collect()
@@ -248,4 +264,9 @@ impl TryFrom<String> for Var {
             name: name.to_owned(),
         })
     }
+}
+
+pub(crate) fn resolved(vars: &BTreeMap<String, Var>) -> impl Iterator<Item = (&str, String)> {
+    vars.iter()
+        .filter_map(|(name, var)| var.value().map(|value| (name.as_str(), value)))
 }

@@ -16,6 +16,7 @@ codex)
   case "$FAKE_CODEX" in
     fail) exit 3 ;;
     empty) ;;
+    escape) cat "$FAKE_OUTSIDE/secret.txt" > "$FAKE_DIR/leaked.txt"; echo x > "$FAKE_OUTSIDE/escaped.txt"; echo ANALYSIS ;;
     slow) exec sleep 30 ;;
     *) echo ANALYSIS ;;
   esac

@@ -70,6 +70,9 @@ fn fail(code: u8, err: &dyn Display) -> ExitCode {
 }
 
 async fn ingest(settings: &Settings) -> ExitCode {
+    if let Err(err) = verify(settings).await {
+        return fail(settings.sandbox_exit_code(), &err);
+    }
     let mut stop = pin!(shutdown());
     let code = service::collect(settings, &mut stop).await;
     emit(code, &Ok(()))
@@ -94,12 +97,24 @@ async fn serve(settings: Settings) -> ExitCode {
             &format!("triage: missing environment variables: {names}"),
         );
     }
+    if let Err(err) = verify(&settings).await {
+        return fail(settings.sandbox_exit_code(), &err);
+    }
     match TcpListener::bind(settings.addr()).await {
         Ok(listener) => {
             let (code, result) = service::run(listener, Arc::new(settings)).await;
             emit(code, &result)
         }
         Err(err) => fail(settings.serve_exit_code(), &err),
+    }
+}
+
+async fn verify(settings: &Settings) -> Result<(), String> {
+    settings.ingest().check().await?;
+    if settings.triage().enabled() {
+        settings.triage().check().await
+    } else {
+        Ok(())
     }
 }
 
