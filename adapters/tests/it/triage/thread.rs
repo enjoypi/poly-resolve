@@ -1,7 +1,7 @@
 use serde_json::{Value, json};
 
 use super::rig::{
-    ALERTS, LATER, QUICK, SECOND, SHORT, TOPICS, calls, one, seed, seed_from, start, table,
+    ALERTS, LATER, QUICK, SECOND, SHORT, TOPICS, calls, home, one, seed, seed_from, start, table,
 };
 use crate::support::{Fallible, Sandbox};
 
@@ -17,6 +17,18 @@ async fn aged_threads_start_fresh() {
     let prompt = sandbox.read("codex-stdin.txt").unwrap();
     assert!(prompt.starts_with("ctx:") && prompt.contains("server down"));
     assert_eq!(calls(&sandbox, "codex").unwrap(), 2);
+}
+
+#[tokio::test]
+async fn codex_args_expand_declared_variables() {
+    let sandbox = Sandbox::new("thread-args").unwrap();
+    seed(&sandbox, &one()).unwrap();
+    let patch = json!({"codex": {"args": ["codex", "url=${TRIAGE_URL}", "${UNDECLARED}"]}});
+    start(&sandbox, &patch, SHORT).await.unwrap();
+    assert_eq!(
+        sandbox.read("codex-args.txt").unwrap(),
+        format!("codex url={} ${{UNDECLARED}} -\n", home().unwrap())
+    );
 }
 
 #[tokio::test]

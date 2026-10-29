@@ -2,7 +2,7 @@ import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { expect, test } from "bun:test";
 import spec from "../../api/openapi.json";
 import { connect } from "../src/client";
-import { REVIEWER_KEY, TEXT } from "../src/config";
+import { TEXT } from "../src/config";
 import { renderReviews } from "../src/reviews";
 
 if (!GlobalRegistrator.isRegistered) GlobalRegistrator.register();
@@ -26,7 +26,6 @@ function item(key: string, patch: Record<string, unknown> = {}) {
     key,
     occurred_at_ms: NOW,
     reason: "",
-    reviewer: "",
     sender: "alice",
     state: "pending",
     text: `text-${key}`,
@@ -101,19 +100,16 @@ test("渲染待审行：正文只作文本，批、会话、发送人、时间�
   expect(options).toEqual([TEXT.reasonPick, "漏脱敏", "排除"]);
 });
 
-test("通过：带审核人请求头，成功后卡片移除", async () => {
+test("通过：不填审核人、不带审核人请求头，成功后卡片移除", async () => {
   const { calls, root } = await open([{ body: listing() }, { body: { states: ["approved"] } }]);
-  const reviewer = root.querySelector(".reviewer") as HTMLInputElement;
-  reviewer.value = " alice ";
-  reviewer.dispatchEvent(new Event("change"));
-  expect(localStorage.getItem(REVIEWER_KEY)).toBe("alice");
+  expect(root.querySelector(".reviewer")).toBeNull();
   click(root, ".approve");
   await until(() => cards(root).length === 1);
-  expect(calls[1]).toEqual({ body: { keys: ["a"] }, path: route("review/approve"), user: "alice" });
+  expect(calls[1]).toEqual({ body: { keys: ["a"] }, path: route("review/approve"), user: null });
   expect(root.querySelector(".count")?.textContent).toBe(TEXT.pending(1));
 });
 
-test("通过：未填审核人时不带请求头，失败时保留卡片并显示错误码", async () => {
+test("通过：失败时保留卡片并显示错误码", async () => {
   const { calls, root } = await open([
     { body: listing() },
     { body: { code: "bad_request" }, status: 400 },
@@ -121,7 +117,6 @@ test("通过：未填审核人时不带请求头，失败时保留卡片并显�
   click(root, ".approve");
   await until(() => root.querySelector(".error")?.textContent === "bad_request");
   expect(cards(root)).toHaveLength(2);
-  expect(calls[1]?.user).toBeNull();
 });
 
 test("整批通过：一次提交全部键，只移除已通过的卡片", async () => {

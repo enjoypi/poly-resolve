@@ -61,7 +61,6 @@ export const REVIEW_HASH = "#reviews";
 
 export const REVIEW_LIMIT = 50;
 
-export const REVIEWER_KEY = "reviewer";
 
 export const TEXT = {
   all: "加载全部",
@@ -69,7 +68,7 @@ export const TEXT = {
   approveAll: "整批通过",
   back: "消息",
   batch: (id: number) => `批 ${id}`,
-  brand: "PolyResolve",
+  brand: "Poly Resolve",
   capped: (max: number) => `已达 ${max} 条上限，请缩小时间范围。`,
   clear: "清除筛选",
   clearMark: "×",
@@ -93,7 +92,6 @@ export const TEXT = {
   reasonPick: "拒绝原因",
   refresh: "刷新",
   reject: "拒绝",
-  reviewer: "审核人",
   reviews: "审核",
   search: "搜索全部字段",
   since: "起",

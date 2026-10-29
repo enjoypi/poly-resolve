@@ -1,4 +1,4 @@
-# PolyResolve
+# Poly Resolve
 
 通过命令行或 HTTP 调用业务功能。功能与规则见 [docs/requirements.md](docs/requirements.md)。
 
@@ -59,7 +59,7 @@ YAML 文件，各项均必填，不允许其他字段。示例见 `cli/config.ya
 | triage.session | codex 会话：prompt 第一次发话题转写的提示词模板、followup 同一话题后续只发新增消息的模板（`{messages}` 处填入消息 JSON）；fresh 新会话追加在 codex 参数后的参数；resume 续写追加的参数（`{thread}` 换成会话 ID） |
 | triage.screen | 可选，缺省不启用：规则脱敏之后、人工审核之前，调本机小模型再筛一遍。exec 是外部命令（用法同 decide，一般是 `curl` 调本机 `llama-server` 的 OpenAI 兼容接口，沙箱用 `cli/sandbox/screen.sb`，只放行本机端口），instructions 是系统提示词，model 是模型名，placeholder 是遮盖用的占位符。模型只能多遮、不能少遮，也不替代人工审核 |
 | triage.notice | 发给本人的通知模板（`{probability}`、`{topic}`、`{analysis}`） |
-| triage.decide / codex / notify | 三个外部命令（codex 的 args 须含 `--json`、不含 `--ephemeral` 与结尾的 `-`）：bin、args、env（字面量环境变量）、sandbox、vars（`${NAME}` 写法，运行时读同名环境变量传给子进程，不设默认值）、timeout_ms；子进程环境先清空再只放 env 与 vars；notify 的 args 以接收人参数名结尾，程序追加 `notify_target` 与 `--idempotency-key=<话题>@<批号>` |
+| triage.decide / codex / notify | 三个外部命令（codex 的 args 须含 `--json`、不含 `--ephemeral` 与结尾的 `-`）：bin、args、env（字面量环境变量）、sandbox、vars（`${NAME}` 写法，运行时读同名环境变量传给子进程，不设默认值；args 里的 `${NAME}` 若在 vars 里声明，则换成其值，其余原样保留）、timeout_ms；子进程环境先清空再只放 env 与 vars；notify 的 args 须含 `--yes`（dws 发消息默认要交互确认）并以接收人参数名结尾，程序追加 `notify_target` 与 `--idempotency-key=<话题>@<批号>` |
 | triage.self_sender_id / notify_conversation_id / notify_target | 本人的发送人 ID、通知所在会话 ID、通知接收人，均写成 `${NAME}`；前两者对应的消息不参与决策 |
 | errors.<错误>.code / exit_code | 该错误的响应体 code 与命令行退出码（1 至 255）；<错误> 取 bad_request、storage、unknown_action，见“返回码” |
 
@@ -152,6 +152,7 @@ cd web && bun install --frozen-lockfile && bun run build
 | DECISIONS_URL | 决策接口的完整地址 |
 | OPENAI_API_KEY | 决策接口的 API key |
 | CODEX_API_KEY | codex 专用的 API key |
+| CODEX_BASE_URL | codex 模型接口的完整地址（如 `https://<主机>/v1`，Responses 协议，端口须为 443）；展开进 codex 参数，`ps` 里本机可见 |
 | SELF_SENDER_ID | 本人的发送人 ID（消息里的 `sender_id`） |
 | NOTIFY_CONVERSATION_ID | 通知所在会话的 ID（消息里的 `conversation_id`） |
 | NOTIFY_TARGET | 通知接收人的 openDingTalkId（本人） |
@@ -169,15 +170,15 @@ sops exec-env secrets.enc.yaml './target/release/cli serve --config cli/config.y
 
 行为：
 
-- 全部未处理的消息都会入库：本人发出的、发往通知会话的、正文为空的、仍是密文的只记为已跳过，其余进入审核；每批至多 `batch` 条，上一批没处理完不开下一批，新到的消息等下一批
+- 全部未处理的消息都会入库：本人发出的、发往通知会话的、正文为空的、仍是密文的只记为已跳过，其余进入审核；每批取最新的至多 `batch` 条（从新到旧），上一批没处理完不开下一批，新到的消息等下一批
 - 脱敏：发送人只写名字（无名写 `unknown_sender`），不外发发送人 ID、会话 ID 与消息键（请求里只用 `C1`、`L3`、`S2` 这样的别名）；按 `triage.redact.patterns` 把密钥与凭据（私钥整块、各平台令牌、Bearer 与 Cookie、连接串、“密码”“口令”“验证码”等关键词后的值、长随机串）、所有链接与地址、文件路径与密钥文件名、手机号、身份证、银行卡、邮箱换成占位符；人名、公司名不处理；不处理全角变体、拆在两条消息里的密钥与被编码包裹的密钥，脱敏只降低暴露，不替代授权；`cli call triage redact` 可用来试规则，`cli/tests/it/redact.rs` 的样例表防回归
-- 审核：每条脱敏后的消息先冻结入库，页面 `#reviews` 里逐条通过或拒绝（顶部“整批通过”一次通过当前列出的全部）；一批里没有待审的行才外发，只外发已通过的；拒绝必须选原因，漏脱敏类原因还须粘贴漏掉的原文，系统学出字面量规则（存入 `learned_rules`，不经接口与日志返回），该条用新规则重新脱敏后回到待审，之后每条消息外发前都再套一遍全部规则；其余原因即排除；审核没有期限，一批不审完就一直等，不丢消息；`mode: auto` 时不经人工、记审核人为 auto；审核页的“审核人”写入请求头 `x-user`，网关已注入时可留空
+- 审核：每条脱敏后的消息先冻结入库，页面 `#reviews` 里逐条通过或拒绝（顶部“整批通过”一次通过当前列出的全部）；一批里没有待审的行才外发，只外发已通过的；拒绝必须选原因，漏脱敏类原因还须粘贴漏掉的原文，系统学出字面量规则（存入 `learned_rules`，不经接口与日志返回），该条用新规则重新脱敏后回到待审，之后每条消息外发前都再套一遍全部规则；其余原因即排除；审核没有期限，一批不审完就一直等，不丢消息；`mode: auto` 时不经人工、记审核人为 auto
 - 决策：一个请求里每条消息一问优先级（概率不低于 `questions.threshold` 即高优先级）；每个新会话段再一问话题归属，选项是开放话题（取首条消息的脱敏摘录作说明）、本批更早的段、“新话题”；同一会话在 `session_gap_ms` 内已有开放话题的，直接并入，不提问；答案缺失、被拒答、置信度不足、选项无效都当新话题；话题取成员的最高概率
 - 转交：高优先级话题按话题合并，`handoff_cooldown_ms` 内同一话题只转交一次；codex 只读（关闭其全部工具、专用 `CODEX_HOME` 与空工作目录，并在沙箱内运行），提示词只含已通过审核的文本；同一话题的后续分析经 `codex exec resume` 续写同一会话，只发新增消息，话题空闲超过 `session_max_ms` 则新建；续写失败即丢弃该话题的会话记录；会话文件落在 `.debug/codex-home/sessions`，不自动清理；通知发往 `notify_target`，带幂等标识，重试不会重复送达
 - 失败按 `max_attempts` 与 `retry_after_ms` 重试，用尽后留为失败；决策或转交失败不影响收集，也不使服务退出
 - 库里 `lines`（逐条的脱敏文本与审核状态）、`batches`（冻结的决策请求）、`placements`（消息到话题与概率）、`topics`（话题与 codex 会话）、`alerts`（转交）、`learned_rules`（学到的规则）记录全部状态；`lines.reason` 可按原因统计以优化规则；日志不含消息正文、提示词与分析结果；旧版的 `decisions`、`handoffs`、`reviews`、`threads` 表不再使用，可手动删除
 
-审核接口 `POST /review/list`（`{limit?, state?}`，缺省列待审核）、`/review/approve`（`{keys}`）、`/review/reject`（`{key, reason, leak?}`），后两者须带 `x-user`；已不是待审核的项再操作时原样返回当前状态；命令行同样可用 `cli call review …`。
+审核接口 `POST /review/list`（`{limit?, state?}`，缺省列待审核）、`/review/approve`（`{keys}`）、`/review/reject`（`{key, reason, leak?}`）；已不是待审核的项再操作时原样返回当前状态；命令行同样可用 `cli call review …`。
 
 试跑建议：先保持关闭，用 `sops exec-env secrets.enc.yaml 'curl …'` 对合成文本调一次决策接口（含一个 `choice` 问题），核对返回里 `answers[]` 的 `probability`、`choice`、`confidence`；再开启（`review.mode: manual`）并把 `questions.threshold` 临时设为大于 1，只打分不转交，在审核页逐条检查外发内容、对漏脱敏的选原因拒绝并粘贴原文，同时观察话题归并是否合理、调 `min_confidence`；然后用合成的提示注入消息验证 codex 不读文件、不外传，并先用 `dws … --dry-run` 确认通知能发到本人；首次开启前先手跑一次 `codex exec --json` 与 `codex exec resume <会话 ID>`，确认事件格式与 `-s`、`-C` 对续写同样生效。每小时限额起初设小。
 
@@ -198,7 +199,7 @@ sops exec-env secrets.enc.yaml './target/release/cli serve --config cli/config.y
 - 路径无法解析（目录或策略文件不存在）时 `sandbox-exec` 退出 65，命令不存在时退出 71，都按命令失败处理，不会不加沙箱运行；codex 的目录须先建好：`mkdir -p .debug/codex-home .debug/codex-work`
 - `dws auth login` 在沙箱外执行
 - 只能有一层沙箱：codex 自带的 `-s read-only` 嵌套在外层沙箱内可能以 71 失败，现保留作纵深防御（codex 已关闭全部工具，一般不会触发）；若 codex 启动即 71，把 `-s` 改为 `danger-full-access`，由外层沙箱唯一把关
-- 已在真实环境验证：采集用的 `dws.sb`（监听订阅、补拉、解密、转发查询）；`curl.sb`、`codex.sb` 与发送通知的 `dws` 只在本机离线验证过 `--help` 与金丝雀，首次开启 triage 时按下条补规则
+- 已在真实环境验证：采集用的 `dws.sb`（监听订阅、补拉、解密、转发查询）；`codex.sb`（新建、`resume` 续写、只读与 `-C` 生效；TLS 校验需 `com.apple.SecurityServer`，启动需读项目根目录本身）；`curl.sb` 能连上决策接口；发送通知的 `dws`（`--yes` 真发、同一幂等键重发被拒为 repeated、通知经补拉回库）
 - 事件总线：`dws` 监听时自己在 `/tmp/dws-event-<uid>/` 建 0700 目录与 socket，不要预先建这个目录，权限不对会令监听失败
 - 收敛策略：真实环境下规则可能不全（Keychain、DNS、TLS 用到的系统服务名）。另开终端看拒绝记录：`log stream --style compact --predicate 'sender == "Sandbox"'`，按 `deny(1) <操作> <对象>` 逐条补进对应 `.sb`，再用 `/usr/bin/sandbox-exec -f cli/sandbox/dws.sb -D HOME=$HOME -- dws --help` 复测
 - 残余风险：网络只能按端口限制，443 可连任意主机；沙箱内的 `dws` 仍能读 Keychain 与 `~/.dws`；基础策略放行全局文件元数据读取；`sandbox-exec` 已被系统标为弃用；升级 dws、codex、curl 后若真实路径变化，自检会失败而非裸跑

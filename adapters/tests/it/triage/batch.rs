@@ -55,7 +55,17 @@ async fn invalid_rules_fail_closed() {
 }
 
 #[tokio::test]
-async fn later_messages_wait_for_the_next_batch() {
+async fn messages_before_the_lookback_are_ignored() {
+    let sandbox = Sandbox::new("batch-lookback").unwrap();
+    seed(&sandbox, &two()).unwrap();
+    let patch = json!({"limits": {"lookback_ms": SHORT_LOOKBACK}});
+    start(&sandbox, &patch, QUICK).await.unwrap();
+    assert_eq!(table(&sandbox, LINES).unwrap(), NOTHING);
+    assert_eq!(calls(&sandbox, "decide").unwrap(), 0);
+}
+
+#[tokio::test]
+async fn newest_messages_are_batched_first() {
     let sandbox = Sandbox::new("batch-next").unwrap();
     let rows = [
         (KEY, "u1", "c1", "server down"),
@@ -69,9 +79,9 @@ async fn later_messages_wait_for_the_next_batch() {
     assert_eq!(
         table(&sandbox, LINES).unwrap(),
         [
-            format!("{KEY}|approved||1"),
+            format!("{KEY}|approved||2"),
             format!("{SECOND}|approved||1"),
-            format!("{THIRD}|approved||2"),
+            format!("{THIRD}|approved||1"),
         ]
     );
     assert_eq!(
@@ -86,16 +96,6 @@ async fn later_messages_wait_for_the_next_batch() {
             format!("{THIRD}|t1-0|0.95"),
         ]
     );
-}
-
-#[tokio::test]
-async fn messages_before_the_lookback_are_ignored() {
-    let sandbox = Sandbox::new("batch-lookback").unwrap();
-    seed(&sandbox, &two()).unwrap();
-    let patch = json!({"limits": {"lookback_ms": SHORT_LOOKBACK}});
-    start(&sandbox, &patch, QUICK).await.unwrap();
-    assert_eq!(table(&sandbox, LINES).unwrap(), NOTHING);
-    assert_eq!(calls(&sandbox, "decide").unwrap(), 0);
 }
 
 #[tokio::test]

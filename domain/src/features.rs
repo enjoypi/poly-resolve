@@ -83,7 +83,7 @@ static ROUTES: [Route; 20] = [
     },
     Route {
         action: "approve",
-        call: |call, context| signed(call, context, review::approve),
+        call: |call, context| queried(call.request, context, review::approve),
         failures: &[AppError::Storage],
         feature: "review",
         schema: schemas::<review::ApproveRequest, review::ApproveResponse>,
@@ -99,7 +99,7 @@ static ROUTES: [Route; 20] = [
     },
     Route {
         action: "reject",
-        call: |call, context| signed(call, context, review::reject),
+        call: |call, context| queried(call.request, context, review::reject),
         failures: &[AppError::Storage],
         feature: "review",
         schema: schemas::<review::RejectRequest, review::RulingResponse>,
@@ -313,8 +313,6 @@ impl<'rules> Rules<'rules> {
     }
 }
 
-type Signed<Req, Resp> = fn(&Req, &Context<'_>, &str) -> Result<Resp, AppError>;
-
 #[derive(Clone, Copy, Debug)]
 pub struct Target<'call> {
     action: &'call str,
@@ -410,24 +408,6 @@ where
         generator.subschema_for::<Req>(),
         generator.subschema_for::<Resp>(),
     )
-}
-
-fn signed<Req, Resp>(
-    call: &Call<'_>,
-    context: &Context<'_>,
-    handler: Signed<Req, Resp>,
-) -> Result<String, AppError>
-where
-    Req: DeserializeOwned,
-    Resp: Serialize,
-{
-    let user = call
-        .origin
-        .user
-        .filter(|name| !name.is_empty())
-        .ok_or(AppError::BadRequest)?;
-    let resp = handler(&decode(call.request)?, context, user)?;
-    Ok(to_string(&resp).unwrap_or_default())
 }
 
 fn typed<Req, Resp>(request: &str, handler: fn(Req) -> Resp) -> Result<String, AppError>

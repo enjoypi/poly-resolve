@@ -6,12 +6,14 @@
 (allow file-read*
   (subpath (string-append (param "BREW") "/Caskroom/codex"))
   (subpath (param "WORK"))
+  (literal (param "PROJ"))
   (subpath "/private/etc/ssl")
   (literal "/private/etc/hosts")
   (literal "/private/etc/resolv.conf"))
 (allow file-read* file-write* (subpath (param "CODEXHOME")))
 (allow mach-lookup
   (global-name "com.apple.dnssd.service")
+  (global-name "com.apple.SecurityServer")
   (global-name "com.apple.SystemConfiguration.configd"))
 (allow system-socket)
 (allow network-outbound

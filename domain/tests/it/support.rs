@@ -68,7 +68,6 @@ impl Docket for Dock {
                     "key": entry.key,
                     "occurred_at_ms": STAMP,
                     "reason": "",
-                    "reviewer": "",
                     "sender": "alice",
                     "state": entry.state,
                     "text": LEAKED,
@@ -222,16 +221,4 @@ pub(crate) fn row(key: &str, occurred_at_ms: u64) -> Result<Row, Error> {
         "source": "dingtalk",
         "text": "hello",
     }))
-}
-
-pub(crate) const fn signed<'call>(
-    action: &'call str,
-    request: &'call str,
-    user: Option<&'call str>,
-) -> Call<'call> {
-    Call::new(
-        Origin::new("http", None, user),
-        Target::new("review", action),
-        request,
-    )
 }

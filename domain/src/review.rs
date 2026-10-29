@@ -20,7 +20,6 @@ pub struct Item {
     key: String,
     occurred_at_ms: u64,
     reason: String,
-    reviewer: String,
     sender: String,
     state: String,
     text: String,
@@ -99,17 +98,15 @@ impl Rule {
 pub struct Ruling<'ruling> {
     key: &'ruling str,
     reason: Option<&'ruling str>,
-    reviewer: &'ruling str,
     rule: Option<&'ruling Rule>,
 }
 
 impl<'ruling> Ruling<'ruling> {
     #[must_use = "裁决需交给审核台"]
-    pub const fn approve(key: &'ruling str, reviewer: &'ruling str) -> Self {
+    pub const fn approve(key: &'ruling str) -> Self {
         Self {
             key,
             reason: None,
-            reviewer,
             rule: None,
         }
     }
@@ -133,18 +130,12 @@ impl<'ruling> Ruling<'ruling> {
     }
 
     #[must_use = "裁决需交给审核台"]
-    pub const fn reject(key: &'ruling str, reviewer: &'ruling str, reason: &'ruling str) -> Self {
+    pub const fn reject(key: &'ruling str, reason: &'ruling str) -> Self {
         Self {
             key,
             reason: Some(reason),
-            reviewer,
             rule: None,
         }
-    }
-
-    #[must_use = "审核人需写入审核项"]
-    pub const fn reviewer(&self) -> &str {
-        self.reviewer
     }
 
     #[must_use = "规则需写入规则表"]

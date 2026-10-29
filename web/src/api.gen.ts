@@ -1114,7 +1114,6 @@ export interface components {
             key: string;
             occurred_at_ms: number;
             reason: string;
-            reviewer: string;
             sender: string;
             state: string;
             text: string;

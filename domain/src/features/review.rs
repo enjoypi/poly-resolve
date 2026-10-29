@@ -51,12 +51,11 @@ pub(crate) struct RulingResponse {
 pub(crate) fn approve(
     req: &ApproveRequest,
     context: &Context<'_>,
-    user: &str,
 ) -> Result<ApproveResponse, AppError> {
     let states = req
         .keys
         .iter()
-        .map(|key| settle(context, &Ruling::approve(key, user)).map(|done| done.state))
+        .map(|key| settle(context, &Ruling::approve(key)).map(|done| done.state))
         .collect::<Result<Vec<String>, AppError>>()?;
     Ok(ApproveResponse { states })
 }
@@ -77,7 +76,6 @@ pub(crate) fn list(req: &ListRequest, context: &Context<'_>) -> Result<ListRespo
 pub(crate) fn reject(
     req: &RejectRequest,
     context: &Context<'_>,
-    user: &str,
 ) -> Result<RulingResponse, AppError> {
     let reason = context
         .reasons()
@@ -89,7 +87,7 @@ pub(crate) fn reject(
         .as_deref()
         .map(str::trim)
         .filter(|text| !text.is_empty());
-    let ruling = Ruling::reject(&req.key, user, &req.reason);
+    let ruling = Ruling::reject(&req.key, &req.reason);
     match (reason.placeholder(), leak) {
         (Some(placeholder), Some(raw)) => {
             let text = context

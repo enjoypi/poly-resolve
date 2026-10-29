@@ -1,6 +1,6 @@
 import type { components } from "./api.gen";
 import type { connect } from "./client";
-import { REVIEW_LIMIT, REVIEWER_KEY, TEXT } from "./config";
+import { REVIEW_LIMIT, TEXT } from "./config";
 import { stamp } from "./stamp";
 
 type Client = ReturnType<typeof connect>;
@@ -33,7 +33,6 @@ class Queue {
   private readonly count = area("p", "count");
   private readonly error = area("p", "error");
   private readonly items = area("section", "items");
-  private readonly reviewer = area("input", "reviewer") as HTMLInputElement;
 
   constructor(
     private readonly client: Client,
@@ -46,8 +45,7 @@ class Queue {
     this.error.textContent = "";
     try {
       const { data, error } = await this.client.POST("/review/approve", {
-        body: { keys },
-        params: this.params(),
+        body: { keys }
       });
       if (data) keys.forEach((key, index) => data.states[index] === "approved" && this.drop(key));
       else this.error.textContent = error?.code ?? "";
@@ -100,8 +98,7 @@ class Queue {
     this.error.textContent = "";
     try {
       const { error } = await this.client.POST("/review/approve", {
-        body: { keys: [key] },
-        params: this.params(),
+        body: { keys: [key] }
       });
       if (error) this.error.textContent = error.code;
       else this.drop(key);
@@ -129,18 +126,12 @@ class Queue {
     }
   }
 
-  private params() {
-    const user = this.reviewer.value.trim();
-    return { header: user === "" ? {} : { "x-user": user } };
-  }
-
   private async reject(key: string, reason: string, leak: HTMLTextAreaElement): Promise<void> {
     this.error.textContent = "";
     const pasted = leak.hidden ? undefined : leak.value;
     try {
       const { error } = await this.client.POST("/review/reject", {
-        body: { key, leak: pasted, reason },
-        params: this.params(),
+        body: { key, leak: pasted, reason }
       });
       leak.value = "";
       if (error) this.error.textContent = error.code;
@@ -158,15 +149,10 @@ class Queue {
   }
 
   start(): Promise<void> {
-    this.reviewer.type = "text";
-    this.reviewer.placeholder = TEXT.reviewer;
-    this.reviewer.setAttribute("aria-label", TEXT.reviewer);
-    this.reviewer.value = localStorage.getItem(REVIEWER_KEY) ?? "";
-    this.reviewer.onchange = () => localStorage.setItem(REVIEWER_KEY, this.reviewer.value.trim());
     const back = area("a", "back", TEXT.back) as HTMLAnchorElement;
     back.href = "#";
     const refresh = button(TEXT.refresh, "refresh", () => void this.load());
-    const bar = area("header", "bar", area("h1", "brand", TEXT.brand), back, this.reviewer, this.all, refresh);
+    const bar = area("header", "bar", area("h1", "brand", TEXT.brand), back, this.all, refresh);
     this.root.replaceChildren(area("div", "reviews", bar, this.count, this.error, this.items));
     return this.load();
   }

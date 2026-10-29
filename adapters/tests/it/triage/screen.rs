@@ -140,7 +140,7 @@ async fn model_masks_spans_and_flags_unmaskable_secrets_for_review() {
     );
     assert_eq!(calls(&sandbox, "decide").unwrap(), 0);
     for key in [KEY, SECOND] {
-        let ruled = rule(&sandbox, &Ruling::approve(key, "alice")).unwrap();
+        let ruled = rule(&sandbox, &Ruling::approve(key)).unwrap();
         assert_eq!(ruled.as_deref(), Some("approved"));
     }
     start(&sandbox, &merged, QUICK).await.unwrap();

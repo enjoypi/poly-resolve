@@ -29,8 +29,15 @@ pub struct Exec {
 }
 
 impl Exec {
-    pub(crate) fn args(&self) -> &[String] {
-        &self.args
+    pub(crate) fn args(&self) -> Vec<String> {
+        self.args
+            .iter()
+            .map(|arg| {
+                self.vars().fold(arg.clone(), |text, (name, value)| {
+                    text.replace(&format!("${{{name}}}"), &value)
+                })
+            })
+            .collect()
     }
 
     pub(crate) fn bin(&self) -> &str {
