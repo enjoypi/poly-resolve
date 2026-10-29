@@ -2,6 +2,7 @@ pub mod catalog;
 mod health;
 mod ingest;
 mod messages;
+mod review;
 mod triage;
 
 use std::time::Instant;
@@ -12,12 +13,13 @@ use serde::de::DeserializeOwned;
 use serde_json::{Map, Value, from_str, to_string};
 
 use crate::inbox::{Paging, Reader};
+use crate::review::{Docket, Reason};
 use crate::{AppError, Errors};
 
-static ROUTES: [Route; 12] = [
+static ROUTES: [Route; 20] = [
     Route {
         action: "check",
-        call: |request, _context| typed(request, health::check),
+        call: |call, _context| typed(call.request, health::check),
         failures: &[],
         feature: "health",
         schema: schemas::<Map<String, Value>, health::Response>,
@@ -25,7 +27,7 @@ static ROUTES: [Route; 12] = [
     },
     Route {
         action: "assemble",
-        call: |request, _context| typed(request, ingest::assemble),
+        call: |call, _context| typed(call.request, ingest::assemble),
         failures: &[],
         feature: "ingest",
         schema: schemas::<ingest::AssembleRequest, ingest::Envelope>,
@@ -33,7 +35,7 @@ static ROUTES: [Route; 12] = [
     },
     Route {
         action: "cipher",
-        call: |request, _context| typed(request, ingest::cipher),
+        call: |call, _context| typed(call.request, ingest::cipher),
         failures: &[],
         feature: "ingest",
         schema: schemas::<ingest::CipherRequest, ingest::CipherResponse>,
@@ -41,7 +43,7 @@ static ROUTES: [Route; 12] = [
     },
     Route {
         action: "parse_event",
-        call: |request, _context| fallible(request, ingest::parse_event),
+        call: |call, _context| fallible(call.request, ingest::parse_event),
         failures: &[],
         feature: "ingest",
         schema: schemas::<ingest::ParseRequest, ingest::Envelope>,
@@ -49,7 +51,7 @@ static ROUTES: [Route; 12] = [
     },
     Route {
         action: "parse_page",
-        call: |request, _context| fallible(request, ingest::parse_page),
+        call: |call, _context| fallible(call.request, ingest::parse_page),
         failures: &[],
         feature: "ingest",
         schema: schemas::<ingest::ParseRequest, ingest::PageResponse>,
@@ -57,7 +59,7 @@ static ROUTES: [Route; 12] = [
     },
     Route {
         action: "reveal",
-        call: |request, _context| typed(request, ingest::reveal),
+        call: |call, _context| typed(call.request, ingest::reveal),
         failures: &[],
         feature: "ingest",
         schema: schemas::<ingest::RevealRequest, ingest::Envelope>,
@@ -65,7 +67,7 @@ static ROUTES: [Route; 12] = [
     },
     Route {
         action: "window",
-        call: |request, _context| fallible(request, ingest::window),
+        call: |call, _context| fallible(call.request, ingest::window),
         failures: &[],
         feature: "ingest",
         schema: schemas::<ingest::WindowRequest, ingest::WindowResponse>,
@@ -73,42 +75,106 @@ static ROUTES: [Route; 12] = [
     },
     Route {
         action: "list",
-        call: |request, context| queried(request, context, messages::list),
+        call: |call, context| queried(call.request, context, messages::list),
         failures: &[AppError::Storage],
         feature: "messages",
         schema: schemas::<messages::ListRequest, messages::ListResponse>,
         trace: Trace::Redacted,
     },
     Route {
-        action: "ask",
-        call: |request, _context| typed(request, triage::ask),
-        failures: &[],
-        feature: "triage",
-        schema: schemas::<triage::AskRequest, triage::AskResponse>,
+        action: "approve",
+        call: |call, context| signed(call, context, review::approve),
+        failures: &[AppError::Storage],
+        feature: "review",
+        schema: schemas::<review::ApproveRequest, review::ApproveResponse>,
+        trace: Trace::Redacted,
+    },
+    Route {
+        action: "list",
+        call: |call, context| queried(call.request, context, review::list),
+        failures: &[AppError::Storage],
+        feature: "review",
+        schema: schemas::<review::ListRequest, review::ListResponse>,
+        trace: Trace::Redacted,
+    },
+    Route {
+        action: "reject",
+        call: |call, context| signed(call, context, review::reject),
+        failures: &[AppError::Storage],
+        feature: "review",
+        schema: schemas::<review::RejectRequest, review::RulingResponse>,
         trace: Trace::Redacted,
     },
     Route {
         action: "brief",
-        call: |request, _context| typed(request, triage::prompt::brief),
+        call: |call, _context| fallible(call.request, triage::prompt::brief),
         failures: &[],
         feature: "triage",
         schema: schemas::<triage::prompt::BriefRequest, triage::prompt::BriefResponse>,
         trace: Trace::Redacted,
     },
     Route {
+        action: "line",
+        call: |call, _context| fallible(call.request, triage::line::line),
+        failures: &[],
+        feature: "triage",
+        schema: schemas::<triage::line::LineRequest, triage::line::LineResponse>,
+        trace: Trace::Redacted,
+    },
+    Route {
         action: "notice",
-        call: |request, _context| typed(request, triage::prompt::notice),
+        call: |call, _context| typed(call.request, triage::prompt::notice),
         failures: &[],
         feature: "triage",
         schema: schemas::<triage::prompt::NoticeRequest, triage::prompt::NoticeResponse>,
         trace: Trace::Redacted,
     },
     Route {
-        action: "score",
-        call: |request, _context| fallible(request, triage::score),
+        action: "pack",
+        call: |call, _context| fallible(call.request, triage::pack::pack),
         failures: &[],
         feature: "triage",
-        schema: schemas::<triage::ScoreRequest, triage::ScoreResponse>,
+        schema: schemas::<triage::pack::PackRequest, triage::pack::PackResponse>,
+        trace: Trace::Redacted,
+    },
+    Route {
+        action: "redact",
+        call: |call, _context| fallible(call.request, triage::redact::redact),
+        failures: &[],
+        feature: "triage",
+        schema: schemas::<triage::redact::RedactRequest, triage::redact::RedactResponse>,
+        trace: Trace::Redacted,
+    },
+    Route {
+        action: "reply",
+        call: |call, _context| fallible(call.request, triage::reply::reply),
+        failures: &[],
+        feature: "triage",
+        schema: schemas::<triage::reply::ReplyRequest, triage::reply::ReplyResponse>,
+        trace: Trace::Redacted,
+    },
+    Route {
+        action: "screen",
+        call: |call, _context| typed(call.request, triage::screen::screen),
+        failures: &[],
+        feature: "triage",
+        schema: schemas::<triage::screen::ScreenRequest, triage::screen::ScreenResponse>,
+        trace: Trace::Redacted,
+    },
+    Route {
+        action: "screened",
+        call: |call, _context| fallible(call.request, triage::screened::screened),
+        failures: &[],
+        feature: "triage",
+        schema: schemas::<triage::screened::ScreenedRequest, triage::screened::ScreenedResponse>,
+        trace: Trace::Redacted,
+    },
+    Route {
+        action: "sort",
+        call: |call, _context| fallible(call.request, triage::sort::sort),
+        failures: &[],
+        feature: "triage",
+        schema: schemas::<triage::sort::SortRequest, triage::sort::SortResponse>,
         trace: Trace::Redacted,
     },
 ];
@@ -134,30 +200,42 @@ impl<'call> Call<'call> {
 #[derive(Clone, Copy, Debug)]
 pub struct Context<'ctx> {
     errors: &'ctx Errors,
-    paging: &'ctx Paging,
-    reader: &'ctx dyn Reader,
+    ports: Ports<'ctx>,
+    rules: Rules<'ctx>,
 }
 
 impl<'ctx> Context<'ctx> {
+    const fn docket(&self) -> &dyn Docket {
+        self.ports.docket
+    }
+
     const fn errors(&self) -> &Errors {
         self.errors
     }
 
+    const fn learn_min_chars(&self) -> u32 {
+        self.rules.learn_min_chars
+    }
+
     #[must_use = "上下文需交给 dispatch"]
-    pub const fn new(errors: &'ctx Errors, paging: &'ctx Paging, reader: &'ctx dyn Reader) -> Self {
+    pub const fn new(errors: &'ctx Errors, rules: Rules<'ctx>, ports: Ports<'ctx>) -> Self {
         Self {
             errors,
-            paging,
-            reader,
+            ports,
+            rules,
         }
     }
 
     const fn paging(&self) -> Paging {
-        *self.paging
+        *self.rules.paging
     }
 
     const fn reader(&self) -> &dyn Reader {
-        self.reader
+        self.ports.reader
+    }
+
+    const fn reasons(&self) -> &[Reason] {
+        self.rules.reasons
     }
 }
 
@@ -165,7 +243,7 @@ type Describer = fn(&mut SchemaGenerator) -> (Schema, Schema);
 
 type Fallible<Req, Resp> = fn(&Req) -> Result<Resp, AppError>;
 
-type Handler = fn(&str, &Context<'_>) -> Result<String, AppError>;
+type Handler = fn(&Call<'_>, &Context<'_>) -> Result<String, AppError>;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Origin<'call> {
@@ -189,6 +267,19 @@ impl<'call> Origin<'call> {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct Ports<'ports> {
+    docket: &'ports dyn Docket,
+    reader: &'ports dyn Reader,
+}
+
+impl<'ports> Ports<'ports> {
+    #[must_use = "端口需交给 Context"]
+    pub const fn new(reader: &'ports dyn Reader, docket: &'ports dyn Docket) -> Self {
+        Self { docket, reader }
+    }
+}
+
 type Queried<Req, Resp> = fn(&Req, &Context<'_>) -> Result<Resp, AppError>;
 
 struct Route {
@@ -199,6 +290,30 @@ struct Route {
     schema: Describer,
     trace: Trace,
 }
+
+#[derive(Clone, Copy, Debug)]
+pub struct Rules<'rules> {
+    learn_min_chars: u32,
+    paging: &'rules Paging,
+    reasons: &'rules [Reason],
+}
+
+impl<'rules> Rules<'rules> {
+    #[must_use = "规则需交给 Context"]
+    pub const fn new(
+        paging: &'rules Paging,
+        reasons: &'rules [Reason],
+        learn_min_chars: u32,
+    ) -> Self {
+        Self {
+            learn_min_chars,
+            paging,
+            reasons,
+        }
+    }
+}
+
+type Signed<Req, Resp> = fn(&Req, &Context<'_>, &str) -> Result<Resp, AppError>;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Target<'call> {
@@ -240,7 +355,7 @@ pub fn dispatch(context: &Context<'_>, call: &Call<'_>) -> Result<String, AppErr
     let start = Instant::now();
     let found = route(call.target);
     let result = found.map_or(Err(AppError::UnknownAction), |hit| {
-        (hit.call)(call.request, context)
+        (hit.call)(call, context)
     });
     let trace = found.map_or(Trace::Full, |hit| hit.trace);
     tracing::debug!(
@@ -295,6 +410,24 @@ where
         generator.subschema_for::<Req>(),
         generator.subschema_for::<Resp>(),
     )
+}
+
+fn signed<Req, Resp>(
+    call: &Call<'_>,
+    context: &Context<'_>,
+    handler: Signed<Req, Resp>,
+) -> Result<String, AppError>
+where
+    Req: DeserializeOwned,
+    Resp: Serialize,
+{
+    let user = call
+        .origin
+        .user
+        .filter(|name| !name.is_empty())
+        .ok_or(AppError::BadRequest)?;
+    let resp = handler(&decode(call.request)?, context, user)?;
+    Ok(to_string(&resp).unwrap_or_default())
 }
 
 fn typed<Req, Resp>(request: &str, handler: fn(Req) -> Resp) -> Result<String, AppError>

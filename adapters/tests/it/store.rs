@@ -172,7 +172,7 @@ fn shelf_joins_priority_and_analysis() {
         assert_eq!(store.save_event(&envelope(key, NOON)).unwrap(), 1);
     }
     sandbox
-        .seed("INSERT INTO decisions VALUES ('k1', 'scored', 0.5, 0, '', 1); INSERT INTO handoffs VALUES ('k1', 'c1', 'sent', 0, 'mulled', '', 1, 0);")
+        .seed("INSERT INTO placements VALUES ('k1', 't1-0', 0.5, 1); INSERT INTO alerts VALUES ('t1-0@1', 't1-0', 'sent', 0, 'mulled', '', 1, 0);")
         .unwrap();
     let path = sandbox.database();
     let rows = Shelf::new(&path, "dingtalk", "acct")
@@ -181,8 +181,10 @@ fn shelf_joins_priority_and_analysis() {
     let shown: Vec<Value> = rows.iter().map(|row| to_value(row).unwrap()).collect();
     let priority: Vec<Option<&Value>> = shown.iter().map(|row| row.get("priority")).collect();
     let analysis: Vec<Option<&Value>> = shown.iter().map(|row| row.get("analysis")).collect();
+    let topic: Vec<Option<&Value>> = shown.iter().map(|row| row.get("topic")).collect();
     assert_eq!(priority, [Some(&Value::Null), Some(&json!(PRIORITY))]);
     assert_eq!(analysis, [Some(&Value::Null), Some(&json!("mulled"))]);
+    assert_eq!(topic, [Some(&Value::Null), Some(&json!("t1-0"))]);
 }
 
 #[test]

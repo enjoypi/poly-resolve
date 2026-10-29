@@ -14,6 +14,7 @@ const KNOWN = [
   "account",
   "priority",
   "analysis",
+  "topic",
 ];
 
 function find(columns: Column[], key: string): Column {
@@ -32,6 +33,7 @@ test("没有数据时仍给出全部已知列，默认隐藏的列带标记", ()
     "source",
     "account",
     "analysis",
+    "topic",
   ]);
 });
 
