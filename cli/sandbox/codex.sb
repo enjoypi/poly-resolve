@@ -20,7 +20,7 @@
   (remote tcp "*:443")
   (literal "/private/var/run/mDNSResponder"))
 (deny file-read* file-write*
-  (literal (string-append (param "PROJ") "/secrets.enc.yaml"))
+  (subpath (string-append (param "PROJ") "/secrets"))
   (subpath (string-append (param "PROJ") "/.git"))
   (literal (string-append (param "PROJ") "/.debug/poly-resolve.db"))
   (subpath (string-append (param "HOME") "/.codex"))
