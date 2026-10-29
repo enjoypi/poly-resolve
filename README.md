@@ -145,7 +145,7 @@ cd web && bun install --frozen-lockfile && bun run build
 
 准备：
 
-1. 用 sops 保存变量：在项目根执行 `sops secrets.enc.yaml`（文件名须以 `.enc.yaml` 结尾，加密规则取自上级目录的 `.sops.yaml`；已有私钥 `~/.config/sops/age/keys.txt`），写入扁平 YAML：
+1. 用 sops 保存变量：在项目根执行 `sops secrets/dev.enc.yaml`（开发用）与 `sops secrets/prod.enc.yaml`（release 用；文件名须以 `.enc.yaml` 结尾，加密规则取自上级目录的 `.sops.yaml`；已有私钥 `~/.config/sops/age/keys.txt`），写入扁平 YAML：
 
 | 变量 | 含义 |
 |---|---|
@@ -163,7 +163,7 @@ cd web && bun install --frozen-lockfile && bun run build
 启动：
 
 ```sh
-sops exec-env secrets.enc.yaml './target/release/cli serve --config cli/config.yaml'
+sops exec-env secrets/prod.enc.yaml './target/release/cli serve --config cli/config.yaml'
 ```
 
 变量只经环境变量传给子进程，不出现在命令行参数与日志里；开启后缺任一变量，`serve` 以退出码 2 退出并列出缺的变量名。
@@ -180,7 +180,7 @@ sops exec-env secrets.enc.yaml './target/release/cli serve --config cli/config.y
 
 审核接口 `POST /review/list`（`{limit?, state?}`，缺省列待审核）、`/review/approve`（`{keys}`）、`/review/reject`（`{key, reason, leak?}`）；已不是待审核的项再操作时原样返回当前状态；命令行同样可用 `cli call review …`。
 
-试跑建议：先保持关闭，用 `sops exec-env secrets.enc.yaml 'curl …'` 对合成文本调一次决策接口（含一个 `choice` 问题），核对返回里 `answers[]` 的 `probability`、`choice`、`confidence`；再开启（`review.mode: manual`）并把 `questions.threshold` 临时设为大于 1，只打分不转交，在审核页逐条检查外发内容、对漏脱敏的选原因拒绝并粘贴原文，同时观察话题归并是否合理、调 `min_confidence`；然后用合成的提示注入消息验证 codex 不读文件、不外传，并先用 `dws … --dry-run` 确认通知能发到本人；首次开启前先手跑一次 `codex exec --json` 与 `codex exec resume <会话 ID>`，确认事件格式与 `-s`、`-C` 对续写同样生效。每小时限额起初设小。
+试跑建议：先保持关闭，用 `sops exec-env secrets/dev.enc.yaml 'curl …'` 对合成文本调一次决策接口（含一个 `choice` 问题），核对返回里 `answers[]` 的 `probability`、`choice`、`confidence`；再开启（`review.mode: manual`）并把 `questions.threshold` 临时设为大于 1，只打分不转交，在审核页逐条检查外发内容、对漏脱敏的选原因拒绝并粘贴原文，同时观察话题归并是否合理、调 `min_confidence`；然后用合成的提示注入消息验证 codex 不读文件、不外传，并先用 `dws … --dry-run` 确认通知能发到本人；首次开启前先手跑一次 `codex exec --json` 与 `codex exec resume <会话 ID>`，确认事件格式与 `-s`、`-C` 对续写同样生效。每小时限额起初设小。
 
 ## 子进程沙箱
 
