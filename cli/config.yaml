@@ -162,7 +162,7 @@ triage:
   notify_conversation_id: "${NOTIFY_CONVERSATION_ID}"
   notify_target: "${NOTIFY_TARGET}"
   questions:
-    threshold: 1.01
+    threshold: 0.8
     topic:
       instructions: 段 {segment} 的对话属于下列哪个已有话题？都不是就选新话题。
       min_confidence: 0.6
