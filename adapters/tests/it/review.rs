@@ -83,7 +83,7 @@ fn settle_fails_on_missing_database() {
     let sandbox = Sandbox::new("review-settle-missing").unwrap();
     let path = sandbox.database();
     let shelf = Shelf::new(&path, "dingtalk", "acct");
-    let err = shelf.settle(&Ruling::approve("a", "alice")).unwrap_err();
+    let err = shelf.settle(&Ruling::approve("a")).unwrap_err();
     assert_eq!(err.status(), 503);
     assert!(!sandbox.database().exists());
 }
@@ -96,7 +96,7 @@ fn settle_fails_on_unreadable_state() {
         .unwrap();
     let path = sandbox.database();
     let shelf = Shelf::new(&path, "dingtalk", "acct");
-    let err = shelf.settle(&Ruling::approve("k", "alice")).unwrap_err();
+    let err = shelf.settle(&Ruling::approve("k")).unwrap_err();
     assert_eq!(err.status(), 503);
 }
 
@@ -106,7 +106,7 @@ fn settle_fails_without_lines_table() {
     sandbox.seed("CREATE TABLE other (key TEXT);").unwrap();
     let path = sandbox.database();
     let shelf = Shelf::new(&path, "dingtalk", "acct");
-    let err = shelf.settle(&Ruling::approve("a", "alice")).unwrap_err();
+    let err = shelf.settle(&Ruling::approve("a")).unwrap_err();
     assert_eq!(err.status(), 503);
 }
 
@@ -119,13 +119,13 @@ fn settle_learns_a_rule_only_from_pending_lines() {
     let shelf = Shelf::new(&path, "dingtalk", "acct");
     let rule = Rule::new(r"secret\-abc".to_owned(), "[x]".to_owned());
     let leaked = shelf
-        .settle(&Ruling::reject("a", "carol", "leak").learned(&rule))
+        .settle(&Ruling::reject("a", "leak").learned(&rule))
         .unwrap();
     assert_eq!(leaked.as_deref(), Some("leaked"));
     assert_eq!(field(&sandbox, "a", "state").unwrap(), "leaked");
     assert_eq!(field(&sandbox, "a", "reason").unwrap(), "leak");
     let again = shelf
-        .settle(&Ruling::reject("d", "carol", "leak").learned(&rule))
+        .settle(&Ruling::reject("d", "leak").learned(&rule))
         .unwrap();
     assert_eq!(again.as_deref(), Some("approved"));
     let connection = Connection::open(sandbox.database()).unwrap();
@@ -143,23 +143,15 @@ fn settle_rules_pending_items_once() {
     sandbox.seed(ROWS).unwrap();
     let path = sandbox.database();
     let shelf = Shelf::new(&path, "dingtalk", "acct");
-    let approved = shelf.settle(&Ruling::approve("a", "alice")).unwrap();
+    let approved = shelf.settle(&Ruling::approve("a")).unwrap();
     assert_eq!(approved.as_deref(), Some("approved"));
-    assert_eq!(field(&sandbox, "a", "reviewer").unwrap(), "alice");
-    let again = shelf
-        .settle(&Ruling::reject("a", "carol", "noise"))
-        .unwrap();
+    let again = shelf.settle(&Ruling::reject("a", "noise")).unwrap();
     assert_eq!(again.as_deref(), Some("approved"));
-    assert_eq!(field(&sandbox, "a", "reviewer").unwrap(), "alice");
-    let rejected = shelf
-        .settle(&Ruling::reject("b", "carol", "noise"))
-        .unwrap();
+    assert_eq!(field(&sandbox, "a", "reason").unwrap(), "");
+    let rejected = shelf.settle(&Ruling::reject("b", "noise")).unwrap();
     assert_eq!(rejected.as_deref(), Some("rejected"));
     assert_eq!(field(&sandbox, "b", "reason").unwrap(), "noise");
-    assert_eq!(
-        shelf.settle(&Ruling::approve("nope", "alice")).unwrap(),
-        None
-    );
+    assert_eq!(shelf.settle(&Ruling::approve("nope")).unwrap(), None);
 }
 
 #[test]
@@ -170,7 +162,7 @@ fn settle_with_a_rule_fails_on_missing_tables() {
     let shelf = Shelf::new(&path, "dingtalk", "acct");
     let rule = Rule::new("x".to_owned(), "[x]".to_owned());
     let err = shelf
-        .settle(&Ruling::reject("a", "carol", "leak").learned(&rule))
+        .settle(&Ruling::reject("a", "leak").learned(&rule))
         .unwrap_err();
     assert_eq!(err.status(), 503);
 }

@@ -16,8 +16,8 @@ async fn leaked_text_is_masked_again_and_reviewed_before_sending() {
     let sandbox = Sandbox::new("review-leak").unwrap();
     let text = format!("token {SECRET} here");
     let rows = [
-        (KEY, "u1", "c1", text.as_str()),
         (SECOND, "u1", "c1", text.as_str()),
+        (KEY, "u1", "c1", text.as_str()),
     ];
     seed(&sandbox, &rows).unwrap();
     let patch = json!({
@@ -30,15 +30,15 @@ async fn leaked_text_is_masked_again_and_reviewed_before_sending() {
         [format!("{KEY}|pending||1"), format!("{SECOND}|queued||0")]
     );
     let learned = Rule::new(r"abc\-secret\-9".to_owned(), "[x]".to_owned());
-    let ruling = Ruling::reject(KEY, "alice", "leak").learned(&learned);
+    let ruling = Ruling::reject(KEY, "leak").learned(&learned);
     assert_eq!(rule(&sandbox, &ruling).unwrap().as_deref(), Some("leaked"));
     assert_eq!(
         table(
             &sandbox,
-            "SELECT pattern || '|' || placeholder || '|' || reviewer AS item FROM learned_rules"
+            "SELECT pattern || '|' || placeholder AS item FROM learned_rules"
         )
         .unwrap(),
-        [r"abc\-secret\-9|[x]|alice"]
+        [r"abc\-secret\-9|[x]"]
     );
     start(&sandbox, &patch, QUICK).await.unwrap();
     assert_eq!(
@@ -53,7 +53,7 @@ async fn leaked_text_is_masked_again_and_reviewed_before_sending() {
         ["token [x] here", "token [x] here"]
     );
     assert_eq!(calls(&sandbox, "decide").unwrap(), 0);
-    let approved = rule(&sandbox, &Ruling::approve(KEY, "alice")).unwrap();
+    let approved = rule(&sandbox, &Ruling::approve(KEY)).unwrap();
     assert_eq!(approved.as_deref(), Some("approved"));
     start(&sandbox, &patch, QUICK).await.unwrap();
     let input = input_of(&decided(&sandbox).unwrap()).unwrap();
@@ -79,11 +79,11 @@ async fn manual_lines_wait_for_approval_and_rejected_ones_stay_home() {
     );
     assert_eq!(calls(&sandbox, "decide").unwrap(), 0);
     assert_eq!(table(&sandbox, BATCHES).unwrap(), NOTHING);
-    let approved = rule(&sandbox, &Ruling::approve(KEY, "alice")).unwrap();
+    let approved = rule(&sandbox, &Ruling::approve(KEY)).unwrap();
     assert_eq!(approved.as_deref(), Some("approved"));
     start(&sandbox, &manual(), QUICK).await.unwrap();
     assert_eq!(calls(&sandbox, "decide").unwrap(), 0);
-    let rejected = rule(&sandbox, &Ruling::reject(SECOND, "alice", "noise")).unwrap();
+    let rejected = rule(&sandbox, &Ruling::reject(SECOND, "noise")).unwrap();
     assert_eq!(rejected.as_deref(), Some("rejected"));
     start(&sandbox, &manual(), QUICK).await.unwrap();
     assert_eq!(calls(&sandbox, "decide").unwrap(), 1);
@@ -106,7 +106,7 @@ async fn rejected_batches_close_without_a_request() {
     let sandbox = Sandbox::new("review-closed").unwrap();
     seed(&sandbox, &[(KEY, "u1", "c1", "server down")]).unwrap();
     start(&sandbox, &manual(), QUICK).await.unwrap();
-    let rejected = rule(&sandbox, &Ruling::reject(KEY, "alice", "noise")).unwrap();
+    let rejected = rule(&sandbox, &Ruling::reject(KEY, "noise")).unwrap();
     assert_eq!(rejected.as_deref(), Some("rejected"));
     seed_from(&sandbox, &[(THIRD, "u1", "c1", "next")], LATER).unwrap();
     start(&sandbox, &manual(), QUICK).await.unwrap();

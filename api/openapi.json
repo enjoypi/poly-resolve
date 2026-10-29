@@ -434,9 +434,6 @@
           "reason": {
             "type": "string"
           },
-          "reviewer": {
-            "type": "string"
-          },
           "sender": {
             "type": "string"
           },
@@ -454,7 +451,6 @@
           "key",
           "occurred_at_ms",
           "reason",
-          "reviewer",
           "sender",
           "state",
           "text"

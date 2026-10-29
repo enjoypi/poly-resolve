@@ -2,33 +2,20 @@ use domain::AppError;
 use domain::review::Docket;
 use serde_json::{Error, Value, from_str, json};
 
-use crate::support::{Broken, Dock, Fixture, cli, signed};
+use crate::support::{Broken, Dock, Fixture, cli};
 
 type Reply = Result<Value, u16>;
 
 #[test]
 fn approve_rejects_unusable_requests() {
-    assert_eq!(
-        rule("approve", r#"{"keys":["nope"]}"#, Some("alice")).unwrap(),
-        Err(400)
-    );
-    assert_eq!(
-        rule("approve", r#"{"keys":["k1"]}"#, None).unwrap(),
-        Err(400)
-    );
-    assert_eq!(
-        rule("approve", r#"{"keys":["k1"]}"#, Some("")).unwrap(),
-        Err(400)
-    );
-    assert_eq!(rule("approve", "nope", Some("alice")).unwrap(), Err(400));
-    assert_eq!(rule("reject", "nope", Some("alice")).unwrap(), Err(400));
-    let request = r#"{"key":"k1","reason":"noise"}"#;
-    assert_eq!(rule("reject", request, None).unwrap(), Err(400));
+    assert_eq!(rule("approve", r#"{"keys":["nope"]}"#).unwrap(), Err(400));
+    assert_eq!(rule("approve", "nope").unwrap(), Err(400));
+    assert_eq!(rule("reject", "nope").unwrap(), Err(400));
 }
 
 #[test]
 fn approve_settles_pending_items_only() {
-    let done = rule("approve", r#"{"keys":["k1","k3","k4"]}"#, Some("alice"))
+    let done = rule("approve", r#"{"keys":["k1","k3","k4"]}"#)
         .unwrap()
         .unwrap();
     assert_eq!(
@@ -96,18 +83,18 @@ fn list_reports_storage_failure() {
 
 #[test]
 fn reject_drops_the_line_for_reasons_without_placeholder() {
-    let done = rule("reject", r#"{"key":"k1","reason":"noise"}"#, Some("alice"))
+    let done = rule("reject", r#"{"key":"k1","reason":"noise"}"#)
         .unwrap()
         .unwrap();
     assert_eq!(done.get("state"), Some(&json!("rejected")));
     let stray = r#"{"key":"k1","leak":"secret-token-123","reason":"noise"}"#;
-    assert_eq!(rule("reject", stray, Some("alice")).unwrap(), Err(400));
+    assert_eq!(rule("reject", stray).unwrap(), Err(400));
 }
 
 #[test]
 fn reject_learns_a_literal_rule_from_the_pasted_leak() {
     let request = r#"{"key":"k1","leak":"  secret-token-123 ","reason":"leak"}"#;
-    let done = rule("reject", request, Some("alice")).unwrap().unwrap();
+    let done = rule("reject", request).unwrap().unwrap();
     assert_eq!(
         done.get("state"),
         Some(&json!(r"leaked:secret\-token\-123:[x]"))
@@ -123,18 +110,15 @@ fn reject_refuses_unusable_leaks() {
         r#"{"key":"k1","leak":"se","reason":"leak"}"#,
         r#"{"key":"nope","leak":"secret-token-123","reason":"leak"}"#,
     ] {
-        assert_eq!(rule("reject", request, Some("alice")).unwrap(), Err(400));
+        assert_eq!(rule("reject", request).unwrap(), Err(400));
     }
 }
 
 #[test]
 fn reject_requires_a_known_reason() {
-    let unknown = rule("reject", r#"{"key":"k1","reason":"other"}"#, Some("alice"));
+    let unknown = rule("reject", r#"{"key":"k1","reason":"other"}"#);
     assert_eq!(unknown.unwrap(), Err(400));
-    assert_eq!(
-        rule("reject", r#"{"key":"k1"}"#, Some("alice")).unwrap(),
-        Err(400)
-    );
+    assert_eq!(rule("reject", r#"{"key":"k1"}"#).unwrap(), Err(400));
 }
 
 fn reply(result: Result<String, AppError>) -> Result<Reply, Error> {
@@ -144,8 +128,8 @@ fn reply(result: Result<String, AppError>) -> Result<Reply, Error> {
     }
 }
 
-fn rule(action: &str, request: &str, user: Option<&str>) -> Result<Reply, Error> {
-    reply(Fixture::new()?.dispatch_review(&dock(), &signed(action, request, user)))
+fn rule(action: &str, request: &str) -> Result<Reply, Error> {
+    reply(Fixture::new()?.dispatch_review(&dock(), &cli("review", action, request)))
 }
 
 #[test]
@@ -160,7 +144,7 @@ fn settle_and_source_report_storage_failure() {
     ] {
         let result = Fixture::new()
             .unwrap()
-            .dispatch_review(&Broken, &signed(action, request, Some("alice")));
+            .dispatch_review(&Broken, &cli("review", action, request));
         assert_eq!(result.unwrap_err().status(), 503);
     }
 }

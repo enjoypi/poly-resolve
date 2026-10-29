@@ -58,6 +58,10 @@ triage:
       - skill_search
       - --color
       - never
+      - -c
+      - model_provider="triage"
+      - -c
+      - model_providers.triage={name="triage",base_url="${CODEX_BASE_URL}",env_key="CODEX_API_KEY",wire_api="responses"}
       - -C
       - .debug/codex-work
     bin: codex
@@ -78,6 +82,7 @@ triage:
     timeout_ms: 300000
     vars:
       CODEX_API_KEY: "${CODEX_API_KEY}"
+      CODEX_BASE_URL: "${CODEX_BASE_URL}"
       PATH: "${PATH}"
   decide:
     args:
@@ -114,17 +119,17 @@ triage:
       TRIAGE_KEY: "${OPENAI_API_KEY}"
       TRIAGE_URL: "${DECISIONS_URL}"
   limits:
-    batch: 10
+    batch: 20
     handoff_cooldown_ms: 600000
     intake: 200
     lookback_ms: 3600000
     max_attempts: 3
-    max_decisions_per_hour: 120
-    max_handoffs_per_hour: 6
+    max_decisions_per_hour: 30
+    max_handoffs_per_hour: 1
     poll_ms: 5000
     retry_after_ms: 60000
-  mode: disabled
-  model: gpt-6-luna
+  mode: enabled
+  model: gpt-6-luna-decisions
   notice: |-
     【消息提醒】优先级 {probability}｜话题 {topic}
     {analysis}
@@ -137,6 +142,7 @@ triage:
       - --markdown
       - "-"
       - --body-stdin
+      - --yes
       - --open-dingtalk-id
     bin: dws
     env:
@@ -156,7 +162,7 @@ triage:
   notify_conversation_id: "${NOTIFY_CONVERSATION_ID}"
   notify_target: "${NOTIFY_TARGET}"
   questions:
-    threshold: 0.8
+    threshold: 1.01
     topic:
       instructions: 段 {segment} 的对话属于下列哪个已有话题？都不是就选新话题。
       min_confidence: 0.6

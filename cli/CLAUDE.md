@@ -10,7 +10,7 @@
 - 退出码 `sandbox_exit_code`（顶层，写在 `ingest` 之前）：`serve` 与 `ingest` 在读完配置、检查完 triage 变量后、绑定端口前调 `verify`——`ingest.check()`，`triage.mode` 为 `enabled` 时再 `triage.check()`；失败以该码退出并把原因写 stderr（`fail`）；`call` 不检查。新增沙箱字段时同步 `File`、`config.yaml`、`tests/it/support.rs` 的 `YAML`（锚点 `&fence` 只写一处）
 - `messages`（`domain::inbox::Paging`）与 `web_dir` 写在 `ingest` 段之前（`missing_ingest_fails` 以 `ingest:` 截断 YAML）
 - `Settings::context(&reader)` 构造 `domain::features::Context`：`Rules` 取 `messages` 分页、`triage.review.reasons` 与 `triage.review.learn_min_chars`，`Ports` 把同一个 `adapters::store::Shelf` 既作 `Reader` 又作 `Docket`；`call`、`handle`、`ingest` 各用 `settings.ingest().shelf()`（形参叫 `reader`，避免 `similar_names`）
-- `triage` 启用时 `verify` 在 `triage.check()` 之后调 `adapters::triage::validate`：`triage.limits.batch` 超过 200、`triage.sizes.topics_max_open + batch` 超过 254、或 `triage.redact.patterns` 有无效正则，都以 `sandbox_exit_code` 退出；`serve` 的 HTTP 另带 `review` 路由（`x-user` 取自请求头，审核人不可信，见 README）
+- `triage` 启用时 `verify` 在 `triage.check()` 之后调 `adapters::triage::validate`：`triage.limits.batch` 超过 200、`triage.sizes.topics_max_open + batch` 超过 254、或 `triage.redact.patterns` 有无效正则，都以 `sandbox_exit_code` 退出；`serve` 的 HTTP 另带 `review` 路由（不需 `x-user`）
 - `addr` 为 `SocketAddr`，`config::load` 拒绝非回环 IP（IPv4、IPv6 均支持），`call` 同样校验
 - `triage` 段（`adapters::triage::config::Settings`，也写在 `ingest` 之前）里 `"${NAME}"` 写法的值是 `Var`：整串须为 `${NAME}`，加载时只校验写法、不读环境，用时才读（不存值，`Debug` 只显示名字）；`serve` 在 `triage.mode: enabled` 且有变量读不到（含空值）时以退出码 2 退出并列出变量名（`missing()`），`call`、`ingest` 与未启用时不检查；测试不能 `set_var`（`unsafe_code` forbid），用 `${HOME}`、`${PATH}`、`${CARGO_PKG_NAME}` 表示已设，一个不存在的名字表示缺失
 
