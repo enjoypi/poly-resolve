@@ -16,6 +16,14 @@ async fn check_passes_for_valid_sandboxes() {
     let sandbox = Sandbox::new("sandbox-check-ok").unwrap();
     sandbox.config(&json!({})).unwrap().check().await.unwrap();
     sandbox.triage(&json!({})).unwrap().check().await.unwrap();
+    let screening = sandbox.triage(&sandbox.screen("")).unwrap();
+    screening.check().await.unwrap();
+    let mut broken = sandbox.screen("");
+    if let Some(bin) = broken.pointer_mut("/screen/exec/bin") {
+        *bin = json!("/nonexistent/triage");
+    }
+    let err = sandbox.triage(&broken).unwrap().check().await.unwrap_err();
+    assert_eq!(err, "/nonexistent/triage: probe failed: exit status: 71");
 }
 
 #[tokio::test]

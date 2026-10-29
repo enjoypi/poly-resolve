@@ -40,6 +40,17 @@ async fn missing_config_fails() {
 }
 
 #[tokio::test]
+async fn serve_exits_when_redact_rules_are_invalid() {
+    let dir = sandbox("cli-serve-redact-rules").unwrap();
+    let yaml = live(&dir)
+        .replace("mode: disabled", "mode: enabled")
+        .replace("pattern: \"[0-9]{11,}\"", "pattern: \"(\"");
+    let path = config("cli-serve-redact-rules.yaml", &yaml).unwrap();
+    let code = run(&["cli", "serve", "--config", &path]).await;
+    assert_eq!(code, ExitCode::from(18));
+}
+
+#[tokio::test]
 async fn serve_exits_when_sandbox_fails() {
     let dir = sandbox("cli-serve-sandbox").unwrap();
     let path = config("cli-serve-sandbox.yaml", &absent(&dir)).unwrap();

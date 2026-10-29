@@ -1,0 +1,10 @@
+(version 1)
+(deny default)
+(import "bsd.sb")
+(allow sysctl-read)
+(allow process-exec (subpath (string-append (param "BREW") "/Cellar/curl")))
+(allow file-read*
+  (subpath (string-append (param "BREW") "/Cellar")))
+(allow system-socket)
+(allow network-outbound
+  (remote tcp "localhost:*"))

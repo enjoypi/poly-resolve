@@ -11,9 +11,9 @@ use std::sync::{LazyLock, Mutex, PoisonError};
 use adapters::config::Settings;
 use adapters::ingest::run;
 use adapters::triage::config::Settings as Triage;
-use adapters::triage::{Setup, run as run_triage};
+use adapters::triage::{Setup, run as run_triage, validate};
 use domain::Errors;
-use domain::features::Context;
+use domain::features::{Context, Ports, Rules};
 use domain::inbox::Paging;
 use rusqlite::Connection;
 use serde_json::{Value, from_str, from_value, json};
@@ -30,14 +30,13 @@ const BACKFILL: u64 = 3_600_000;
 const BACKOFF_INITIAL: u64 = 5;
 const BACKOFF_MAX: u64 = 20;
 pub(crate) const BAD_SCHEMA: &str = "CREATE TABLE messages (key TEXT PRIMARY KEY, source TEXT, account TEXT, occurred_at_ms INTEGER);";
-pub(crate) const BAD_STAMP: &str = "CREATE TABLE messages (key TEXT PRIMARY KEY, source TEXT, account TEXT, conversation_id TEXT, sender_id TEXT, sender_name TEXT, text TEXT, occurred_at_ms TEXT, received_at_ms INTEGER, raw TEXT); INSERT INTO messages VALUES ('k', 'dingtalk', 'acct', 'c', 'u', 'n', 't', 'abc', 1, '{}'); CREATE TABLE decisions (key TEXT, probability REAL); CREATE TABLE handoffs (key TEXT, analysis TEXT);";
+pub(crate) const BAD_STAMP: &str = "CREATE TABLE messages (key TEXT PRIMARY KEY, source TEXT, account TEXT, conversation_id TEXT, sender_id TEXT, sender_name TEXT, text TEXT, occurred_at_ms TEXT, received_at_ms INTEGER, raw TEXT); INSERT INTO messages VALUES ('k', 'dingtalk', 'acct', 'c', 'u', 'n', 't', 'abc', 1, '{}'); CREATE TABLE placements (key TEXT, probability REAL, topic_id TEXT); CREATE TABLE alerts (topic_id TEXT, analysis TEXT, created_at_ms INTEGER);";
 const BATCH: u32 = 10;
 pub(crate) const BIN: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/it/fixtures/fake-dws.sh");
 const CAP_CHARS: u32 = 1_000;
 const CHILD_EXIT: u64 = 300;
 const CIPHER_MIN: u32 = 32;
 const CONTEXT_CHARS: u32 = 10_000;
-const CONTEXT_ROWS: u32 = 20;
 const ERRORS: &str = r#"{"bad_request":{"code":"invalid","exit_code":13},"storage":{"code":"unavailable","exit_code":15},"unknown_action":{"code":"missing","exit_code":14}}"#;
 const EXEC_TIMEOUT: u64 = 5_000;
 pub(crate) const FAILURE: u8 = 7;
@@ -47,11 +46,16 @@ const FAKE: &str = concat!(
 );
 const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/it/fixtures");
 pub(crate) const FRAGMENTS: &str = "title\nalice:QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo0MTIzNDU2\nQUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo0MTIzNDU2\nQUJDREVGR0hJSktMTU5PUFFSU1RV";
+const GAP: u64 = 3_600_000;
 const HEAL_LIMIT: u32 = 2;
+const INTAKE: u32 = 50;
+const LABEL: u32 = 8;
+pub(crate) const LEARN_MIN: u32 = 4;
 const LOOKBACK: u64 = 1_000_000_000_000;
 const LOOKUP_BATCH: u32 = 2;
 pub(crate) const MANUAL: u8 = 6;
 const MANUAL_CODES: [i32; 2] = [2, 4];
+const MIN_CONFIDENCE: f64 = 0.6;
 pub(crate) const NOON: u64 = 1_783_483_235_000;
 const OFFSET: i16 = 480;
 pub(crate) const OPEN: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/it/fixtures/open.sb");
@@ -67,6 +71,7 @@ pub(crate) const REFUSE_UPDATE: &str =
 pub(crate) const SEALED: &str = "QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo0MTIzNDU2||2||1||196";
 pub(crate) const TEXT_STAMP: &str = "CREATE TABLE messages (key TEXT PRIMARY KEY, source TEXT, account TEXT, occurred_at_ms TEXT); INSERT INTO messages VALUES ('k', 'dingtalk', 'acct', 'abc');";
 const THRESHOLD: f64 = 0.8;
+const TOPICS: u32 = 5;
 const ZERO: u64 = 0;
 
 #[derive(Clone, Default)]
@@ -151,6 +156,21 @@ impl Sandbox {
         self.dir.join("store.db")
     }
 
+    fn exec(&self, role: &str, mode: &str) -> Value {
+        json!({
+            "args": [role],
+            "bin": FAKE,
+            "env": {
+                "FAKE_DIR": self.dir.to_string_lossy(),
+                "FAKE_SCREEN": mode,
+                "FAKE_OUTSIDE": self.outside.to_string_lossy(),
+            },
+            "sandbox": self.fence(),
+            "timeout_ms": EXEC_TIMEOUT,
+            "vars": {"PATH": "${PATH}", "TRIAGE_KEY": "${PATH}", "TRIAGE_URL": "${HOME}"},
+        })
+    }
+
     fn fence(&self) -> Value {
         json!({
             "bin": "/usr/bin/sandbox-exec",
@@ -184,30 +204,30 @@ impl Sandbox {
         fs::read_to_string(self.dir.join(file))
     }
 
+    pub(crate) fn screen(&self, mode: &str) -> Value {
+        json!({
+            "screen": {
+                "exec": self.exec("screen", mode),
+                "instructions": "judge",
+                "model": "local",
+                "placeholder": "[s]",
+            },
+        })
+    }
+
     pub(crate) fn seed(&self, sql: &str) -> Fallible<()> {
         Ok(Connection::open(self.database())?.execute_batch(sql)?)
     }
 
     pub(crate) fn triage(&self, patch: &Value) -> Fallible<Triage> {
-        let exec = |role: &str| {
-            json!({
-                "args": [role],
-                "bin": FAKE,
-                "env": {
-                    "FAKE_DIR": self.dir.to_string_lossy(),
-                    "FAKE_OUTSIDE": self.outside.to_string_lossy(),
-                },
-                "sandbox": self.fence(),
-                "timeout_ms": EXEC_TIMEOUT,
-                "vars": {"PATH": "${PATH}", "TRIAGE_KEY": "${PATH}", "TRIAGE_URL": "${HOME}"},
-            })
-        };
+        let exec = |role: &str| self.exec(role, "");
         let mut base = json!({
             "codex": exec("codex"),
             "decide": exec("decide"),
             "limits": {
                 "batch": BATCH,
                 "handoff_cooldown_ms": ZERO,
+                "intake": INTAKE,
                 "lookback_ms": LOOKBACK,
                 "max_attempts": ATTEMPTS,
                 "max_decisions_per_hour": QUOTA,
@@ -217,22 +237,35 @@ impl Sandbox {
             },
             "mode": "enabled",
             "model": "m",
-            "notice": "[{probability}] {conversation}|{analysis}",
+            "notice": "[{probability}] {topic}|{analysis}",
             "notify": exec("send"),
             "notify_conversation_id": "${CARGO_PKG_NAME}",
             "notify_target": "${CARGO_PKG_VERSION}",
-            "prompt": "ctx:{messages}",
-            "question": {"instructions": "is it urgent", "name": "urgent"},
-            "self_sender_id": "${HOME}",
-            "sizes": {
-                "context_max_chars": CONTEXT_CHARS,
-                "context_messages": CONTEXT_ROWS,
-                "context_window_ms": LOOKBACK,
-                "input_max_chars": CAP_CHARS,
-                "result_max_chars": CAP_CHARS,
+            "questions": {
+                "threshold": THRESHOLD,
+                "topic": {
+                    "instructions": "which {segment}",
+                    "min_confidence": MIN_CONFIDENCE,
+                    "name": "topic",
+                    "new_label": "new topic",
+                },
+                "urgent": {"instructions": "urgent {line}", "name": "urgent"},
             },
-            "threshold": THRESHOLD,
+            "review": {
+                "learn_min_chars": LEARN_MIN,
+                "mode": "auto",
+                "reasons": [
+                    {"code": "leak", "label": "Leaked", "placeholder": "[x]"},
+                    {"code": "noise", "label": "Noise"},
+                ],
+            },
+            "redact": {
+                "patterns": [{"pattern": "[0-9]{11,}", "placeholder": "[num]"}],
+                "unknown_sender": "unknown",
+            },
+            "self_sender_id": "${HOME}",
         });
+        merge(&mut base, &text_settings());
         merge(&mut base, patch);
         Ok(from_value(base)?)
     }
@@ -382,7 +415,11 @@ pub(crate) async fn run_logged(config: &Settings, millis: u64) -> Fallible<(u8, 
     let errors: Errors = from_str(ERRORS)?;
     let paging: Paging = from_str(PAGING)?;
     let shelf = config.shelf();
-    let context = Context::new(&errors, &paging, &shelf);
+    let context = Context::new(
+        &errors,
+        Rules::new(&paging, &[], LEARN_MIN),
+        Ports::new(&shelf, &shelf),
+    );
     let mut stop = Box::pin(sleep(Duration::from_millis(millis)));
     let code = run(config, &context, &mut stop)
         .with_subscriber(subscriber)
@@ -444,6 +481,25 @@ pub(crate) fn stored(key: &str, occurred_at_ms: u64, text: &str) -> String {
     .to_string()
 }
 
+fn text_settings() -> Value {
+    json!({
+        "session": {
+            "followup": "next:{messages}",
+            "fresh": ["-"],
+            "prompt": "ctx:{messages}",
+            "resume": ["resume", "{thread}", "-"],
+        },
+        "sizes": {
+            "context_max_chars": CONTEXT_CHARS,
+            "label_chars": LABEL,
+            "result_max_chars": CAP_CHARS,
+            "session_gap_ms": GAP,
+            "session_max_ms": LOOKBACK,
+            "topics_max_open": TOPICS,
+        },
+    })
+}
+
 pub(crate) fn texts(database: &Path) -> Fallible<Vec<String>> {
     let connection = Connection::open(database)?;
     let mut statement = connection.prepare("SELECT text FROM messages ORDER BY key")?;
@@ -470,10 +526,26 @@ pub(crate) async fn triage_logged(
     let errors: Errors = from_str(ERRORS)?;
     let paging: Paging = from_str(PAGING)?;
     let shelf = ingest.shelf();
-    let context = Context::new(&errors, &paging, &shelf);
+    let context = Context::new(
+        &errors,
+        Rules::new(&paging, &[], LEARN_MIN),
+        Ports::new(&shelf, &shelf),
+    );
     let mut stop = Box::pin(sleep(Duration::from_millis(millis)));
     run_triage(Setup::new(ingest, triage, &context), &mut stop)
         .with_subscriber(subscriber)
         .await;
     Ok(capture.text())
+}
+
+pub(crate) fn triage_validate(ingest: &Settings, triage: &Triage) -> Fallible<Result<(), String>> {
+    let errors: Errors = from_str(ERRORS)?;
+    let paging: Paging = from_str(PAGING)?;
+    let shelf = ingest.shelf();
+    let context = Context::new(
+        &errors,
+        Rules::new(&paging, &[], LEARN_MIN),
+        Ports::new(&shelf, &shelf),
+    );
+    Ok(validate(Setup::new(ingest, triage, &context)))
 }

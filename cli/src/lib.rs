@@ -16,6 +16,7 @@ use std::ffi::OsString;
 use std::io::{self, Write as _};
 use std::process::ExitCode;
 
+use adapters::triage::{Setup, validate};
 use clap::Parser as _;
 use domain::features::{self, Call};
 use tokio::net::TcpListener;
@@ -112,7 +113,10 @@ async fn serve(settings: Settings) -> ExitCode {
 async fn verify(settings: &Settings) -> Result<(), String> {
     settings.ingest().check().await?;
     if settings.triage().enabled() {
-        settings.triage().check().await
+        settings.triage().check().await?;
+        let shelf = settings.ingest().shelf();
+        let context = settings.context(&shelf);
+        validate(Setup::new(settings.ingest(), settings.triage(), &context))
     } else {
         Ok(())
     }

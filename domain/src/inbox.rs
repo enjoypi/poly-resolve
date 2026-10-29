@@ -108,6 +108,7 @@ pub struct Row {
     sender_name: String,
     source: String,
     text: String,
+    topic: Option<String>,
 }
 
 impl Row {

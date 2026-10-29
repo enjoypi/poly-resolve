@@ -306,6 +306,12 @@
           },
           "text": {
             "type": "string"
+          },
+          "topic": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -376,14 +382,378 @@
         ],
         "type": "object"
       },
-      "TriageAskRequest": {
+      "ReviewApproveRequest": {
+        "properties": {
+          "keys": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "keys"
+        ],
+        "type": "object"
+      },
+      "ReviewApproveResponse": {
+        "properties": {
+          "states": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "states"
+        ],
+        "type": "object"
+      },
+      "ReviewItem": {
+        "properties": {
+          "batch_id": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "conversation_id": {
+            "type": "string"
+          },
+          "flag": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string"
+          },
+          "occurred_at_ms": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "reviewer": {
+            "type": "string"
+          },
+          "sender": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "batch_id",
+          "conversation_id",
+          "flag",
+          "key",
+          "occurred_at_ms",
+          "reason",
+          "reviewer",
+          "sender",
+          "state",
+          "text"
+        ],
+        "type": "object"
+      },
+      "ReviewListRequest": {
+        "properties": {
+          "limit": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "state": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "ReviewListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ReviewItem"
+            },
+            "type": "array"
+          },
+          "reasons": {
+            "items": {
+              "$ref": "#/components/schemas/ReviewReason"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items",
+          "reasons"
+        ],
+        "type": "object"
+      },
+      "ReviewReason": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "placeholder": {
+            "default": null,
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "code",
+          "label"
+        ],
+        "type": "object"
+      },
+      "ReviewRejectRequest": {
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "leak": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "ReviewRulingResponse": {
+        "properties": {
+          "state": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "state"
+        ],
+        "type": "object"
+      },
+      "TriageAttach": {
+        "properties": {
+          "conversation_id": {
+            "type": "string"
+          },
+          "last_ms": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "topic_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "conversation_id",
+          "last_ms",
+          "topic_id"
+        ],
+        "type": "object"
+      },
+      "TriageBriefRequest": {
+        "properties": {
+          "followup": {
+            "type": "string"
+          },
+          "max_chars": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "resume": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TriageResume"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/TriageRow"
+            },
+            "type": "array"
+          },
+          "rules": {
+            "items": {
+              "$ref": "#/components/schemas/TriageRule"
+            },
+            "type": "array"
+          },
+          "template": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "followup",
+          "max_chars",
+          "rows",
+          "rules",
+          "template"
+        ],
+        "type": "object"
+      },
+      "TriageBriefResponse": {
+        "properties": {
+          "prompt": {
+            "type": "string"
+          },
+          "start": {
+            "$ref": "#/components/schemas/TriageStart"
+          },
+          "until_ms": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "prompt",
+          "start",
+          "until_ms"
+        ],
+        "type": "object"
+      },
+      "TriageCandidate": {
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "text"
+        ],
+        "type": "object"
+      },
+      "TriageChoice": {
+        "properties": {
+          "segment": {
+            "format": "uint",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "topic": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "value": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "type": "object"
+      },
+      "TriageEntry": {
+        "properties": {
+          "conversation_id": {
+            "type": "string"
+          },
+          "hints": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "key": {
+            "type": "string"
+          },
+          "occurred_at_ms": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "sender": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "conversation_id",
+          "key",
+          "occurred_at_ms",
+          "sender",
+          "text"
+        ],
+        "type": "object"
+      },
+      "TriageLayout": {
+        "properties": {
+          "batch_id": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "lines": {
+            "items": {
+              "$ref": "#/components/schemas/TriagePlaced"
+            },
+            "type": "array"
+          },
+          "segments": {
+            "items": {
+              "$ref": "#/components/schemas/TriageSegment"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "batch_id",
+          "lines",
+          "segments"
+        ],
+        "type": "object"
+      },
+      "TriageLineRequest": {
         "properties": {
           "cipher_min_length": {
             "format": "uint32",
             "minimum": 0,
             "type": "integer"
           },
-          "input_max_chars": {
+          "max_chars": {
             "format": "uint32",
             "minimum": 0,
             "type": "integer"
@@ -391,37 +761,37 @@
           "message": {
             "$ref": "#/components/schemas/TriageSubject"
           },
-          "model": {
-            "type": "string"
-          },
           "notify_conversation_id": {
             "type": "string"
           },
-          "question": {
-            "$ref": "#/components/schemas/TriageQuestion"
+          "rules": {
+            "items": {
+              "$ref": "#/components/schemas/TriageRule"
+            },
+            "type": "array"
           },
           "self_sender_id": {
+            "type": "string"
+          },
+          "unknown_sender": {
             "type": "string"
           }
         },
         "required": [
           "cipher_min_length",
-          "input_max_chars",
+          "max_chars",
           "message",
-          "model",
           "notify_conversation_id",
-          "question",
-          "self_sender_id"
+          "rules",
+          "self_sender_id",
+          "unknown_sender"
         ],
         "type": "object"
       },
-      "TriageAskResponse": {
+      "TriageLineResponse": {
         "properties": {
-          "body": {
-            "type": [
-              "string",
-              "null"
-            ]
+          "sender": {
+            "type": "string"
           },
           "skip": {
             "anyOf": [
@@ -432,78 +802,13 @@
                 "type": "null"
               }
             ]
-          }
-        },
-        "type": "object"
-      },
-      "TriageBriefRequest": {
-        "properties": {
-          "max_chars": {
-            "format": "uint32",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "rows": {
-            "items": {
-              "$ref": "#/components/schemas/TriageLine"
-            },
-            "type": "array"
-          },
-          "template": {
-            "type": "string"
-          },
-          "trigger_ms": {
-            "format": "uint64",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "window_ms": {
-            "format": "uint64",
-            "minimum": 0,
-            "type": "integer"
-          }
-        },
-        "required": [
-          "max_chars",
-          "rows",
-          "template",
-          "trigger_ms",
-          "window_ms"
-        ],
-        "type": "object"
-      },
-      "TriageBriefResponse": {
-        "properties": {
-          "prompt": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "prompt"
-        ],
-        "type": "object"
-      },
-      "TriageLine": {
-        "properties": {
-          "occurred_at_ms": {
-            "format": "uint64",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "sender_id": {
-            "type": "string"
-          },
-          "sender_name": {
-            "type": "string"
           },
           "text": {
             "type": "string"
           }
         },
         "required": [
-          "occurred_at_ms",
-          "sender_id",
-          "sender_name",
+          "sender",
           "text"
         ],
         "type": "object"
@@ -511,9 +816,6 @@
       "TriageNoticeRequest": {
         "properties": {
           "analysis": {
-            "type": "string"
-          },
-          "conversation_id": {
             "type": "string"
           },
           "max_chars": {
@@ -527,14 +829,17 @@
           },
           "template": {
             "type": "string"
+          },
+          "topic_id": {
+            "type": "string"
           }
         },
         "required": [
           "analysis",
-          "conversation_id",
           "max_chars",
           "probability",
-          "template"
+          "template",
+          "topic_id"
         ],
         "type": "object"
       },
@@ -546,6 +851,152 @@
         },
         "required": [
           "text"
+        ],
+        "type": "object"
+      },
+      "TriageOpen": {
+        "properties": {
+          "label": {
+            "type": "string"
+          },
+          "topic": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "label",
+          "topic"
+        ],
+        "type": "object"
+      },
+      "TriagePackRequest": {
+        "properties": {
+          "attach": {
+            "items": {
+              "$ref": "#/components/schemas/TriageAttach"
+            },
+            "type": "array"
+          },
+          "batch_id": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "gap_ms": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "label_chars": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "lines": {
+            "items": {
+              "$ref": "#/components/schemas/TriageEntry"
+            },
+            "type": "array"
+          },
+          "max_chars": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "model": {
+            "type": "string"
+          },
+          "new_label": {
+            "type": "string"
+          },
+          "questions": {
+            "$ref": "#/components/schemas/TriageQuestions"
+          },
+          "rules": {
+            "items": {
+              "$ref": "#/components/schemas/TriageRule"
+            },
+            "type": "array"
+          },
+          "topics": {
+            "items": {
+              "$ref": "#/components/schemas/TriageOpen"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "attach",
+          "batch_id",
+          "gap_ms",
+          "label_chars",
+          "lines",
+          "max_chars",
+          "model",
+          "new_label",
+          "questions",
+          "rules",
+          "topics"
+        ],
+        "type": "object"
+      },
+      "TriagePackResponse": {
+        "properties": {
+          "body": {
+            "type": "string"
+          },
+          "layout": {
+            "$ref": "#/components/schemas/TriageLayout"
+          }
+        },
+        "required": [
+          "body",
+          "layout"
+        ],
+        "type": "object"
+      },
+      "TriagePlaced": {
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "occurred_at_ms": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "segment": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "key",
+          "occurred_at_ms",
+          "segment"
+        ],
+        "type": "object"
+      },
+      "TriagePlacement": {
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "probability": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "topic": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "topic"
         ],
         "type": "object"
       },
@@ -564,39 +1015,275 @@
         ],
         "type": "object"
       },
-      "TriageScoreRequest": {
+      "TriageQuestions": {
         "properties": {
-          "body": {
-            "type": "string"
+          "topic": {
+            "$ref": "#/components/schemas/TriageQuestion"
           },
-          "name": {
-            "type": "string"
-          },
-          "threshold": {
-            "format": "double",
-            "type": "number"
+          "urgent": {
+            "$ref": "#/components/schemas/TriageQuestion"
           }
         },
         "required": [
-          "body",
-          "name",
-          "threshold"
+          "topic",
+          "urgent"
         ],
         "type": "object"
       },
-      "TriageScoreResponse": {
+      "TriageRedactRequest": {
         "properties": {
-          "probability": {
-            "format": "double",
-            "type": "number"
+          "rules": {
+            "items": {
+              "$ref": "#/components/schemas/TriageRule"
+            },
+            "type": "array"
           },
-          "verdict": {
-            "$ref": "#/components/schemas/TriageVerdict"
+          "text": {
+            "type": "string"
           }
         },
         "required": [
-          "probability",
-          "verdict"
+          "rules",
+          "text"
+        ],
+        "type": "object"
+      },
+      "TriageRedactResponse": {
+        "properties": {
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "type": "object"
+      },
+      "TriageReplyRequest": {
+        "properties": {
+          "max_chars": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "stdout": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "max_chars",
+          "stdout"
+        ],
+        "type": "object"
+      },
+      "TriageReplyResponse": {
+        "properties": {
+          "text": {
+            "type": "string"
+          },
+          "thread_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "thread_id"
+        ],
+        "type": "object"
+      },
+      "TriageResume": {
+        "properties": {
+          "until": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "until"
+        ],
+        "type": "object"
+      },
+      "TriageRow": {
+        "properties": {
+          "occurred_at_ms": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "sender": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "occurred_at_ms",
+          "sender",
+          "text"
+        ],
+        "type": "object"
+      },
+      "TriageRule": {
+        "properties": {
+          "pattern": {
+            "type": "string"
+          },
+          "placeholder": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "pattern",
+          "placeholder"
+        ],
+        "type": "object"
+      },
+      "TriageScreenRequest": {
+        "properties": {
+          "instructions": {
+            "type": "string"
+          },
+          "lines": {
+            "items": {
+              "$ref": "#/components/schemas/TriageCandidate"
+            },
+            "type": "array"
+          },
+          "model": {
+            "type": "string"
+          },
+          "topics": {
+            "items": {
+              "$ref": "#/components/schemas/TriageOpen"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "instructions",
+          "lines",
+          "model",
+          "topics"
+        ],
+        "type": "object"
+      },
+      "TriageScreenResponse": {
+        "properties": {
+          "body": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "body"
+        ],
+        "type": "object"
+      },
+      "TriageScreened": {
+        "properties": {
+          "flag": {
+            "type": "string"
+          },
+          "hints": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "key": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "flag",
+          "hints",
+          "key",
+          "text"
+        ],
+        "type": "object"
+      },
+      "TriageScreenedRequest": {
+        "properties": {
+          "lines": {
+            "items": {
+              "$ref": "#/components/schemas/TriageCandidate"
+            },
+            "type": "array"
+          },
+          "min_chars": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "placeholder": {
+            "type": "string"
+          },
+          "response": {
+            "type": "string"
+          },
+          "topics": {
+            "items": {
+              "$ref": "#/components/schemas/TriageOpen"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "lines",
+          "min_chars",
+          "placeholder",
+          "response",
+          "topics"
+        ],
+        "type": "object"
+      },
+      "TriageScreenedResponse": {
+        "properties": {
+          "lines": {
+            "items": {
+              "$ref": "#/components/schemas/TriageScreened"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "lines"
+        ],
+        "type": "object"
+      },
+      "TriageSegment": {
+        "properties": {
+          "attach": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "choices": {
+            "items": {
+              "$ref": "#/components/schemas/TriageChoice"
+            },
+            "type": "array"
+          },
+          "label": {
+            "type": "string"
+          },
+          "question": {
+            "format": "uint",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "choices",
+          "label"
         ],
         "type": "object"
       },
@@ -609,12 +1296,68 @@
         ],
         "type": "string"
       },
+      "TriageSortRequest": {
+        "properties": {
+          "layout": {
+            "$ref": "#/components/schemas/TriageLayout"
+          },
+          "min_confidence": {
+            "format": "double",
+            "type": "number"
+          },
+          "response": {
+            "type": "string"
+          },
+          "threshold": {
+            "format": "double",
+            "type": "number"
+          }
+        },
+        "required": [
+          "layout",
+          "min_confidence",
+          "response",
+          "threshold"
+        ],
+        "type": "object"
+      },
+      "TriageSortResponse": {
+        "properties": {
+          "placements": {
+            "items": {
+              "$ref": "#/components/schemas/TriagePlacement"
+            },
+            "type": "array"
+          },
+          "topics": {
+            "items": {
+              "$ref": "#/components/schemas/TriageTouched"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "placements",
+          "topics"
+        ],
+        "type": "object"
+      },
+      "TriageStart": {
+        "enum": [
+          "fresh",
+          "resume"
+        ],
+        "type": "string"
+      },
       "TriageSubject": {
         "properties": {
           "conversation_id": {
             "type": "string"
           },
           "sender_id": {
+            "type": "string"
+          },
+          "sender_name": {
             "type": "string"
           },
           "text": {
@@ -624,7 +1367,40 @@
         "required": [
           "conversation_id",
           "sender_id",
+          "sender_name",
           "text"
+        ],
+        "type": "object"
+      },
+      "TriageTouched": {
+        "properties": {
+          "label": {
+            "type": "string"
+          },
+          "last_ms": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "probability": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "topic": {
+            "type": "string"
+          },
+          "urgent": {
+            "$ref": "#/components/schemas/TriageVerdict"
+          }
+        },
+        "required": [
+          "label",
+          "last_ms",
+          "topic",
+          "urgent"
         ],
         "type": "object"
       },
@@ -1102,7 +1878,7 @@
         }
       }
     },
-    "/triage/ask": {
+    "/review/approve": {
       "post": {
         "parameters": [
           {
@@ -1128,7 +1904,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/TriageAskRequest"
+                "$ref": "#/components/schemas/ReviewApproveRequest"
               }
             }
           },
@@ -1139,7 +1915,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/TriageAskResponse"
+                  "$ref": "#/components/schemas/ReviewApproveResponse"
                 }
               }
             },
@@ -1154,6 +1930,148 @@
               }
             },
             "description": "bad request"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "storage unavailable"
+          }
+        }
+      }
+    },
+    "/review/list": {
+      "post": {
+        "parameters": [
+          {
+            "description": "set by the gateway",
+            "in": "header",
+            "name": "x-session-id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "set by the gateway",
+            "in": "header",
+            "name": "x-user",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewListRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewListResponse"
+                }
+              }
+            },
+            "description": "success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "bad request"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "storage unavailable"
+          }
+        }
+      }
+    },
+    "/review/reject": {
+      "post": {
+        "parameters": [
+          {
+            "description": "set by the gateway",
+            "in": "header",
+            "name": "x-session-id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "set by the gateway",
+            "in": "header",
+            "name": "x-user",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewRejectRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewRulingResponse"
+                }
+              }
+            },
+            "description": "success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "bad request"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "storage unavailable"
           }
         }
       }
@@ -1196,6 +2114,62 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/TriageBriefResponse"
+                }
+              }
+            },
+            "description": "success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "bad request"
+          }
+        }
+      }
+    },
+    "/triage/line": {
+      "post": {
+        "parameters": [
+          {
+            "description": "set by the gateway",
+            "in": "header",
+            "name": "x-session-id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "set by the gateway",
+            "in": "header",
+            "name": "x-user",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TriageLineRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TriageLineResponse"
                 }
               }
             },
@@ -1270,7 +2244,7 @@
         }
       }
     },
-    "/triage/score": {
+    "/triage/pack": {
       "post": {
         "parameters": [
           {
@@ -1296,7 +2270,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/TriageScoreRequest"
+                "$ref": "#/components/schemas/TriagePackRequest"
               }
             }
           },
@@ -1307,7 +2281,287 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/TriageScoreResponse"
+                  "$ref": "#/components/schemas/TriagePackResponse"
+                }
+              }
+            },
+            "description": "success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "bad request"
+          }
+        }
+      }
+    },
+    "/triage/redact": {
+      "post": {
+        "parameters": [
+          {
+            "description": "set by the gateway",
+            "in": "header",
+            "name": "x-session-id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "set by the gateway",
+            "in": "header",
+            "name": "x-user",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TriageRedactRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TriageRedactResponse"
+                }
+              }
+            },
+            "description": "success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "bad request"
+          }
+        }
+      }
+    },
+    "/triage/reply": {
+      "post": {
+        "parameters": [
+          {
+            "description": "set by the gateway",
+            "in": "header",
+            "name": "x-session-id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "set by the gateway",
+            "in": "header",
+            "name": "x-user",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TriageReplyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TriageReplyResponse"
+                }
+              }
+            },
+            "description": "success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "bad request"
+          }
+        }
+      }
+    },
+    "/triage/screen": {
+      "post": {
+        "parameters": [
+          {
+            "description": "set by the gateway",
+            "in": "header",
+            "name": "x-session-id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "set by the gateway",
+            "in": "header",
+            "name": "x-user",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TriageScreenRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TriageScreenResponse"
+                }
+              }
+            },
+            "description": "success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "bad request"
+          }
+        }
+      }
+    },
+    "/triage/screened": {
+      "post": {
+        "parameters": [
+          {
+            "description": "set by the gateway",
+            "in": "header",
+            "name": "x-session-id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "set by the gateway",
+            "in": "header",
+            "name": "x-user",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TriageScreenedRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TriageScreenedResponse"
+                }
+              }
+            },
+            "description": "success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "bad request"
+          }
+        }
+      }
+    },
+    "/triage/sort": {
+      "post": {
+        "parameters": [
+          {
+            "description": "set by the gateway",
+            "in": "header",
+            "name": "x-session-id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "set by the gateway",
+            "in": "header",
+            "name": "x-user",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TriageSortRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TriageSortResponse"
                 }
               }
             },

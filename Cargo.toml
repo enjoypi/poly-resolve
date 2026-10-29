@@ -13,6 +13,7 @@ axum = { version = "*", default-features = false, features = ["http1", "tokio"] 
 chrono = { version = "*", default-features = false, features = ["std"] }
 clap = { version = "*", default-features = false, features = ["std", "derive", "help", "usage", "error-context"] }
 domain = { path = "domain" }
+regex = { version = "*", default-features = false, features = ["std", "perf", "unicode-perl", "unicode-case"] }
 rusqlite = { version = "*", features = ["bundled"] }
 schemars = { version = "*", default-features = false, features = ["derive", "std"] }
 serde = { version = "*", features = ["derive"] }

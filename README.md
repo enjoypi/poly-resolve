@@ -51,11 +51,15 @@ YAML 文件，各项均必填，不允许其他字段。示例见 `cli/config.ya
 | ingest.dws.lookup | 查询消息详情所用命令：bin 为可执行文件，args 为参数；自动追加 `--msg-ids=<消息 ID,…>`，标准输出须为含 `messages[].forwarded[]` 的 JSON |
 | ingest.dws.manual_exit_codes | 钉钉工具退出码落在此列表时视为须人工处理 |
 | triage.mode | disabled 或 enabled；enabled 时 `serve` 启动即检查所需环境变量，缺失则以退出码 2 退出 |
-| triage.model / question / threshold | 决策接口的模型名、是非问题（`name` 为答案名，`instructions` 为问题文本）、概率不低于阈值即高优先级 |
-| triage.limits | batch 每轮最多决策条数；poll_ms 轮询间隔；lookback_ms 只处理多久以内的消息；max_attempts / retry_after_ms 失败重试次数与间隔；max_decisions_per_hour / max_handoffs_per_hour 每小时决策与转交上限；handoff_cooldown_ms 同一会话两次转交的最短间隔 |
-| triage.sizes | input_max_chars 单条消息送决策的字数上限；context_messages / context_window_ms / context_max_chars 转交时取的消息条数、时间跨度与字数上限；result_max_chars 分析结果字数上限 |
-| triage.prompt / notice | 交给 codex 的提示词模板（`{messages}` 处填入消息 JSON）与发给本人的通知模板（`{probability}`、`{conversation}`、`{analysis}`） |
-| triage.decide / codex / notify | 三个外部命令：bin、args、env（字面量环境变量）、sandbox、vars（`${NAME}` 写法，运行时读同名环境变量传给子进程，不设默认值）、timeout_ms；子进程环境先清空再只放 env 与 vars；notify 的 args 以接收人参数名结尾，程序追加 `notify_target` 与 `--idempotency-key=<消息键>` |
+| triage.model / questions | 决策接口的模型名；questions.urgent 是每条消息一问的优先级问题（`{line}` 换成消息别名），questions.topic 是每个新会话段一问的话题归属问题（`{segment}` 换成段别名，`min_confidence` 低于它按新话题，`new_label` 是“新话题”选项的说明），questions.threshold 是概率不低于它即高优先级 |
+| triage.limits | batch 每批最多消息条数（≤ 200，决策请求的问题数不超过 400）；intake 每轮最多入库的新消息条数；poll_ms 轮询间隔；lookback_ms 只处理多久以内的消息；max_attempts / retry_after_ms 失败重试次数与间隔；max_decisions_per_hour 每小时决策请求数；max_handoffs_per_hour 每小时转交次数；handoff_cooldown_ms 同一话题两次转交的最短间隔 |
+| triage.sizes | session_gap_ms 同一会话内相邻消息间隔超过它即另起一段（话题的延续也按此判断）；context_max_chars 单条消息与提示词转写的字数上限；label_chars 话题标签（取首条消息）的字数；topics_max_open 一次最多列出多少个开放话题供归并（≤ 200）；session_max_ms 话题空闲多久后关闭、codex 会话最长沿用多久；result_max_chars 分析结果字数上限 |
+| triage.redact | 外发前的脱敏：patterns 是按序执行的规则（pattern 为正则，placeholder 为替换文本，可含 `${1}`），unknown_sender 是没有发送人名时的写法；任一正则无效则 `serve` 以 sandbox_exit_code 退出，决策与分析均不外发 |
+| triage.review | 外发前的人工审核：mode 为 manual（逐条确认后才外发）或 auto（自动通过）；learn_min_chars 粘贴的漏脱敏原文至少多长；reasons 拒绝时可选的原因（code 与 label；带 placeholder 的是漏脱敏类，须粘贴漏掉的原文，系统据此学出字面量规则，占位符取该原因的 placeholder；不带的拒绝即排除，该条不外发） |
+| triage.session | codex 会话：prompt 第一次发话题转写的提示词模板、followup 同一话题后续只发新增消息的模板（`{messages}` 处填入消息 JSON）；fresh 新会话追加在 codex 参数后的参数；resume 续写追加的参数（`{thread}` 换成会话 ID） |
+| triage.screen | 可选，缺省不启用：规则脱敏之后、人工审核之前，调本机小模型再筛一遍。exec 是外部命令（用法同 decide，一般是 `curl` 调本机 `llama-server` 的 OpenAI 兼容接口，沙箱用 `cli/sandbox/screen.sb`，只放行本机端口），instructions 是系统提示词，model 是模型名，placeholder 是遮盖用的占位符。模型只能多遮、不能少遮，也不替代人工审核 |
+| triage.notice | 发给本人的通知模板（`{probability}`、`{topic}`、`{analysis}`） |
+| triage.decide / codex / notify | 三个外部命令（codex 的 args 须含 `--json`、不含 `--ephemeral` 与结尾的 `-`）：bin、args、env（字面量环境变量）、sandbox、vars（`${NAME}` 写法，运行时读同名环境变量传给子进程，不设默认值）、timeout_ms；子进程环境先清空再只放 env 与 vars；notify 的 args 以接收人参数名结尾，程序追加 `notify_target` 与 `--idempotency-key=<话题>@<批号>` |
 | triage.self_sender_id / notify_conversation_id / notify_target | 本人的发送人 ID、通知所在会话 ID、通知接收人，均写成 `${NAME}`；前两者对应的消息不参与决策 |
 | errors.<错误>.code / exit_code | 该错误的响应体 code 与命令行退出码（1 至 255）；<错误> 取 bad_request、storage、unknown_action，见“返回码” |
 
@@ -133,7 +137,11 @@ cd web && bun install --frozen-lockfile && bun run build
 
 ## 消息分级与转交
 
-默认关闭（`triage.mode: disabled`）。开启后 `serve` 同进程对库里每条新消息调决策接口判定优先级，高优先级消息所在会话的近期消息交给 `codex exec` 只读分析，结果存库（页面“优先级”列，详情里的“分析”）并经钉钉发给本人。消息正文会发往决策接口与 codex，须先取得授权。关闭时无需 sops，照常 `serve`。
+默认关闭（`triage.mode: disabled`）。开启后 `serve` 同进程把库里全部未处理的消息逐条脱敏、经人工逐条审核，成批发给决策接口：每条消息得一个优先级，每个新会话段归入已有话题或另起话题，话题与 codex 会话一一对应；高优先级的话题交给 `codex exec` 只读分析，结果存库（页面“优先级”“话题”列，详情里的“分析”）并经钉钉发给本人。消息内容会发往决策接口与 codex，须先取得授权。关闭时无需 sops，照常 `serve`。
+
+流水线：程序规则脱敏 → 本地小模型筛查（可选，`triage.screen`）→ 人工逐条审核（`review.mode: auto` 则跳过）→ 决策接口（优先级与话题）→ codex 分析 → 通知。
+
+本地小模型：不配 `triage.screen` 就整段跳过；配了之后，每条入批的消息先交给它判断是否还有密钥并给出话题候选。它返回的片段必须是该条文字的子串且不短于 `learn_min_chars` 才会被遮盖；判为高风险却给不出可遮盖的片段，该条打上提示——`manual` 时在审核页置顶并标出，`auto` 时直接排除（原因 `screen`）；话题候选只用来缩小决策接口的选项范围。模型不可达、返回无法解析时按 `retry_after_ms` 重试，期间不放行任何一条。本机需自己下载模型权重并启动 `llama-server`，配置示例：`exec.bin: curl`、`exec.args` 里带 `-q -sS --fail-with-body --max-time 30 -H "Content-Type: application/json" --data-binary @- http://localhost:8080/v1/chat/completions`，沙箱的 `profile` 指向 `cli/sandbox/screen.sb`。
 
 准备：
 
@@ -161,12 +169,17 @@ sops exec-env secrets.enc.yaml './target/release/cli serve --config cli/config.y
 
 行为：
 
-- 本人发出的、发往通知会话的、正文为空的、仍是密文的消息不外发，只记为已跳过；其余消息调决策接口，概率不低于 `triage.threshold` 即高优先级
-- 高优先级消息按会话合并：`handoff_cooldown_ms` 内同一会话只转交一次；codex 只读（关闭其全部工具、专用 `CODEX_HOME` 与空工作目录，并在沙箱内运行）；通知发往 `notify_target`，带幂等标识，重试不会重复送达
+- 全部未处理的消息都会入库：本人发出的、发往通知会话的、正文为空的、仍是密文的只记为已跳过，其余进入审核；每批至多 `batch` 条，上一批没处理完不开下一批，新到的消息等下一批
+- 脱敏：发送人只写名字（无名写 `unknown_sender`），不外发发送人 ID、会话 ID 与消息键（请求里只用 `C1`、`L3`、`S2` 这样的别名）；按 `triage.redact.patterns` 把密钥与凭据（私钥整块、各平台令牌、Bearer 与 Cookie、连接串、“密码”“口令”“验证码”等关键词后的值、长随机串）、所有链接与地址、文件路径与密钥文件名、手机号、身份证、银行卡、邮箱换成占位符；人名、公司名不处理；不处理全角变体、拆在两条消息里的密钥与被编码包裹的密钥，脱敏只降低暴露，不替代授权；`cli call triage redact` 可用来试规则，`cli/tests/it/redact.rs` 的样例表防回归
+- 审核：每条脱敏后的消息先冻结入库，页面 `#reviews` 里逐条通过或拒绝（顶部“整批通过”一次通过当前列出的全部）；一批里没有待审的行才外发，只外发已通过的；拒绝必须选原因，漏脱敏类原因还须粘贴漏掉的原文，系统学出字面量规则（存入 `learned_rules`，不经接口与日志返回），该条用新规则重新脱敏后回到待审，之后每条消息外发前都再套一遍全部规则；其余原因即排除；审核没有期限，一批不审完就一直等，不丢消息；`mode: auto` 时不经人工、记审核人为 auto；审核页的“审核人”写入请求头 `x-user`，网关已注入时可留空
+- 决策：一个请求里每条消息一问优先级（概率不低于 `questions.threshold` 即高优先级）；每个新会话段再一问话题归属，选项是开放话题（取首条消息的脱敏摘录作说明）、本批更早的段、“新话题”；同一会话在 `session_gap_ms` 内已有开放话题的，直接并入，不提问；答案缺失、被拒答、置信度不足、选项无效都当新话题；话题取成员的最高概率
+- 转交：高优先级话题按话题合并，`handoff_cooldown_ms` 内同一话题只转交一次；codex 只读（关闭其全部工具、专用 `CODEX_HOME` 与空工作目录，并在沙箱内运行），提示词只含已通过审核的文本；同一话题的后续分析经 `codex exec resume` 续写同一会话，只发新增消息，话题空闲超过 `session_max_ms` 则新建；续写失败即丢弃该话题的会话记录；会话文件落在 `.debug/codex-home/sessions`，不自动清理；通知发往 `notify_target`，带幂等标识，重试不会重复送达
 - 失败按 `max_attempts` 与 `retry_after_ms` 重试，用尽后留为失败；决策或转交失败不影响收集，也不使服务退出
-- 库里 `decisions`、`handoffs` 两张表记录每条消息的决策与每次转交的状态；日志不含消息正文、提示词与分析结果
+- 库里 `lines`（逐条的脱敏文本与审核状态）、`batches`（冻结的决策请求）、`placements`（消息到话题与概率）、`topics`（话题与 codex 会话）、`alerts`（转交）、`learned_rules`（学到的规则）记录全部状态；`lines.reason` 可按原因统计以优化规则；日志不含消息正文、提示词与分析结果；旧版的 `decisions`、`handoffs`、`reviews`、`threads` 表不再使用，可手动删除
 
-试跑建议：先保持关闭，用 `sops exec-env secrets.enc.yaml 'curl …'` 对合成文本调一次决策接口，核对返回里 `answers[].probability`；再开启并把 `threshold` 临时设为大于 1，只打分不转交，观察分数；最后用合成的提示注入消息验证 codex 不读文件、不外传，并先用 `dws … --dry-run` 确认通知能发到本人。每小时限额起初设小。
+审核接口 `POST /review/list`（`{limit?, state?}`，缺省列待审核）、`/review/approve`（`{keys}`）、`/review/reject`（`{key, reason, leak?}`），后两者须带 `x-user`；已不是待审核的项再操作时原样返回当前状态；命令行同样可用 `cli call review …`。
+
+试跑建议：先保持关闭，用 `sops exec-env secrets.enc.yaml 'curl …'` 对合成文本调一次决策接口（含一个 `choice` 问题），核对返回里 `answers[]` 的 `probability`、`choice`、`confidence`；再开启（`review.mode: manual`）并把 `questions.threshold` 临时设为大于 1，只打分不转交，在审核页逐条检查外发内容、对漏脱敏的选原因拒绝并粘贴原文，同时观察话题归并是否合理、调 `min_confidence`；然后用合成的提示注入消息验证 codex 不读文件、不外传，并先用 `dws … --dry-run` 确认通知能发到本人；首次开启前先手跑一次 `codex exec --json` 与 `codex exec resume <会话 ID>`，确认事件格式与 `-s`、`-C` 对续写同样生效。每小时限额起初设小。
 
 ## 子进程沙箱
 

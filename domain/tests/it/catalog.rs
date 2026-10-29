@@ -3,7 +3,7 @@ use serde_json::json;
 
 use crate::support::{Fixture, cli};
 
-static ROUTES: [(&str, &str); 12] = [
+static ROUTES: [(&str, &str); 20] = [
     ("health", "check"),
     ("ingest", "assemble"),
     ("ingest", "cipher"),
@@ -12,12 +12,20 @@ static ROUTES: [(&str, &str); 12] = [
     ("ingest", "reveal"),
     ("ingest", "window"),
     ("messages", "list"),
-    ("triage", "ask"),
+    ("review", "approve"),
+    ("review", "list"),
+    ("review", "reject"),
     ("triage", "brief"),
+    ("triage", "line"),
     ("triage", "notice"),
-    ("triage", "score"),
+    ("triage", "pack"),
+    ("triage", "redact"),
+    ("triage", "reply"),
+    ("triage", "screen"),
+    ("triage", "screened"),
+    ("triage", "sort"),
 ];
-static SCHEMAS: [&str; 28] = [
+static SCHEMAS: [&str; 61] = [
     "ErrorBody",
     "HealthCheckResponse",
     "IngestAssembleRequest",
@@ -33,18 +41,51 @@ static SCHEMAS: [&str; 28] = [
     "MessagesListItem",
     "MessagesListRequest",
     "MessagesListResponse",
-    "TriageAskRequest",
-    "TriageAskResponse",
+    "ReviewApproveRequest",
+    "ReviewApproveResponse",
+    "ReviewItem",
+    "ReviewListRequest",
+    "ReviewListResponse",
+    "ReviewReason",
+    "ReviewRejectRequest",
+    "ReviewRulingResponse",
+    "TriageAttach",
     "TriageBriefRequest",
     "TriageBriefResponse",
-    "TriageLine",
+    "TriageCandidate",
+    "TriageChoice",
+    "TriageEntry",
+    "TriageLayout",
+    "TriageLineRequest",
+    "TriageLineResponse",
     "TriageNoticeRequest",
     "TriageNoticeResponse",
+    "TriageOpen",
+    "TriagePackRequest",
+    "TriagePackResponse",
+    "TriagePlaced",
+    "TriagePlacement",
     "TriageQuestion",
-    "TriageScoreRequest",
-    "TriageScoreResponse",
+    "TriageQuestions",
+    "TriageRedactRequest",
+    "TriageRedactResponse",
+    "TriageReplyRequest",
+    "TriageReplyResponse",
+    "TriageResume",
+    "TriageRow",
+    "TriageRule",
+    "TriageScreenRequest",
+    "TriageScreenResponse",
+    "TriageScreened",
+    "TriageScreenedRequest",
+    "TriageScreenedResponse",
+    "TriageSegment",
     "TriageSkip",
+    "TriageSortRequest",
+    "TriageSortResponse",
+    "TriageStart",
     "TriageSubject",
+    "TriageTouched",
     "TriageVerdict",
 ];
 
@@ -93,7 +134,15 @@ fn lists_failures_per_route() {
         })
         .filter(|entry| !entry.1.is_empty())
         .collect();
-    assert_eq!(failing, [("messages", vec![503])]);
+    assert_eq!(
+        failing,
+        [
+            ("messages", vec![503]),
+            ("review", vec![503]),
+            ("review", vec![503]),
+            ("review", vec![503]),
+        ]
+    );
 }
 
 #[test]

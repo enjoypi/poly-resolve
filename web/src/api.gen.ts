@@ -401,7 +401,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/triage/ask": {
+    "/review/approve": {
         parameters: {
             query?: never;
             header?: never;
@@ -422,7 +422,7 @@ export interface paths {
             };
             requestBody: {
                 content: {
-                    "application/json": components["schemas"]["TriageAskRequest"];
+                    "application/json": components["schemas"]["ReviewApproveRequest"];
                 };
             };
             responses: {
@@ -431,10 +431,132 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
-                        "application/json": components["schemas"]["TriageAskResponse"];
+                        "application/json": components["schemas"]["ReviewApproveResponse"];
                     };
                 };
                 400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ErrorBody"];
+                    };
+                };
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ErrorBody"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/review/list": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: {
+            parameters: {
+                query?: never;
+                header?: {
+                    "x-session-id"?: string;
+                    "x-user"?: string;
+                };
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ReviewListRequest"];
+                };
+            };
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ReviewListResponse"];
+                    };
+                };
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ErrorBody"];
+                    };
+                };
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ErrorBody"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/review/reject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: {
+            parameters: {
+                query?: never;
+                header?: {
+                    "x-session-id"?: string;
+                    "x-user"?: string;
+                };
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ReviewRejectRequest"];
+                };
+            };
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ReviewRulingResponse"];
+                    };
+                };
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ErrorBody"];
+                    };
+                };
+                503: {
                     headers: {
                         [name: string]: unknown;
                     };
@@ -481,6 +603,55 @@ export interface paths {
                     };
                     content: {
                         "application/json": components["schemas"]["TriageBriefResponse"];
+                    };
+                };
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ErrorBody"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/triage/line": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: {
+            parameters: {
+                query?: never;
+                header?: {
+                    "x-session-id"?: string;
+                    "x-user"?: string;
+                };
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["TriageLineRequest"];
+                };
+            };
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TriageLineResponse"];
                     };
                 };
                 400: {
@@ -548,7 +719,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/triage/score": {
+    "/triage/pack": {
         parameters: {
             query?: never;
             header?: never;
@@ -569,7 +740,7 @@ export interface paths {
             };
             requestBody: {
                 content: {
-                    "application/json": components["schemas"]["TriageScoreRequest"];
+                    "application/json": components["schemas"]["TriagePackRequest"];
                 };
             };
             responses: {
@@ -578,7 +749,252 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
-                        "application/json": components["schemas"]["TriageScoreResponse"];
+                        "application/json": components["schemas"]["TriagePackResponse"];
+                    };
+                };
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ErrorBody"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/triage/redact": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: {
+            parameters: {
+                query?: never;
+                header?: {
+                    "x-session-id"?: string;
+                    "x-user"?: string;
+                };
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["TriageRedactRequest"];
+                };
+            };
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TriageRedactResponse"];
+                    };
+                };
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ErrorBody"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/triage/reply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: {
+            parameters: {
+                query?: never;
+                header?: {
+                    "x-session-id"?: string;
+                    "x-user"?: string;
+                };
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["TriageReplyRequest"];
+                };
+            };
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TriageReplyResponse"];
+                    };
+                };
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ErrorBody"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/triage/screen": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: {
+            parameters: {
+                query?: never;
+                header?: {
+                    "x-session-id"?: string;
+                    "x-user"?: string;
+                };
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["TriageScreenRequest"];
+                };
+            };
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TriageScreenResponse"];
+                    };
+                };
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ErrorBody"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/triage/screened": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: {
+            parameters: {
+                query?: never;
+                header?: {
+                    "x-session-id"?: string;
+                    "x-user"?: string;
+                };
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["TriageScreenedRequest"];
+                };
+            };
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TriageScreenedResponse"];
+                    };
+                };
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ErrorBody"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/triage/sort": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: {
+            parameters: {
+                query?: never;
+                header?: {
+                    "x-session-id"?: string;
+                    "x-user"?: string;
+                };
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["TriageSortRequest"];
+                };
+            };
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TriageSortResponse"];
                     };
                 };
                 400: {
@@ -673,6 +1089,7 @@ export interface components {
             sender_name: string;
             source: string;
             text: string;
+            topic?: string | null;
         };
         MessagesListRequest: {
             cursor?: string | null;
@@ -684,63 +1101,230 @@ export interface components {
             items: components["schemas"]["MessagesListItem"][];
             next_cursor?: string | null;
         };
-        TriageAskRequest: {
-            cipher_min_length: number;
-            input_max_chars: number;
-            message: components["schemas"]["TriageSubject"];
-            model: string;
-            notify_conversation_id: string;
-            question: components["schemas"]["TriageQuestion"];
-            self_sender_id: string;
+        ReviewApproveRequest: {
+            keys: string[];
         };
-        TriageAskResponse: {
-            body?: string | null;
-            skip?: components["schemas"]["TriageSkip"] | null;
+        ReviewApproveResponse: {
+            states: string[];
+        };
+        ReviewItem: {
+            batch_id: number;
+            conversation_id: string;
+            flag: string;
+            key: string;
+            occurred_at_ms: number;
+            reason: string;
+            reviewer: string;
+            sender: string;
+            state: string;
+            text: string;
+        };
+        ReviewListRequest: {
+            limit?: number | null;
+            state?: string | null;
+        };
+        ReviewListResponse: {
+            items: components["schemas"]["ReviewItem"][];
+            reasons: components["schemas"]["ReviewReason"][];
+        };
+        ReviewReason: {
+            code: string;
+            label: string;
+            placeholder: string | null;
+        };
+        ReviewRejectRequest: {
+            key: string;
+            leak?: string | null;
+            reason: string;
+        };
+        ReviewRulingResponse: {
+            state: string;
+        };
+        TriageAttach: {
+            conversation_id: string;
+            last_ms: number;
+            topic_id: string;
         };
         TriageBriefRequest: {
+            followup: string;
             max_chars: number;
-            rows: components["schemas"]["TriageLine"][];
+            resume?: components["schemas"]["TriageResume"] | null;
+            rows: components["schemas"]["TriageRow"][];
+            rules: components["schemas"]["TriageRule"][];
             template: string;
-            trigger_ms: number;
-            window_ms: number;
         };
         TriageBriefResponse: {
             prompt: string;
+            start: components["schemas"]["TriageStart"];
+            until_ms: number;
         };
-        TriageLine: {
+        TriageCandidate: {
+            key: string;
+            text: string;
+        };
+        TriageChoice: {
+            segment?: number | null;
+            topic?: string | null;
+            value: string;
+        };
+        TriageEntry: {
+            conversation_id: string;
+            hints: string[];
+            key: string;
             occurred_at_ms: number;
-            sender_id: string;
-            sender_name: string;
+            sender: string;
+            text: string;
+        };
+        TriageLayout: {
+            batch_id: number;
+            lines: components["schemas"]["TriagePlaced"][];
+            segments: components["schemas"]["TriageSegment"][];
+        };
+        TriageLineRequest: {
+            cipher_min_length: number;
+            max_chars: number;
+            message: components["schemas"]["TriageSubject"];
+            notify_conversation_id: string;
+            rules: components["schemas"]["TriageRule"][];
+            self_sender_id: string;
+            unknown_sender: string;
+        };
+        TriageLineResponse: {
+            sender: string;
+            skip?: components["schemas"]["TriageSkip"] | null;
             text: string;
         };
         TriageNoticeRequest: {
             analysis: string;
-            conversation_id: string;
             max_chars: number;
             probability: number;
             template: string;
+            topic_id: string;
         };
         TriageNoticeResponse: {
             text: string;
+        };
+        TriageOpen: {
+            label: string;
+            topic: string;
+        };
+        TriagePackRequest: {
+            attach: components["schemas"]["TriageAttach"][];
+            batch_id: number;
+            gap_ms: number;
+            label_chars: number;
+            lines: components["schemas"]["TriageEntry"][];
+            max_chars: number;
+            model: string;
+            new_label: string;
+            questions: components["schemas"]["TriageQuestions"];
+            rules: components["schemas"]["TriageRule"][];
+            topics: components["schemas"]["TriageOpen"][];
+        };
+        TriagePackResponse: {
+            body: string;
+            layout: components["schemas"]["TriageLayout"];
+        };
+        TriagePlaced: {
+            key: string;
+            occurred_at_ms: number;
+            segment: number;
+        };
+        TriagePlacement: {
+            key: string;
+            probability?: number | null;
+            topic: string;
         };
         TriageQuestion: {
             instructions: string;
             name: string;
         };
-        TriageScoreRequest: {
-            body: string;
-            name: string;
-            threshold: number;
+        TriageQuestions: {
+            topic: components["schemas"]["TriageQuestion"];
+            urgent: components["schemas"]["TriageQuestion"];
         };
-        TriageScoreResponse: {
-            probability: number;
-            verdict: components["schemas"]["TriageVerdict"];
+        TriageRedactRequest: {
+            rules: components["schemas"]["TriageRule"][];
+            text: string;
+        };
+        TriageRedactResponse: {
+            text: string;
+        };
+        TriageReplyRequest: {
+            max_chars: number;
+            stdout: string;
+        };
+        TriageReplyResponse: {
+            text: string;
+            thread_id: string;
+        };
+        TriageResume: {
+            until: number;
+        };
+        TriageRow: {
+            occurred_at_ms: number;
+            sender: string;
+            text: string;
+        };
+        TriageRule: {
+            pattern: string;
+            placeholder: string;
+        };
+        TriageScreenRequest: {
+            instructions: string;
+            lines: components["schemas"]["TriageCandidate"][];
+            model: string;
+            topics: components["schemas"]["TriageOpen"][];
+        };
+        TriageScreenResponse: {
+            body: string;
+        };
+        TriageScreened: {
+            flag: string;
+            hints: string[];
+            key: string;
+            text: string;
+        };
+        TriageScreenedRequest: {
+            lines: components["schemas"]["TriageCandidate"][];
+            min_chars: number;
+            placeholder: string;
+            response: string;
+            topics: components["schemas"]["TriageOpen"][];
+        };
+        TriageScreenedResponse: {
+            lines: components["schemas"]["TriageScreened"][];
+        };
+        TriageSegment: {
+            attach?: string | null;
+            choices: components["schemas"]["TriageChoice"][];
+            label: string;
+            question?: number | null;
         };
         TriageSkip: "empty" | "notice" | "own" | "sealed";
+        TriageSortRequest: {
+            layout: components["schemas"]["TriageLayout"];
+            min_confidence: number;
+            response: string;
+            threshold: number;
+        };
+        TriageSortResponse: {
+            placements: components["schemas"]["TriagePlacement"][];
+            topics: components["schemas"]["TriageTouched"][];
+        };
+        TriageStart: "fresh" | "resume";
         TriageSubject: {
             conversation_id: string;
             sender_id: string;
+            sender_name: string;
             text: string;
+        };
+        TriageTouched: {
+            label: string;
+            last_ms: number;
+            probability?: number | null;
+            topic: string;
+            urgent: components["schemas"]["TriageVerdict"];
         };
         TriageVerdict: "normal" | "urgent";
     };

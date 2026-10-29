@@ -4,10 +4,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use adapters::config::Settings as Ingest;
+use adapters::store::Shelf;
 use adapters::triage::config::Settings as Triage;
 use domain::Errors;
-use domain::features::Context;
-use domain::inbox::{Paging, Reader};
+use domain::features::{Context, Ports, Rules};
+use domain::inbox::Paging;
 use serde::Deserialize;
 use serde_saphyr::from_str;
 use tracing::Dispatch;
@@ -50,8 +51,16 @@ impl Settings {
         self.addr
     }
 
-    pub(crate) const fn context<'ctx>(&'ctx self, reader: &'ctx dyn Reader) -> Context<'ctx> {
-        Context::new(&self.errors, &self.messages, reader)
+    pub(crate) const fn context<'ctx>(&'ctx self, reader: &'ctx Shelf<'ctx>) -> Context<'ctx> {
+        Context::new(
+            &self.errors,
+            Rules::new(
+                &self.messages,
+                self.triage.reasons(),
+                self.triage.learn_min_chars(),
+            ),
+            Ports::new(reader, reader),
+        )
     }
 
     pub(crate) const fn errors(&self) -> &Errors {

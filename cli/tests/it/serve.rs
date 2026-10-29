@@ -1,5 +1,6 @@
 mod assets;
 mod messages;
+mod reviews;
 
 use core::ops::{Deref, DerefMut};
 use std::io::{self, BufRead as _, BufReader, Read as _, Write as _};

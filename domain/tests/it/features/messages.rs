@@ -68,6 +68,7 @@ fn first_page_uses_default_limit() {
             "sender_name": "alice",
             "source": "dingtalk",
             "text": "hello",
+            "topic": null,
         }))
     );
 }

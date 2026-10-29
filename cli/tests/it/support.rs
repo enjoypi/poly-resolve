@@ -46,6 +46,7 @@ triage:
   limits:
     batch: 1
     handoff_cooldown_ms: 0
+    intake: 5
     lookback_ms: 1000
     max_attempts: 1
     max_decisions_per_hour: 1
@@ -58,16 +59,22 @@ triage:
   notify: {args: [x], bin: /nonexistent/triage, env: {FAKE_DIR: /nonexistent}, sandbox: *fence, timeout_ms: 1000, vars: {PATH: \"${PATH}\"}}
   notify_conversation_id: \"${HOME}\"
   notify_target: \"${HOME}\"
-  prompt: p
-  question: {instructions: i, name: urgent}
+  questions: {threshold: 0.8, topic: {instructions: t, min_confidence: 0.6, name: topic, new_label: n}, urgent: {instructions: i, name: urgent}}
+  redact:
+    patterns:
+      - pattern: \"[0-9]{11,}\"
+        placeholder: \"[num]\"
+    unknown_sender: unknown
+  review: {learn_min_chars: 4, mode: manual, reasons: [{code: leak, label: Leaked, placeholder: \"[x]\"}, {code: noise, label: Noise}]}
   self_sender_id: \"${HOME}\"
+  session: {followup: f, fresh: [\"-\"], prompt: p, resume: [resume, \"{thread}\", \"-\"]}
   sizes:
     context_max_chars: 1000
-    context_messages: 5
-    context_window_ms: 1000
-    input_max_chars: 100
+    label_chars: 10
     result_max_chars: 100
-  threshold: 0.8
+    session_gap_ms: 1000
+    session_max_ms: 1000
+    topics_max_open: 5
 ingest:
   account: acct
   backoff_initial_ms: 5

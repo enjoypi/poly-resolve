@@ -37,6 +37,7 @@ export const FIELDS: Record<string, Field> = {
   account: { hidden: true, label: "账号" },
   priority: { kind: "number", label: "优先级" },
   analysis: { hidden: true, label: "分析" },
+  topic: { hidden: true, label: "话题" },
 };
 
 export const MAX_ROWS = 2000;
@@ -56,8 +57,18 @@ export const PRESETS: Preset[] = [
   { back_ms: 604_800_000, label: "7 天" },
 ];
 
+export const REVIEW_HASH = "#reviews";
+
+export const REVIEW_LIMIT = 50;
+
+export const REVIEWER_KEY = "reviewer";
+
 export const TEXT = {
   all: "加载全部",
+  approve: "通过",
+  approveAll: "整批通过",
+  back: "消息",
+  batch: (id: number) => `批 ${id}`,
   brand: "PolyResolve",
   capped: (max: number) => `已达 ${max} 条上限，请缩小时间范围。`,
   clear: "清除筛选",
@@ -70,12 +81,20 @@ export const TEXT = {
   counts: (shown: number, loaded: number) => `显示 ${shown}／已加载 ${loaded} 条。`,
   empty: "没有消息。",
   fields: "全部字段",
+  flagged: (flag: string) => `本地模型提示：${flag}`,
+  leakPaste: "粘贴漏掉的原文",
   more: "加载更多",
+  noReviews: "没有待审核项。",
   panel: "筛选",
   partial: "还有更早的消息未加载，筛选与排序只含已加载的行。",
+  pending: (count: number) => `待审 ${count} 条`,
   range: "时间范围",
   rangeInvalid: "起止时间无效",
+  reasonPick: "拒绝原因",
   refresh: "刷新",
+  reject: "拒绝",
+  reviewer: "审核人",
+  reviews: "审核",
   search: "搜索全部字段",
   since: "起",
   span: (text: string) => `时间范围：${text}。`,

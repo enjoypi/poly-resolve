@@ -1,6 +1,7 @@
 mod health;
 mod ingest;
 mod messages;
+mod review;
 mod triage;
 
 use domain::features::{Call, Origin, Target};
@@ -138,15 +139,20 @@ fn dispatch_redacts_triage_payloads() {
     let (min, max): (u32, u32) = (32, 100);
     let request = json!({
         "cipher_min_length": min,
-        "input_max_chars": max,
-        "message": {"conversation_id": "c1", "sender_id": "u1", "text": "top-secret-body"},
-        "model": "m",
+        "max_chars": max,
+        "message": {
+            "conversation_id": "c1",
+            "sender_id": "u1",
+            "sender_name": "alice",
+            "text": "top-secret-body",
+        },
         "notify_conversation_id": "n1",
-        "question": {"instructions": "i", "name": "urgent"},
+        "rules": [],
         "self_sender_id": "me",
+        "unknown_sender": "unknown",
     })
     .to_string();
-    let call = cli("triage", "ask", &request);
+    let call = cli("triage", "line", &request);
     let body = capture
         .record(|| Fixture::new().unwrap().dispatch(&call))
         .unwrap();

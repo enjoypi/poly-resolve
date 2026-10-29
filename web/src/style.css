@@ -35,7 +35,9 @@ body {
 }
 
 button,
-input {
+input,
+select,
+textarea {
   background: var(--bg);
   border: 1px solid var(--line);
   border-radius: 2px;
@@ -88,6 +90,10 @@ summary:focus-visible {
   flex-wrap: wrap;
   gap: 8px 12px;
   padding: 8px 12px;
+}
+
+.back {
+  color: var(--ion);
 }
 
 .brand {
@@ -620,4 +626,70 @@ td.pick:hover .badge {
   .tip {
     display: none;
   }
+}
+
+.reviews {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(0, 1fr);
+  padding-bottom: 24px;
+}
+
+.reviews .count,
+.reviews .error {
+  margin: 0;
+  padding: 0 12px;
+}
+
+.reviews .error {
+  color: var(--warn);
+}
+
+.reviews .items {
+  display: grid;
+  gap: 12px;
+  padding: 0 12px;
+}
+
+.review {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  padding: 10px 12px;
+}
+
+.review .meta {
+  color: var(--dim);
+  font-size: var(--fs-1);
+  margin: 0 0 6px;
+}
+
+.review .payload {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  font-family: var(--mono);
+  font-size: var(--fs-1);
+  margin: 0 0 8px;
+  max-height: 40vh;
+  overflow: auto;
+  padding: 8px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.review.flagged {
+  border-color: var(--warn);
+}
+
+.review .leak {
+  flex: 1 1 240px;
+  min-height: 3em;
+}
+
+.review .verdict {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }

@@ -9,7 +9,8 @@
 - `config.rs` 的 `File` 带 `#[serde(deny_unknown_fields)]`；新增字段同时改 `File`、`config.yaml`、`tests/it/support.rs` 的 `YAML` 与 `tests/it/config.rs` 用例
 - 退出码 `sandbox_exit_code`（顶层，写在 `ingest` 之前）：`serve` 与 `ingest` 在读完配置、检查完 triage 变量后、绑定端口前调 `verify`——`ingest.check()`，`triage.mode` 为 `enabled` 时再 `triage.check()`；失败以该码退出并把原因写 stderr（`fail`）；`call` 不检查。新增沙箱字段时同步 `File`、`config.yaml`、`tests/it/support.rs` 的 `YAML`（锚点 `&fence` 只写一处）
 - `messages`（`domain::inbox::Paging`）与 `web_dir` 写在 `ingest` 段之前（`missing_ingest_fails` 以 `ingest:` 截断 YAML）
-- `Settings::context(&reader)` 构造 `domain::features::Context`；`call`、`handle`、`ingest` 各用 `settings.ingest().shelf()` 作 reader
+- `Settings::context(&reader)` 构造 `domain::features::Context`：`Rules` 取 `messages` 分页、`triage.review.reasons` 与 `triage.review.learn_min_chars`，`Ports` 把同一个 `adapters::store::Shelf` 既作 `Reader` 又作 `Docket`；`call`、`handle`、`ingest` 各用 `settings.ingest().shelf()`（形参叫 `reader`，避免 `similar_names`）
+- `triage` 启用时 `verify` 在 `triage.check()` 之后调 `adapters::triage::validate`：`triage.limits.batch` 超过 200、`triage.sizes.topics_max_open + batch` 超过 254、或 `triage.redact.patterns` 有无效正则，都以 `sandbox_exit_code` 退出；`serve` 的 HTTP 另带 `review` 路由（`x-user` 取自请求头，审核人不可信，见 README）
 - `addr` 为 `SocketAddr`，`config::load` 拒绝非回环 IP（IPv4、IPv6 均支持），`call` 同样校验
 - `triage` 段（`adapters::triage::config::Settings`，也写在 `ingest` 之前）里 `"${NAME}"` 写法的值是 `Var`：整串须为 `${NAME}`，加载时只校验写法、不读环境，用时才读（不存值，`Debug` 只显示名字）；`serve` 在 `triage.mode: enabled` 且有变量读不到（含空值）时以退出码 2 退出并列出变量名（`missing()`），`call`、`ingest` 与未启用时不检查；测试不能 `set_var`（`unsafe_code` forbid），用 `${HOME}`、`${PATH}`、`${CARGO_PKG_NAME}` 表示已设，一个不存在的名字表示缺失
 
@@ -61,9 +62,10 @@
 - helper 放 `tests/it/support.rs`，临时文件写 `CARGO_TARGET_TMPDIR`
 - 子进程测试用 `CARGO_BIN_EXE_cli`，须以 SIGINT 或 SIGTERM 让进程正常退出（被 kill 的进程不写 profraw）；serve 监听 `127.0.0.1:0`，从 listening 日志取地址
 - serve 随带采集：测试须用 `support::live(dir)` 的配置（假 dws、`dir` 下可写库），默认 YAML 的 `bin` 都不存在，起 serve 会先在沙箱自检失败；日志含采集行，断言用 `index_of` 按内容找，不数行；503 用例在启动后删库文件制造；排空用例覆盖 collect 先完成，`FAKE_LISTEN: hang` 用例覆盖 server 先完成
-- serve 的页面与消息测试放 `tests/it/serve/`（`assets.rs`、`messages.rs`），作为 `serve.rs` 的子模块以访问其私有的 `Server`、`start`、`get`、`post`、`stop`；页面用临时 `web_dir`（含目录外的 `secret.txt` 验证不可越界）；消息用 `adapters::store::Archive` 播种临时库，同一份配置分别走 `call` 子进程与 HTTP，断言响应一致
+- serve 的页面、消息与审核测试放 `tests/it/serve/`（`assets.rs`、`messages.rs`、`reviews.rs`；后者用 dev-dependency `rusqlite` 往库里插 `lines` 行，覆盖逐条通过、拒绝、漏脱敏拒绝（响应里不含粘贴的原文）与 `Shelf` 的 `Docket` 的失败日志分支（`approve`、`reject`、`source` 各一），因其 `tracing` 参数只在有 subscriber 时求值），作为 `serve.rs` 的子模块以访问其私有的 `Server`、`start`、`get`、`post`、`stop`；页面用临时 `web_dir`（含目录外的 `secret.txt` 验证不可越界）；消息用 `adapters::store::Archive` 播种临时库，同一份配置分别走 `call` 子进程与 HTTP，断言响应一致
 - ingest 测试：假 dws 夹具复用 `../adapters/tests/it/fixtures/fake-dws.sh`，配置里把 `bin`、`FAKE_DIR`、`store_path` 换成临时目录；等到 `event stored` 日志再发 SIGTERM
 - `live(dir)` 把假 dws、假 triage、`fake.sb` 与沙箱目录换进 YAML；存储失败用例在其结果里把库路径换成不存在的目录（`ingest.rs` 的 `unwritable`）；沙箱自检失败用例把 `fixtures/fake.sb` 换成不存在的文件（`absent`），triage 的用例把 `decide` 的 `bin` 换成不存在的程序
+- `tests/it/redact.rs` 读取真实的 `cli/config.yaml` 里 `triage.redact.patterns`，经 `cli call triage redact` 跑样例表：每条规则至少一例必须被替换、几例明文必须原样；规则是数据，改规则必须同步样例，源码里的中文用 `\u{…}` 转义（`non_ascii_literal`）
 - 停机测试：
   - 在途连接：连接 A 发完整请求头与不足 `Content-Length` 的请求体并保持
   - 同步点：另开连接完成一次完整请求（A 的数据已先到），再发信号

@@ -2,10 +2,20 @@ use alloc::collections::BTreeMap;
 use core::num::{NonZeroU32, NonZeroU64};
 use std::env;
 
-use serde::Deserialize;
+use domain::review::Reason;
+use serde::{Deserialize, Serialize};
 
 use crate::pipe::probe;
 use crate::seatbelt::Sandbox;
+
+const THREAD: &str = "{thread}";
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "lowercase")]
+enum Approval {
+    Auto,
+    Manual,
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -49,6 +59,7 @@ impl Exec {
 struct Limits {
     batch: NonZeroU32,
     handoff_cooldown_ms: u64,
+    intake: NonZeroU32,
     lookback_ms: u64,
     max_attempts: NonZeroU32,
     max_decisions_per_hour: u32,
@@ -83,6 +94,86 @@ impl Question {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct Questions {
+    threshold: f64,
+    topic: Topic,
+    urgent: Question,
+}
+
+impl Questions {
+    pub(crate) const fn threshold(&self) -> f64 {
+        self.threshold
+    }
+
+    pub(crate) const fn topic(&self) -> &Topic {
+        &self.topic
+    }
+
+    pub(crate) const fn urgent(&self) -> &Question {
+        &self.urgent
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Redact {
+    patterns: Vec<Rule>,
+    unknown_sender: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Review {
+    learn_min_chars: NonZeroU32,
+    mode: Approval,
+    reasons: Vec<Reason>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Rule {
+    pattern: String,
+    placeholder: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Screen {
+    exec: Exec,
+    instructions: String,
+    model: String,
+    placeholder: String,
+}
+
+impl Screen {
+    pub(crate) const fn exec(&self) -> &Exec {
+        &self.exec
+    }
+
+    pub(crate) fn instructions(&self) -> &str {
+        &self.instructions
+    }
+
+    pub(crate) fn model(&self) -> &str {
+        &self.model
+    }
+
+    pub(crate) fn placeholder(&self) -> &str {
+        &self.placeholder
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Session {
+    followup: String,
+    fresh: Vec<String>,
+    prompt: String,
+    resume: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Settings {
     codex: Exec,
     decide: Exec,
@@ -93,11 +184,13 @@ pub struct Settings {
     notify: Exec,
     notify_conversation_id: Var,
     notify_target: Var,
-    prompt: String,
-    question: Question,
+    questions: Questions,
+    redact: Redact,
+    review: Review,
+    screen: Option<Screen>,
     self_sender_id: Var,
+    session: Session,
     sizes: Sizes,
-    threshold: f64,
 }
 
 impl Settings {
@@ -106,7 +199,11 @@ impl Settings {
     }
 
     pub async fn check(&self) -> Result<(), String> {
-        for exec in [&self.decide, &self.codex, &self.notify] {
+        let screening = self.screen.iter().map(|screen| &screen.exec);
+        for exec in [&self.decide, &self.codex, &self.notify]
+            .into_iter()
+            .chain(screening)
+        {
             probe(exec).await?;
         }
         Ok(())
@@ -120,14 +217,6 @@ impl Settings {
         self.sizes.context_max_chars.get()
     }
 
-    pub(crate) const fn context_messages(&self) -> u32 {
-        self.sizes.context_messages.get()
-    }
-
-    pub(crate) const fn context_window_ms(&self) -> u64 {
-        self.sizes.context_window_ms
-    }
-
     pub(crate) const fn decide(&self) -> &Exec {
         &self.decide
     }
@@ -137,12 +226,29 @@ impl Settings {
         self.mode == Mode::Enabled
     }
 
+    pub(crate) fn followup(&self) -> &str {
+        &self.session.followup
+    }
+
+    pub(crate) fn fresh_args(&self) -> Vec<String> {
+        self.session.fresh.clone()
+    }
+
     pub(crate) const fn handoff_cooldown_ms(&self) -> u64 {
         self.limits.handoff_cooldown_ms
     }
 
-    pub(crate) const fn input_max_chars(&self) -> u32 {
-        self.sizes.input_max_chars.get()
+    pub(crate) const fn intake(&self) -> u32 {
+        self.limits.intake.get()
+    }
+
+    pub(crate) const fn label_chars(&self) -> u32 {
+        self.sizes.label_chars.get()
+    }
+
+    #[must_use = "下限需交给 Context"]
+    pub const fn learn_min_chars(&self) -> u32 {
+        self.review.learn_min_chars.get()
     }
 
     pub(crate) const fn lookback_ms(&self) -> u64 {
@@ -175,6 +281,11 @@ impl Settings {
         .chain(self.codex.sandbox.vars())
         .chain(self.decide.sandbox.vars())
         .chain(self.notify.sandbox.vars())
+        .chain(
+            self.screen
+                .iter()
+                .flat_map(|screen| screen.exec.vars.values().chain(screen.exec.sandbox.vars())),
+        )
         .filter(|var| var.value().is_none())
         .map(|var| var.name.as_str())
         .collect()
@@ -205,27 +316,64 @@ impl Settings {
     }
 
     pub(crate) fn prompt(&self) -> &str {
-        &self.prompt
+        &self.session.prompt
     }
 
-    pub(crate) const fn question(&self) -> &Question {
-        &self.question
+    pub(crate) const fn questions(&self) -> &Questions {
+        &self.questions
+    }
+
+    #[must_use = "原因需交给 Context"]
+    pub const fn reasons(&self) -> &[Reason] {
+        self.review.reasons.as_slice()
     }
 
     pub(crate) const fn result_max_chars(&self) -> u32 {
         self.sizes.result_max_chars.get()
     }
 
+    pub(crate) fn resume_args(&self, thread: &str) -> Vec<String> {
+        self.session
+            .resume
+            .iter()
+            .map(|arg| arg.replace(THREAD, thread))
+            .collect()
+    }
+
     pub(crate) const fn retry_after_ms(&self) -> u64 {
         self.limits.retry_after_ms
+    }
+
+    pub(crate) fn review_auto(&self) -> bool {
+        self.review.mode == Approval::Auto
+    }
+
+    pub(crate) fn rules(&self) -> &[Rule] {
+        &self.redact.patterns
+    }
+
+    pub(crate) const fn screen(&self) -> Option<&Screen> {
+        self.screen.as_ref()
     }
 
     pub(crate) const fn self_sender_id(&self) -> &Var {
         &self.self_sender_id
     }
 
-    pub(crate) const fn threshold(&self) -> f64 {
-        self.threshold
+    pub(crate) const fn session_gap_ms(&self) -> u64 {
+        self.sizes.session_gap_ms.get()
+    }
+
+    pub(crate) const fn session_max_ms(&self) -> u64 {
+        self.sizes.session_max_ms.get()
+    }
+
+    pub(crate) const fn topics_max_open(&self) -> u32 {
+        self.sizes.topics_max_open.get()
+    }
+
+    pub(crate) fn unknown_sender(&self) -> &str {
+        &self.redact.unknown_sender
     }
 }
 
@@ -233,10 +381,38 @@ impl Settings {
 #[serde(deny_unknown_fields)]
 struct Sizes {
     context_max_chars: NonZeroU32,
-    context_messages: NonZeroU32,
-    context_window_ms: u64,
-    input_max_chars: NonZeroU32,
+    label_chars: NonZeroU32,
     result_max_chars: NonZeroU32,
+    session_gap_ms: NonZeroU64,
+    session_max_ms: NonZeroU64,
+    topics_max_open: NonZeroU32,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Topic {
+    instructions: String,
+    min_confidence: f64,
+    name: String,
+    new_label: String,
+}
+
+impl Topic {
+    pub(crate) fn instructions(&self) -> &str {
+        &self.instructions
+    }
+
+    pub(crate) const fn min_confidence(&self) -> f64 {
+        self.min_confidence
+    }
+
+    pub(crate) fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub(crate) fn new_label(&self) -> &str {
+        &self.new_label
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
