@@ -5,7 +5,7 @@
 - 使用简体中文、全角标点，不用繁体中文、日文、韩文；文件名用英文
 - 文档与沟通精简无歧义、人工可维护；同一内容只写一处
 - 分工：README.md 只写使用方法；docs/ 写业务需求，给人看，不含技术细节；给 AI 的规则写 CLAUDE.md
-- 根 CLAUDE.md 只放全仓通用规则；只涉及某目录的规则放该目录的 CLAUDE.md（cli/、domain/、scripts/、web/）；单个 CLAUDE.md 少于 256 行
+- 根 CLAUDE.md 只放全仓通用规则；只涉及某目录的规则放该目录的 CLAUDE.md（adapters/、cli/、domain/、scripts/、web/）；单个 CLAUDE.md 少于 256 行
 - 可复用的规则、原则、坑写进对应 CLAUDE.md，并与既有条目去重合并；一次性规则丢弃；不记入 TODO.md 或 MEMORY.md
 - 新建文档（.md .rst .adoc .txt 等）先征得用户同意；TODO.md 与 Plan 文件除外
 - TODO.md 是任务清单：完成一项删一项，清空后删除文件
@@ -89,7 +89,7 @@ allow 只限下列各项，新增须归入其一并写进本节：
 - `non_ascii_literal`：源码字符串含测试用 ASCII
 - `std_instead_of_core`、`std_instead_of_alloc`、`alloc_instead_of_core`：`core::`、`alloc::` 优先于 `std::`
 - `absolute_paths`（阈值 1）：多段路径一律 `use` 导入具体项；与本地项重名时改名或用 `as` 别名
-- `too_many_arguments`（阈值 3，含 `self`）、`fn_params_excessive_bools`（阈值 0）：多参数打包为 `Copy` 结构体，字段私有，`new` 不超过 3 个参数，范例 `domain::features::Call`；不传 bool 参数，用 `&io::Result<()>` 等替代
+- `too_many_arguments`（阈值 3，含 `self`）、`fn_params_excessive_bools`、`struct_excessive_bools`（阈值 0）：多参数打包为 `Copy` 结构体，字段私有，`new` 不超过 3 个参数，范例 `domain::features::Call`；不传 bool 参数，用 `&io::Result<()>` 等替代；结构体不放 bool 字段，用可空值等替代
 - `arbitrary_source_item_ordering`：同类条目按名字母序（const 与 static 同组，struct、enum、type 同组，函数同组），impl 紧跟其类型，字段与方法同样按字母序
 - `struct_field_names`：结构体字段不全带相同前后缀（`default_limit`、`max_limit` 改为 `default`、`max`）；`similar_names`：形参名不与 `self` 等相近（`shelf` 与 `self` 相近，改 `reader`）；`unused_trait_names`：只为调方法导入的 trait 写 `as _`
 - `panic_in_result_fn`：返回 `Result` 的测试 helper 不写 assert，改返回 `bool` 或 `String` 由测试函数断言；`large_stack_arrays`：测试里超过 256 字节的数组字面量拆成多次 helper 调用
