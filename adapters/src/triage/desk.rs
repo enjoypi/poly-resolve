@@ -4,7 +4,9 @@ use serde::Deserialize;
 use serde_json::{Map, Value, from_str, json, to_value};
 
 use super::config::Settings;
+use super::text;
 use crate::config::Settings as Ingest;
+use crate::ingest::label;
 
 const FEATURE: &str = "triage";
 const RESUME: &str = "resume";
@@ -61,13 +63,16 @@ impl<'desk> Desk<'desk> {
 
     pub(crate) fn line(&self, message: &Value, rules: &Value) -> Option<Line> {
         let triage = self.triage;
+        let profile = self
+            .ingest
+            .profile(&label(text(message, "source"), text(message, "account")));
         let request = json!({
-            "cipher_min_length": self.ingest.cipher_min_length(),
+            "cipher_min_length": profile.cipher_min_length(),
             "max_chars": triage.context_max_chars(),
             "message": message,
-            "notify_conversation_id": triage.notify_conversation_id().value().unwrap_or_default(),
+            "notify_conversation_id": profile.notify_conversation_id(),
             "rules": rules,
-            "self_sender_id": triage.self_sender_id().value().unwrap_or_default(),
+            "self_sender_id": profile.self_sender_id(),
             "unknown_sender": triage.unknown_sender(),
         });
         self.call("line", &request)

@@ -8,12 +8,12 @@ use crate::features::ingest::cipher::sealed;
 #[derive(Deserialize, JsonSchema)]
 #[schemars(rename = "TriageLineRequest")]
 pub(crate) struct LineRequest {
-    cipher_min_length: u32,
+    cipher_min_length: Option<u32>,
     max_chars: u32,
     message: Subject,
-    notify_conversation_id: String,
+    notify_conversation_id: Option<String>,
     rules: Vec<Rule>,
-    self_sender_id: String,
+    self_sender_id: Option<String>,
     unknown_sender: String,
 }
 
@@ -69,14 +69,16 @@ pub(crate) fn line(req: &LineRequest) -> Result<LineResponse, AppError> {
 
 fn reason(req: &LineRequest) -> Option<Skip> {
     let message = &req.message;
-    let min_length = usize::try_from(req.cipher_min_length).unwrap_or(usize::MAX);
-    if message.sender_id == req.self_sender_id {
+    if req.self_sender_id.as_deref() == Some(message.sender_id.as_str()) {
         Some(Skip::Own)
-    } else if message.conversation_id == req.notify_conversation_id {
+    } else if req.notify_conversation_id.as_deref() == Some(message.conversation_id.as_str()) {
         Some(Skip::Notice)
     } else if message.text.trim().is_empty() {
         Some(Skip::Empty)
-    } else if sealed(&message.text, min_length) {
+    } else if req
+        .cipher_min_length
+        .is_some_and(|min| sealed(&message.text, usize::try_from(min).unwrap_or(usize::MAX)))
+    {
         Some(Skip::Sealed)
     } else {
         None

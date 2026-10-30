@@ -1,108 +1,26 @@
-use alloc::collections::BTreeMap;
-use core::num::{NonZeroU8, NonZeroU32, NonZeroU64};
+use alloc::collections::BTreeSet;
+use core::num::{NonZeroU8, NonZeroU64};
 use std::path::{Path, PathBuf};
 
+use futures_util::future::join_all;
 use serde::Deserialize;
 
-use crate::dws::Dws as Runner;
-use crate::seatbelt::Sandbox;
-use crate::store::Shelf;
-use crate::triage::config::{Var, resolved};
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct Dws {
-    decrypt: Process,
-    env: BTreeMap<String, String>,
-    listen: Process,
-    lookup: Process,
-    manual_exit_codes: Vec<i32>,
-    pull: Process,
-    timeout_ms: NonZeroU64,
-    vars: BTreeMap<String, Var>,
-}
-
-impl Dws {
-    pub(crate) const fn decrypt(&self) -> &Process {
-        &self.decrypt
-    }
-
-    pub(crate) const fn env(&self) -> &BTreeMap<String, String> {
-        &self.env
-    }
-
-    pub(crate) const fn listen(&self) -> &Process {
-        &self.listen
-    }
-
-    pub(crate) const fn lookup(&self) -> &Process {
-        &self.lookup
-    }
-
-    pub(crate) fn manual_exit_codes(&self) -> &[i32] {
-        &self.manual_exit_codes
-    }
-
-    pub(crate) const fn pull(&self) -> &Process {
-        &self.pull
-    }
-
-    pub(crate) const fn timeout_ms(&self) -> u64 {
-        self.timeout_ms.get()
-    }
-
-    pub(crate) fn vars(&self) -> impl Iterator<Item = (&str, String)> {
-        resolved(&self.vars)
-    }
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct Process {
-    args: Vec<String>,
-    bin: String,
-    sandbox: Sandbox,
-}
-
-impl Process {
-    pub(crate) fn args(&self) -> &[String] {
-        &self.args
-    }
-
-    pub(crate) fn bin(&self) -> &str {
-        &self.bin
-    }
-
-    pub(crate) const fn sandbox(&self) -> &Sandbox {
-        &self.sandbox
-    }
-}
+use crate::ingest::{Profile, Source};
+use crate::store::{Fallible, Shelf, connect};
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Settings {
-    account: String,
     backoff_initial_ms: NonZeroU64,
     backoff_max_ms: NonZeroU64,
-    child_exit_timeout_ms: NonZeroU64,
-    cipher_min_length: NonZeroU32,
-    dws: Dws,
+    busy_timeout_ms: NonZeroU64,
     failure_exit_code: NonZeroU8,
-    heal_limit: NonZeroU32,
-    initial_backfill_ms: u64,
-    lookup_batch: NonZeroU32,
     manual_exit_code: NonZeroU8,
-    reconcile_overlap_ms: u64,
-    source: String,
-    source_utc_offset_minutes: i16,
+    sources: Vec<Source>,
     store_path: PathBuf,
 }
 
 impl Settings {
-    pub(crate) fn account(&self) -> &str {
-        &self.account
-    }
-
     pub(crate) const fn backoff_initial_ms(&self) -> u64 {
         self.backoff_initial_ms.get()
     }
@@ -111,60 +29,66 @@ impl Settings {
         self.backoff_max_ms.get()
     }
 
+    pub(crate) const fn busy_timeout_ms(&self) -> u64 {
+        self.busy_timeout_ms.get()
+    }
+
     pub async fn check(&self) -> Result<(), String> {
-        Runner::new(&self.dws).check().await
+        join_all(self.sources.iter().flat_map(Source::checks))
+            .await
+            .into_iter()
+            .collect()
     }
 
-    pub(crate) const fn child_exit_timeout_ms(&self) -> u64 {
-        self.child_exit_timeout_ms.get()
-    }
-
-    pub(crate) const fn cipher_min_length(&self) -> u32 {
-        self.cipher_min_length.get()
-    }
-
-    pub(crate) const fn dws(&self) -> &Dws {
-        &self.dws
-    }
-
-    pub(crate) const fn failure_exit_code(&self) -> u8 {
+    #[must_use = "退出码需交给进程"]
+    pub const fn failure_exit_code(&self) -> u8 {
         self.failure_exit_code.get()
-    }
-
-    pub(crate) const fn heal_limit(&self) -> u32 {
-        self.heal_limit.get()
-    }
-
-    pub(crate) const fn initial_backfill_ms(&self) -> u64 {
-        self.initial_backfill_ms
-    }
-
-    pub(crate) fn lookup_batch(&self) -> usize {
-        usize::try_from(self.lookup_batch.get()).unwrap_or(usize::MAX)
     }
 
     pub(crate) const fn manual_exit_code(&self) -> u8 {
         self.manual_exit_code.get()
     }
 
-    pub(crate) const fn reconcile_overlap_ms(&self) -> u64 {
-        self.reconcile_overlap_ms
+    #[must_use = "缺失的环境变量需报告"]
+    pub fn missing(&self) -> Vec<&str> {
+        self.sources.iter().flat_map(Source::missing).collect()
+    }
+
+    pub fn prepare(&self) -> Fallible<()> {
+        connect(&self.store_path, self.busy_timeout_ms()).map(drop)
+    }
+
+    pub(crate) fn profile(&self, label: &str) -> Profile {
+        self.sources
+            .iter()
+            .find(|source| source.label() == label)
+            .map_or_default(Source::profile)
     }
 
     #[must_use = "货架需交给 Context"]
     pub fn shelf(&self) -> Shelf<'_> {
-        Shelf::new(&self.store_path, &self.source, &self.account)
+        Shelf::new(&self.store_path, self.busy_timeout_ms())
     }
 
-    pub(crate) fn source(&self) -> &str {
-        &self.source
-    }
-
-    pub(crate) const fn source_utc_offset_minutes(&self) -> i16 {
-        self.source_utc_offset_minutes
+    #[must_use = "数据源需逐个运行"]
+    pub fn sources(&self) -> &[Source] {
+        &self.sources
     }
 
     pub(crate) fn store_path(&self) -> &Path {
         &self.store_path
+    }
+
+    pub fn verify(&self) -> Result<(), String> {
+        let labels: BTreeSet<String> = self.sources.iter().map(Source::label).collect();
+        if self.sources.is_empty() {
+            Err("ingest.sources: empty".to_owned())
+        } else if self.sources.iter().any(Source::is_empty) {
+            Err("ingest.sources: source without kind".to_owned())
+        } else if labels.len() < self.sources.len() {
+            Err("ingest.sources: duplicate source".to_owned())
+        } else {
+            Ok(())
+        }
     }
 }

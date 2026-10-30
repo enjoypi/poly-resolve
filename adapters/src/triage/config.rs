@@ -1,8 +1,10 @@
 use alloc::collections::BTreeMap;
+use core::iter::once;
 use core::num::{NonZeroU32, NonZeroU64};
 use std::env;
 
 use domain::review::Reason;
+use futures_util::future::join_all;
 use serde::{Deserialize, Serialize};
 
 use crate::pipe::probe;
@@ -189,13 +191,11 @@ pub struct Settings {
     model: String,
     notice: String,
     notify: Exec,
-    notify_conversation_id: Var,
     notify_target: Var,
     questions: Questions,
     redact: Redact,
     review: Review,
     screen: Option<Screen>,
-    self_sender_id: Var,
     session: Session,
     sizes: Sizes,
 }
@@ -207,13 +207,11 @@ impl Settings {
 
     pub async fn check(&self) -> Result<(), String> {
         let screening = self.screen.iter().map(|screen| &screen.exec);
-        for exec in [&self.decide, &self.codex, &self.notify]
+        let checks = [&self.decide, &self.codex, &self.notify]
             .into_iter()
             .chain(screening)
-        {
-            probe(exec).await?;
-        }
-        Ok(())
+            .map(probe);
+        join_all(checks).await.into_iter().collect()
     }
 
     pub(crate) const fn codex(&self) -> &Exec {
@@ -276,26 +274,21 @@ impl Settings {
 
     #[must_use = "缺失的环境变量需报告"]
     pub fn missing(&self) -> Vec<&str> {
-        [
-            &self.notify_conversation_id,
-            &self.notify_target,
-            &self.self_sender_id,
-        ]
-        .into_iter()
-        .chain(self.codex.vars.values())
-        .chain(self.decide.vars.values())
-        .chain(self.notify.vars.values())
-        .chain(self.codex.sandbox.vars())
-        .chain(self.decide.sandbox.vars())
-        .chain(self.notify.sandbox.vars())
-        .chain(
-            self.screen
-                .iter()
-                .flat_map(|screen| screen.exec.vars.values().chain(screen.exec.sandbox.vars())),
-        )
-        .filter(|var| var.value().is_none())
-        .map(|var| var.name.as_str())
-        .collect()
+        once(&self.notify_target)
+            .chain(self.codex.vars.values())
+            .chain(self.decide.vars.values())
+            .chain(self.notify.vars.values())
+            .chain(self.codex.sandbox.vars())
+            .chain(self.decide.sandbox.vars())
+            .chain(self.notify.sandbox.vars())
+            .chain(
+                self.screen
+                    .iter()
+                    .flat_map(|screen| screen.exec.vars.values().chain(screen.exec.sandbox.vars())),
+            )
+            .filter(|var| var.value().is_none())
+            .map(|var| var.name.as_str())
+            .collect()
     }
 
     pub(crate) fn model(&self) -> &str {
@@ -308,10 +301,6 @@ impl Settings {
 
     pub(crate) const fn notify(&self) -> &Exec {
         &self.notify
-    }
-
-    pub(crate) const fn notify_conversation_id(&self) -> &Var {
-        &self.notify_conversation_id
     }
 
     pub(crate) const fn notify_target(&self) -> &Var {
@@ -361,10 +350,6 @@ impl Settings {
 
     pub(crate) const fn screen(&self) -> Option<&Screen> {
         self.screen.as_ref()
-    }
-
-    pub(crate) const fn self_sender_id(&self) -> &Var {
-        &self.self_sender_id
     }
 
     pub(crate) const fn session_gap_ms(&self) -> u64 {
@@ -429,6 +414,10 @@ pub struct Var {
 }
 
 impl Var {
+    pub(crate) fn name(&self) -> &str {
+        &self.name
+    }
+
     pub(crate) fn value(&self) -> Option<String> {
         env::var(&self.name).ok().filter(|found| !found.is_empty())
     }

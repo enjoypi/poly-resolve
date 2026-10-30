@@ -6,6 +6,7 @@ use std::process::{Child, ChildStderr, Command, ExitCode, Output};
 
 use cli::run as run_cli;
 
+pub(crate) const BUSY: u64 = 5_000;
 pub(crate) const EVENT: &str = r#"{"message_id":"m1","conversation_id":"c1","sender":"alice","sender_open_dingtalk_id":"u1","content":"hello","create_time":"2026-07-08 12:00:35"}"#;
 const FAKE: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -60,7 +61,6 @@ triage:
   model: m
   notice: n
   notify: {args: [x], bin: /nonexistent/triage, env: {FAKE_DIR: /nonexistent}, sandbox: *fence, timeout_ms: 1000, vars: {PATH: \"${PATH}\"}}
-  notify_conversation_id: \"${HOME}\"
   notify_target: \"${HOME}\"
   questions: {threshold: 0.8, topic: {instructions: t, min_confidence: 0.6, name: topic, new_label: n}, urgent: {instructions: i, name: urgent}}
   redact:
@@ -69,7 +69,6 @@ triage:
         placeholder: \"[num]\"
     unknown_sender: unknown
   review: {learn_min_chars: 4, mode: manual, reasons: [{code: leak, label: Leaked, placeholder: \"[x]\"}, {code: noise, label: Noise}]}
-  self_sender_id: \"${HOME}\"
   session: {followup: f, fresh: [\"-\"], prompt: p, resume: [resume, \"{thread}\", \"-\"]}
   sizes:
     context_max_chars: 1000
@@ -79,42 +78,47 @@ triage:
     session_max_ms: 1000
     topics_max_open: 5
 ingest:
-  account: acct
   backoff_initial_ms: 5
   backoff_max_ms: 20
-  child_exit_timeout_ms: 300
-  cipher_min_length: 32
-  dws:
-    decrypt:
-      args: [decrypt]
-      bin: /nonexistent/dws
-      sandbox: *fence
-    env:
-      FAKE_DIR: /nonexistent
-    listen:
-      args: [listen]
-      bin: /nonexistent/dws
-      sandbox: *fence
-    lookup:
-      args: [lookup]
-      bin: /nonexistent/dws
-      sandbox: *fence
-    manual_exit_codes: [2, 4]
-    pull:
-      args: [pull]
-      bin: /nonexistent/dws
-      sandbox: *fence
-    timeout_ms: 30000
-    vars:
-      PATH: \"${PATH}\"
+  busy_timeout_ms: 5000
   failure_exit_code: 16
-  heal_limit: 50
-  initial_backfill_ms: 3600000
-  lookup_batch: 50
   manual_exit_code: 17
-  reconcile_overlap_ms: 1000
-  source: dingtalk
-  source_utc_offset_minutes: 480
+  sources:
+    - dingtalk:
+        account: acct
+        child_exit_timeout_ms: 300
+        cipher_min_length: 32
+        dws:
+          decrypt:
+            args: [decrypt]
+            bin: /nonexistent/dws
+            sandbox: *fence
+          env:
+            FAKE_DIR: /nonexistent
+          listen:
+            args: [listen]
+            bin: /nonexistent/dws
+            sandbox: *fence
+          lookup:
+            args: [lookup]
+            bin: /nonexistent/dws
+            sandbox: *fence
+          manual_exit_codes: [2, 4]
+          parallel: 1
+          pull:
+            args: [pull]
+            bin: /nonexistent/dws
+            sandbox: *fence
+          timeout_ms: 30000
+          vars:
+            PATH: \"${PATH}\"
+        heal_limit: 50
+        initial_backfill_ms: 3600000
+        lookup_batch: 50
+        notify_conversation_id: \"${HOME}\"
+        reconcile_overlap_ms: 1000
+        self_sender_id: \"${HOME}\"
+        utc_offset_minutes: 480
   store_path: /nonexistent/dir/store.db
 ";
 

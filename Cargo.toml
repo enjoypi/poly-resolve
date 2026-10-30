@@ -13,6 +13,7 @@ axum = { version = "*", default-features = false, features = ["http1", "tokio"] 
 chrono = { version = "*", default-features = false, features = ["std"] }
 clap = { version = "*", default-features = false, features = ["std", "derive", "help", "usage", "error-context"] }
 domain = { path = "domain" }
+futures-util = { version = "*", default-features = false, features = ["std"] }
 regex = { version = "*", default-features = false, features = ["std", "perf", "unicode-perl", "unicode-case"] }
 rusqlite = { version = "*", features = ["bundled"] }
 schemars = { version = "*", default-features = false, features = ["derive", "std"] }
@@ -20,7 +21,7 @@ serde = { version = "*", features = ["derive"] }
 serde-saphyr = { version = "*", default-features = false, features = ["deserialize"] }
 serde_json = "*"
 serde_urlencoded = "*"
-tokio = { version = "*", default-features = false, features = ["rt", "net", "macros", "signal", "time", "process", "io-util", "fs"] }
+tokio = { version = "*", default-features = false, features = ["rt", "rt-multi-thread", "net", "macros", "signal", "sync", "time", "process", "io-util", "fs"] }
 tracing = { version = "*", default-features = false, features = ["std"] }
 tracing-subscriber = { version = "*", default-features = false, features = ["fmt", "json", "std"] }
 

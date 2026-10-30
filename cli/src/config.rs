@@ -114,6 +114,9 @@ pub(crate) fn load(path: &Path) -> Result<Settings, String> {
             file.addr
         ));
     }
+    file.ingest
+        .verify()
+        .map_err(|err| format!("{}: {err}", path.display()))?;
     Ok(Settings {
         addr: file.addr,
         errors: file.errors,

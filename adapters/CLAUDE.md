@@ -7,25 +7,28 @@
 
 ## 模块
 
-- `config.rs`：`Settings`（cli 配置的 `ingest` 段，`deny_unknown_fields`）、`Dws`、`Process`
+- `config.rs`：`Settings`（cli 配置的 `ingest` 段，`deny_unknown_fields`）：共享项与 `sources`；`verify`（非空、无无类型项、标签不重复，cli 加载时调用）、`check`（各源自检并发）、`missing`、`profile(标签)`、`prepare`（建库建表开 WAL，cli 起任务前同步调一次，免得多连接同时首次切 WAL 互锁成 `database is locked`）
+- `ingest.rs`：`Source`（每个可选字段一种类型，目前只有 `dingtalk`；不用枚举，因引用上 match 枚举撞 `pattern_type_mismatch`，取值一律 `Option` 组合子）、`Site`（`Settings` 与 `&Context` 打包）、`Profile`（本人、通知会话、密文长度，均可空，供 triage 按消息来源判定）、`label(来源, 账号)`、`run(site, source, stop)` 按类型分派
 - `store.rs`：
-  - `Shelf`：`inbox::Reader` 与 `review::Docket` 的 SQLite 实现，`Settings::shelf()` 构造；每次调用才打开，`page`、`list`、`source` 只读（`SQLITE_OPEN_READ_ONLY`），`settle` 读写，都不建库不建表
-  - `page`：单条 SQL 用 `json_group_array(json_object(…))` 取回再反序列化成 `Row`，按配置的 source 与 account 过滤，行值比较 `(occurred_at_ms, key) < (游标)` 翻页，叠加 `Query` 的时间范围 `[since, until)`（走 `messages_by_time` 索引）；失败记 warn 并返回 `AppError::Storage`
-  - `settle`：一个事务里先写 `learned_rules`（`INSERT OR IGNORE`，仅当该行仍是 `pending`），再 `UPDATE … WHERE state = 'pending'`，最后读回当前状态
+  - `connect(path, busy_ms)`：`busy_timeout`、`journal_mode = WAL`、`synchronous = NORMAL` 与 `SCHEMA`，`Archive::open`、`Ledger::open`、`Settings::prepare` 共用
+  - `Shelf`：`inbox::Reader` 与 `review::Docket` 的 SQLite 实现，`Settings::shelf()` 构造；每次调用才打开（删库造 503 的用例依赖它，不改成长连接）并设 `busy_timeout`，`page`、`list`、`source` 只读（`SQLITE_OPEN_READ_ONLY`），`settle` 读写，都不建库不建表
+  - `page`：单条 SQL 用 `json_group_array(json_object(…))` 取回再反序列化成 `Row`，不按来源过滤，行值比较 `(occurred_at_ms, key) < (游标)` 翻页，叠加 `Query` 的时间范围 `[since, until)`（走 `messages_by_when` 索引）；失败记 warn 并返回 `AppError::Storage`
+  - `settle`：`Transaction::new_unchecked(Immediate)` 一个事务里先写 `learned_rules`（`INSERT OR IGNORE`，仅当该行仍是 `pending`），再 `UPDATE … WHERE state = 'pending'`，最后读回当前状态
   - `Archive`：`INSERT OR IGNORE … json_each` 直接吃 domain 返回的 JSON（`save_event` 包成数组，`save_page` 取 `$.envelopes`）；水位取 `MAX(occurred_at_ms)`，不另建表；错误装箱
-- `bridge.rs`：持有 `&Context`，构造请求调 domain 的 `ingest` feature；`Page` 是 `parse_page` 结果的可改写副本（`envelopes_mut`、`render`），保存的是改写后的页面
-- `dws.rs`：`Dws`（`listen` 起监听子进程，stdin、stdout 管道，stderr 继承；`pull` 一次性执行并收 stdout；`decrypt` 一次性执行，追加 `--text=<密文>`；`lookup` 一次性执行，追加 `--msg-ids=<ID,…>`；三个一次性命令共用 `output`，超过 `dws.timeout_ms` 返回 `TimedOut` 并经 `kill_on_drop` 杀掉子进程，调用方按失败处理）、`Listener`（`next_line`、`stop`）；`plaintext(&Output)` 从解密命令的 JSON 取 `plaintext`，缺失或非 JSON 为 `None`
-- `ingest.rs`：`run(settings, context, stop)` 返回退出码，单任务，不 spawn；`context` 由 cli 构造
+- `dingtalk.rs`：钉钉采集 `Run`，`run(site, config, stop)` 返回退出码；`dingtalk/config.rs` 为每源配置（含 `Dws`、`Process`、本人与通知会话的 `Var`）
+- `dingtalk/bridge.rs`：持有 `&Context`，构造请求调 domain 的 `ingest` feature；`Page` 是 `parse_page` 结果的可改写副本（`envelopes_mut`、`render`），保存的是改写后的页面
+- `dingtalk/dws.rs`：`Dws`（`listen` 起监听子进程，stdin、stdout 管道，stderr 继承；`pull` 一次性执行并收 stdout；`decrypt` 一次性执行，追加 `--text=<密文>`；`lookup` 一次性执行，追加 `--msg-ids=<ID,…>`；三个一次性命令共用 `output`，超过 `dws.timeout_ms` 返回 `TimedOut` 并经 `kill_on_drop` 杀掉子进程，调用方按失败处理）、`Listener`（`next_line`、`stop`）；`plaintext(&Output)` 从解密命令的 JSON 取 `plaintext`，缺失或非 JSON 为 `None`
+- 自身不 spawn：每个数据源与 triage 的两条循环由 cli 各起一个任务，对外的 future 须 `Send`；任务内的并发只用 `futures_util`（`buffered`、`join_all`），不起任务
 - `race.rs`：`race(stop, work)` 用 `poll_fn` 先 poll 停机信号再 poll 工作，代替被 clippy 禁的 `select!`；返回 `None` 即被停机打断
 - `seatbelt.rs`：`Sandbox`（`bin`、`canary`、`paths`、`probe`、`profile`、`vars`，`deny_unknown_fields`）
   - `command(program)` 拼 `bin -f <真实路径 profile> -D 名=值 … -- program`；`paths` 与 `profile` 用 `canonicalize(..).unwrap_or_default()`，路径不存在即得空值，`sandbox-exec` 以 65 拒绝，不新增分支；`vars` 取环境变量，缺失为空
-  - `check(probe, name)` 先跑 `canary`（须非 0）再跑 `probe`（须 0），错误是字符串
-  - `ingest.dws` 的 4 个 `Process`、triage 的 `decide`、`codex`、`notify` 及可选的 `screen.exec` 各带一份 `sandbox`，命令一律经 `command` 起，不得绕过；`Dws::check`、`triage::config::Settings::check` 供 cli 启动自检
-- `triage.rs`：`Setup`、`run`、`validate`
+  - `check(probe, name)` 同时跑 `canary`（须非 0）与 `probe`（须 0），错误是字符串；`Dws::check`、triage 的 `check` 用 `join_all` 并发，报错按声明顺序取第一个
+  - 钉钉源 `dws` 的 4 个 `Process`、triage 的 `decide`、`codex`、`notify` 及可选的 `screen.exec` 各带一份 `sandbox`，命令一律经 `command` 起，不得绕过；`Dws::check`、`triage::config::Settings::check` 供 cli 启动自检
+- `triage.rs`：`Setup`、`Lane`、`run`、`validate`
 - `triage/config.rs`：`Settings`、`Exec`、`Var`
 - `triage/desk.rs`：调 domain `triage` feature；`Desk::rules` 为库里学到的规则在前、配置的在后
 - `triage/intake.rs`：入库、成批、重新脱敏；`triage/screen.rs`：本地模型筛查；`triage/batch.rs`：封批、发送、落结果；`triage/alert.rs`：分析、通知；三者是以 `&Shift` 为参数的自由函数（`multiple_inherent_impl` 禁止给 `Shift` 再写 impl）
-- `ledger.rs`：`lines`、`batches`、`topics`、`placements`、`alerts`、`learned_rules` 的读写；参数打成一个 JSON 对象经 `json_extract(?1, …)` 取值（绕开参数个数限制），读返回 `json_group_array`，失败只记 warn 并返回空或 0；`Ledger::apply` 是唯一的多语句事务（`BEGIN IMMEDIATE` … `COMMIT`，任一步失败则 `ROLLBACK`）
+- `ledger.rs`：`lines`、`batches`、`answers`、`topics`、`placements`、`alerts`、`learned_rules` 的读写；参数打成一个 JSON 对象经 `json_extract(?1, …)` 取值（绕开参数个数限制），读返回 `json_group_array`，失败只记 warn 并返回空或 0；`Ledger::apply` 是唯一的多语句事务（`BEGIN IMMEDIATE` … `COMMIT`，任一步失败则 `ROLLBACK`）
 - `pipe.rs`：`feed(Job)` 起子进程（args 里的 `${名}` 由 `Exec::args` 换成同名 vars 的值，stderr 置 null，stdin 写入后关闭，超时 `TimedOut`，`kill_on_drop`）；`probe(exec)` 供 `Settings::check`
 
 ## 采集流程
@@ -39,11 +42,14 @@
 - 解密或查询期间收到停机信号：该事件或整页不入库，补拉会补回
 - 退出：停机信号 → 0；`dws` 退出码落在 `manual_exit_codes` → `manual_exit_code`；存储错误 → `failure_exit_code`
 - 退避：从 `backoff_initial_ms` 起逐次翻倍到 `backoff_max_ms`；曾收到消息的一轮结束后复位
+- 写库遇 `DatabaseBusy`、`DatabaseLocked`（`Halt::Busy`）记 warn `store busy`，本轮按失败退避，补拉补回；其余存储错误致命
+- 解密并发：补拉页的 `unseal` 与 `heal` 经 `decrypted` 用 `buffered(dws.parallel)` 解密，保持顺序，整组外包一次 `race`，被打断整页或整组不入库；实时事件仍逐条（水位与补拉重叠的前提）；钉钉工具并发解密未验证，配置保持 1
 
 ## 分级与转交
 
-- `triage::run(setup, stop)` 单任务不 spawn，返回 `()`，永不使 serve 退出；`mode: disabled` 立即返回；账本打开失败记 error 后返回
-- 每轮 `tick`：`intake` → `rerender` → `form` → `screen` → `seal` → `send` → 逐条 `analyze` → 逐条 `deliver` → 睡 `poll_ms`；`exec` 经 `race` 打断，被打断返回 `None` 逐层 `?` 退出
+- `triage::run(setup, lane, stop)` 返回 `()`，永不使 serve 退出；`mode: disabled` 立即返回；每条 lane 各开一个账本连接，打开失败记 error 后返回
+- `Lane::Batches` 每轮：`intake` → `rerender` → `form` → `screen` → `seal` → `send` → 睡 `poll_ms`；`Lane::Alerts` 每轮：逐条 `analyze` → 逐条 `deliver` → 睡 `poll_ms`；两条 lane 并行，分析不阻塞成批；每个状态只有一个 lane 消费，不需认领中间态；`exec` 经 `race` 打断，被打断返回 `None` 逐层 `?` 退出
+- 先记账再调用：外部调用前 `claim_*` 把 `attempts + 1`、`updated_at_ms` 置当前（`WHERE state = 起点 AND attempts < max_attempts`），影响 0 行不调用；被停机打断则 `release_*` 退回；失败只写 `reason` 并在 `attempts ≥ max_attempts` 时转 `failed`；`next_*` 跳过已用尽次数的
 - `intake`：`Ledger::unlined` 取 `lookback_ms` 内还没有 `lines` 行的消息，从新到旧，每轮至多 `intake` 条；逐条调 domain `triage.line`（规则无效则记 warn、该条留待下一轮），写 `lines`（`INSERT OR IGNORE`，`queued` 或带原因 `skipped`，`rules_rev` 记当时最大的规则 id）
 - `rerender`：把 `rules_rev` 落后的 `queued/pending/leaked/screening` 行经 domain `redact` 重新脱敏，`leaked` 行回到 `pending`
 - `form`：没有未结批（有行 `batch_id > 0` 且其批还不是 `sent/failed`）时，把最新的至多 `batch` 条 `queued` 行编入新批（批号＝最大批号 + 1）；未配 `triage.screen` 时状态按 `review.mode` 为 `pending`（审核人空）或 `approved`（审核人 `auto`），配了则为 `screening`
@@ -51,28 +57,37 @@
 - `seal`（`Ledger::sealable`）：批内无 `screening/pending/leaked` 行时，取已通过的行，加上开放话题（`last_at_ms` 在 `session_max_ms` 内，至多 `topics_max_open` 个）和各会话仍开放的话题（`attach`），调 domain `triage.pack` 得冻结的请求体与 `layout`，写 `batches`（`ready`）；没有已通过的行则直接写 `sent`、`payload` 为空关批
 - `send`：按每小时已发批数（`max_decisions_per_hour`，只计 `payload` 非空的 `sent` 批）取最早的 `ready` 批
   - curl 的 URL 与 key 经 `vars` 注入 `TRIAGE_URL`、`TRIAGE_KEY`，用 `--variable %NAME` 与 `--expand-url`、`--expand-header` 取用，请求体走 stdin，argv 不含密钥；响应交 domain `triage.sort`
-  - 失败（非 0 退出、超时、启动失败、响应无法解析）`attempts + 1`，`reason` 为 `exit:<码>`、`io:<种类>` 或 `bad_answer`，达 `max_attempts` 转 `failed`
-  - 成功则 `Ledger::apply` 一个事务：写 `placements`；写 `topics`（`ON CONFLICT` 取概率最大值与最近时间）；对 `urgent` 话题开 `alerts`（键 `<话题>@<批号>`，同话题 `handoff_cooldown_ms` 内已有、或一小时内已达 `max_handoffs_per_hour` 则忽略）；批置 `sent`；崩溃发生在事务前则整批重发
+  - 失败（非 0 退出、超时、启动失败、响应无法解析）`reason` 为 `exit:<码>`、`io:<种类>` 或 `bad_answer`，达 `max_attempts` 转 `failed`
+  - 成功先把应答写进 `answers`，再 `Ledger::apply` 一个事务；`next_batch` 带出已存的应答，有则直接重放、不再外发，故 `apply` 失败不会重复调用决策接口
+  - `apply` 事务：写 `placements`；写 `topics`（`ON CONFLICT` 取概率最大值与最近时间）；对 `urgent` 话题开 `alerts`（键 `<话题>@<批号>`，同话题 `handoff_cooldown_ms` 内已有、或一小时内已达 `max_handoffs_per_hour` 则忽略）；批置 `sent` 且 `attempts` 归零；崩溃发生在存应答前则整批重发
 - `analyze`：取一条 `pending` 的 `alerts`，话题的已通过行（`Ledger::topic_lines`）交 domain `triage.brief`
   - 话题有 `thread_id` 且 `thread_at_ms` 在 `session_max_ms` 内则续写：`followup` 模板、只含 `until_ms` 之后的行、命令追加 `session.resume`；否则新建：`prompt` 模板、追加 `session.fresh`
   - codex 的 stdin 传提示词，stdout 是 `--json` 事件流，经 domain `triage.reply` 取会话 ID 与最终回复；退出非 0、输出无法解析、回复为空都算失败，空输出的 `reason` 为 `exit:0`
   - 成功转 `analyzed` 并把 `topics` 的 `thread_id`、`until_ms` 写回；失败 `attempts + 1` 并清空该话题的 `thread_id`
-- `deliver`：用 `triage.notice` 渲染，dws 发送（参数末尾追加 `notify_target` 与 `--idempotency-key=<话题>@<批号>`）→ `sent`；失败 `attempts + 1` 并更新 `updated_at_ms`，达 `max_attempts` 转 `failed`；阶段推进把 `attempts` 与 `updated_at_ms` 归零，故发送失败只重试发送
+- `deliver`：用 `triage.notice` 渲染，dws 发送（参数末尾追加 `notify_target` 与 `--idempotency-key=<话题>@<批号>`）→ `sent`；失败达 `max_attempts` 转 `failed`；阶段推进（`ADVANCE_ALERT … WHERE state = from`）把 `attempts` 与 `updated_at_ms` 归零，故发送失败只重试发送
 - 审核：`lines.state` 即审核状态，裁决由 cli 的 `PATCH /api/reviews/{key}` 经 domain `review.update` 调 `Shelf`；`rejected` 是终态，`leaked` 经 `rerender` 回到 `pending`；审核没有期限
 - `validate(setup)`：先检查 `batch ≤ 200`、`topics_max_open + batch ≤ 254`（决策接口 `questions ≤ 400`、`choices ≤ 255`），再用空文本调 domain `redact`，规则无效即 `Err`；cli 启动自检用它
 - 外发内容（决策请求体、codex 提示词）只能来自 domain 渲染后的结果，adapters 不做文本替换
-- 防自循环：domain 的 `line` 跳过本人发出的与通知会话的消息；通知以本人身份发出，补拉可能再收到，靠这两条切断
+- 防自循环：domain 的 `line` 跳过本人发出的与通知会话的消息；本人与通知会话按消息的 `source:account` 取对应数据源的 `Profile`，取不到（无此概念的源）则不判定；通知以本人身份发出，补拉可能再收到，靠这两条切断
 - 停机：在途子进程被打断并 kill，状态不改，下次启动续做（至少一次，发送靠幂等键去重）
-- 排查（只读：`sqlite3 -readonly <store_path>`）：
+- 排查（只读：`sqlite3 -readonly <store_path>`，WAL 下库所在目录须可写以建 `-shm`）：
   - `lines` 按 `state, reason` 计数，本人、通知会话、空正文、密文均为 `skipped`
-  - `batches` 由 `ready` 变 `sent`；`failed` 的批不自动重试
+  - `batches` 由 `ready` 变 `sent`；`failed` 的批不自动重试；`answers` 存决策应答
   - 已通过的行都有 `placements`
   - `alerts` 由 `pending` → `analyzed` → `sent`
   - 日志关键词：`batch formed`、`batch sealed`、`batch decided`、`alert analyzed`、`alert sent`，WARN `decision failed`、`alert analysis failed`、`alert step failed`
 
+## 新增数据源
+
+- `ingest::Source` 加一个可选字段与 `checks`、`label`、`missing`、`profile`、`run` 各一处取值；`<kind>.rs` 与 `<kind>/` 放采集与配置；domain 新增该格式的解析 feature，产出与钉钉相同的 envelope JSON，`Archive` 不改
+- 会话 ID 须自成命名空间，免得与其他源撞成同一段；没有本人、通知会话、密文概念的源 `Profile` 留空
+- 补测试与假程序，同步 README 配置表与 docs/requirements.md
+
 ## 约定
 
-- 账本与采集共库：除 `apply` 与 `settle` 的短事务外每次写单条语句、不跨 await 持事务，避免撞 rusqlite 默认 5 秒 busy_timeout 让采集误判存储失败；不开 WAL；`Archive::open` 与 `Ledger::open` 都执行 `SCHEMA`（`IF NOT EXISTS`），`Shelf` 不建表
+- 账本与采集共库，多任务跨线程并发写：开 WAL，读写互不阻塞、写者之间串行；除 `apply` 与 `settle` 的 `BEGIN IMMEDIATE` 短事务外每次写单条语句，不跨 await 持事务；多语句写不得用 DEFERRED（WAL 下读升写直接 `BUSY_SNAPSHOT`，不等 `busy_timeout`）；`Archive::open` 与 `Ledger::open` 都经 `connect` 执行 `SCHEMA`（`IF NOT EXISTS`），`Shelf` 不建表
+- 单写者（一个线程独占写连接、各任务经 channel 提交）暂不做；日志频繁出现 `store busy`，或某源要求 `synchronous = FULL` 且写入达每秒数百条时再评估
+- 需确认语义的数据源（消息队列 ack、邮件已读标记）只在 `save_*` 返回 Ok 后确认，`Halt::Busy` 不确认；写库与确认之间不可被停机打断
 - 不清账本表：清 `lines` 会重新外发；清 `alerts` 会让幂等键 `<话题>@<批号>` 复用，通知被 dws 当作重复吞掉；`learned_rules` 始终保留
 - 日志只记行数、数量、标识、状态、次数、长度、退出码，不含消息正文、提示词、分析、响应与规则
 - 子进程环境一律 `env_clear` 后只放配置的 env 与 vars；命令用 `PATH` 找程序时 `vars` 须含 `PATH`；dws 的 env 应含 `DO_NOT_TRACK=1` 关闭遥测
@@ -108,11 +123,11 @@
 - 含外部命令的用例（解密、查询）停机等待 `SHORT` 取 4 秒：负载高时 0.7、2.5 秒都不够
 - 监听输入每行须以换行结尾（`feed`），否则 `next_line` 要到 EOF 才返回最后一行
 - tracing 宏的字段表达式只在有 subscriber 时求值：经 `run_logged` 装 subscriber（`tests/it/capture.rs` 的 `Capture::dispatch`，先确保常驻 `ANCHOR`，原因见 domain/CLAUDE.md），否则字段里的表达式覆盖不到
-- 假 dws `tests/it/fixtures/fake-dws.sh`，行为由配置 `dws.env` 控制：
+- 假 dws `tests/it/fixtures/fake-dws.sh`，行为由钉钉源配置的 `dws.env` 控制：
   - `FAKE_LISTEN`（exit、hang，默认等 stdin 结束）、`FAKE_CODE`，输入取 `FAKE_DIR` 下的 `listen.txt`
   - `FAKE_PULL`（fail、slow，默认输出 `pull.json`），参数写入 `pull-args.txt`
   - `FAKE_LOOKUP`（fail、junk、slow，默认输出 `lookup.json`），参数逐行追加到 `lookup-args.txt`
-  - `FAKE_DECRYPT`（fail、junk、slow，默认输出 `{"ok":true,"plaintext":"CLEARTEXT"}`），参数写入 `decrypt-args.txt`
+  - `FAKE_DECRYPT`（fail、junk、slow，默认输出 `{"ok":true,"plaintext":"CLEARTEXT"}`），参数写入 `decrypt-args.txt` 并逐行追加到 `decrypt-calls.txt`（并发解密用例按行数断言）
   - `slow` 睡 30 秒：support 的 `dws.timeout_ms` 取 60000，让“停机打断”用例仍由停机信号结束；超时用例在 `tests/it/ingest/timeout.rs` 把 `timeout_ms` 改成 200
 - 假 triage `tests/it/fixtures/fake-triage.sh`，第一个参数为角色，行为由 `env` 控制；参数、stdin、调用次数写入 `<角色>-args.txt`、`-stdin.txt`、`-calls.txt`：
   - decide：`FAKE_DECIDE`（fail、junk、slow）；默认按 stdin 里的题名作答，`urgent_<n>` 取 `FAKE_PS`（空格分隔的第 n 项）或 `FAKE_P`（默认 0.95），`topic_<n>` 取 `FAKE_TOPICS` 第 n 项（默认 `new`）与 `FAKE_CONFIDENCE`（默认 0.9）；`decide-env.txt` 记录注入的 `TRIAGE_URL|TRIAGE_KEY`
@@ -124,14 +139,17 @@
   - 对已建表加触发器 `REFUSE_INSERT`、`REFUSE_UPDATE`（写失败而查询正常）
   - 水位列为 TEXT（`TEXT_STAMP`）
   - 列齐全但 `occurred_at_ms` 为 TEXT（`BAD_STAMP`，读取行解码失败；须同时建 `placements`、`alerts`，`Shelf` 连表）
-  - 账本写失败靠对 `lines`、`alerts` 加 `RAISE(ABORT)` 触发器，读失败靠把 `batches` 重建成缺列表
+  - 账本写失败靠对 `lines`、`alerts` 加 `RAISE(ABORT)` 触发器，读失败靠把 `batches` 重建成缺列表；认领失败靠 `BEFORE UPDATE OF attempts` 触发器
+  - 忙锁：另一连接持 `BEGIN IMMEDIATE`，`busy_timeout_ms` 取 50（`tests/it/ingest/busy.rs`）
 - 沙箱测试：
   - `fixtures/fake.sb` 只放行 `/bin`、`/usr/bin`、fixtures 与 `DIR`，显式禁 `/usr/bin/true` 作金丝雀，无网络，只读 `/private/etc/ssl` 让 curl 能走到连接；`open.sb`（`allow default`）作对照
   - 假脚本 `escape` 读写 `$FAKE_OUTSIDE`、`net`（dws pull）用 `/usr/bin/curl` 连 `$FAKE_PORT`，用例分别断言被拒与对照放行
   - `sandbox.rs` 覆盖 `check` 各分支，探测参数 `noop` 让假脚本退出 0
   - 想让单个命令起不来：改它自己的 `sandbox.bin`（io 错误）或 `bin`（71）
 - 用例与 helper 分布：
-  - `tests/it/support.rs`：`Sandbox`（`fence` 给每个命令配 sandbox，`outside()` 是沙箱目录外含 `secret.txt` 的目录，`triage(patch)` 生成 triage 配置，默认 `review.mode: auto`）、`run_logged`、`triage_logged`、`triage_validate`
-  - `tests/it/triage.rs` 及 `tests/it/triage/` 下：`batch.rs`（成批、掩码、逐条优先级、回溯）、`review.rs`（manual 全流程、漏脱敏学规则后重审、拒绝关批）、`topic.rs`（并入已有话题、同会话续接、长停顿分段、低置信度、合并本批的段）、`thread.rs`（会话绑定、续写、超龄、续写失败、输出无法解析）、`screen.rs`（本地模型筛查）；`rig.rs` 放共用的播种（`seed` 等）与读取（`calls`、`decided`、`logged` 等）
+  - `tests/it/support.rs`：`Sandbox`（`fence` 给每个命令配 sandbox，`outside()` 是沙箱目录外含 `secret.txt` 的目录；`config(patch)` 把 `SHARED` 里的键放共享项、其余放唯一的钉钉源，`shared(sources)`、`source(patch)` 供自拼数据源列表；`triage(patch)` 生成 triage 配置，默认 `review.mode: auto`）、`run_logged`（跑第一个数据源）、`triage_logged`（同一 future 里 `join` 两条 lane）、`triage_validate`
+  - `tests/it/feeds.rs`：dws 监听行与补拉页的构造（`event`、`page`、`sealed_page` 等）
+  - `tests/it/sources.rs`：数据源列表的校验、缺失变量、无类型项
+  - `tests/it/triage.rs` 及 `tests/it/triage/` 下：`batch.rs`（成批、掩码、逐条优先级、回溯）、`review.rs`（manual 全流程、漏脱敏学规则后重审、拒绝关批）、`topic.rs`（并入已有话题、同会话续接、长停顿分段、低置信度、合并本批的段）、`thread.rs`（会话绑定、续写、超龄、续写失败、输出无法解析）、`screen.rs`（本地模型筛查）、`claim.rs`（先记账再调用、两条 lane 互不阻塞）；`rig.rs` 放共用的播种（`seed` 等）与读取（`calls`、`decided`、`logged` 等）
   - `tests/it/review.rs` 测 `Shelf` 的 `Docket`
   - 话题 ID 在测试里是 `t<批号>-<段序号>`；同一库跨多次 `start` 运行时用 `seed_from`、`seed_stamped` 给后来的消息更晚的时间

@@ -7,7 +7,7 @@ use rusqlite::Connection;
 use serde_json::{Value, from_str, json};
 
 use super::{get, send, start, stop};
-use crate::support::{await_log, config, live, sandbox};
+use crate::support::{BUSY, await_log, config, live, sandbox};
 
 const ROWS: &str = "INSERT INTO lines (key, conversation_id, occurred_at_ms, sender, text, state, reason, reviewer, flag, hints, rules_rev, batch_id, created_at_ms, updated_at_ms) VALUES ('a+/b', 'c1', 1, 'alice', 'text a secret-abc', 'pending', '', '', '', '[]', 0, 1, 1, 1), ('b', 'c1', 2, 'alice', 'text b', 'pending', '', '', '', '[]', 0, 1, 2, 2), ('c', 'c1', 3, 'alice', 'text c secret-abc', 'pending', '', '', '', '[]', 0, 1, 3, 3);";
 
@@ -78,7 +78,7 @@ fn reviews_are_listed_and_ruled_over_http() {
 fn seeded(name: &str) -> Fallible<String> {
     let dir = sandbox(name)?;
     let database = format!("{dir}/store.db");
-    drop(Archive::open(Path::new(&database))?);
+    drop(Archive::open(Path::new(&database), BUSY)?);
     Connection::open(&database)?.execute_batch(ROWS)?;
     Ok(config(&format!("{name}.yaml"), &live(&dir))?)
 }

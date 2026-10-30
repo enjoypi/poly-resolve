@@ -96,7 +96,10 @@ async fn unknown_field_fails() {
 
 #[tokio::test]
 async fn unknown_ingest_field_fails() {
-    let yaml = YAML.replace("  source: dingtalk\n", "  source: dingtalk\n  extra: 1\n");
+    let yaml = YAML.replace(
+        "        account: acct\n",
+        "        account: acct\n        extra: 1\n",
+    );
     let path = config("unknown-ingest-field.yaml", &yaml).unwrap();
     assert_eq!(load(&path).await, ExitCode::from(2));
 }
@@ -106,6 +109,29 @@ async fn unknown_sandbox_field_fails() {
     let yaml = YAML.replace("probe: [noop]", "probe: [noop], extra: 1");
     let path = config("unknown-sandbox-field.yaml", &yaml).unwrap();
     assert_eq!(load(&path).await, ExitCode::from(2));
+}
+
+#[tokio::test]
+async fn unknown_source_kind_fails() {
+    let yaml = YAML.replace("    - dingtalk:\n", "    - rss:\n");
+    let path = config("unknown-source-kind.yaml", &yaml).unwrap();
+    assert_eq!(load(&path).await, ExitCode::from(2));
+}
+
+#[tokio::test]
+async fn unlisted_sources_fail() {
+    let start = YAML.find("  sources:\n").unwrap_or_default();
+    let end = YAML.find("  store_path:").unwrap_or_default();
+    let block = YAML.get(start..end).unwrap_or_default();
+    let empty = YAML.replace(block, "  sources: []\n");
+    let path = config("empty-sources.yaml", &empty).unwrap();
+    assert_eq!(load(&path).await, ExitCode::from(2));
+    let twins = YAML.replace(
+        block,
+        &format!("{block}{}", block.replace("  sources:\n", "")),
+    );
+    let twin_path = config("twin-sources.yaml", &twins).unwrap();
+    assert_eq!(load(&twin_path).await, ExitCode::from(2));
 }
 
 #[tokio::test]

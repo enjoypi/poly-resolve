@@ -6,3 +6,5 @@
 - intake 只取 `lookback_ms` 内的消息，停用超过该时长后积压的消息永不分级，与需求“不遗漏”冲突：补上停用期间的积压
 - 限额触顶、冷却压掉的转交、卡住的批都不写日志，只能查库发现：补日志
 - `failed` 的批不自动重试，其中已通过的行没有优先级：补重试或人工重发入口
+- 用真实密文验证 dws 并发解密：同时跑多个 `dws chat crypto decrypt`（含跨过令牌过期点），查 `~/.local/bin/.dws-runtime.lock` 与报错；无冲突再调大 `ingest.sources[].dingtalk.dws.parallel`（垃圾输入只得到 `key request already in progress`，无法判断）
+- 脱敏正则每条消息现编译一遍：`triage.line` 改批量，每轮只编译一次

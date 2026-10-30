@@ -6,7 +6,7 @@ use domain::review::{Docket as _, Ruling};
 use rusqlite::{Connection, Error};
 use serde_json::{Value, from_str, json};
 
-use crate::support::{Fallible, NOON, Sandbox, triage_logged};
+use crate::support::{BUSY, Fallible, NOON, Sandbox, triage_logged};
 
 pub(super) const ALERTS: &str = "SELECT key || '|' || state || '|' || attempts || '|' || COALESCE(analysis, '') || '|' || reason AS item FROM alerts ORDER BY key";
 pub(super) const BATCHES: &str = "SELECT id || '|' || state || '|' || attempts || '|' || reason AS item FROM batches ORDER BY id";
@@ -75,7 +75,7 @@ pub(super) fn questions_of(body: &Value) -> Vec<String> {
 
 pub(super) fn rule(sandbox: &Sandbox, ruling: &Ruling<'_>) -> Fallible<Option<String>> {
     let path = sandbox.database();
-    let shelf = Shelf::new(&path, "dingtalk", "acct");
+    let shelf = Shelf::new(&path, BUSY);
     Ok(shelf
         .settle(ruling)
         .map_err(|err| format!("status {}", err.status()))?)
@@ -100,7 +100,7 @@ pub(super) fn seed_from(sandbox: &Sandbox, rows: &[Seed<'_>], shift: u64) -> Fal
 }
 
 pub(super) fn seed_stamped(sandbox: &Sandbox, rows: &[(Seed<'_>, u64)]) -> Fallible<()> {
-    let archive = Archive::open(&sandbox.database())?;
+    let archive = Archive::open(&sandbox.database(), BUSY)?;
     for &((key, sender, conversation, text), stamp) in rows {
         let envelope = json!({
             "account": "acct",
