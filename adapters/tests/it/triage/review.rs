@@ -84,7 +84,7 @@ async fn leaked_text_is_masked_again_and_reviewed_before_sending() {
         input.pointer("/0/lines/0/text").and_then(Value::as_str),
         Some("token [x] here")
     );
-    assert!(!sandbox.read("decide-stdin.txt").unwrap().contains(SECRET));
+    assert!(!sandbox.read("decide-body.txt").unwrap().contains(SECRET));
 }
 
 fn manual() -> Value {
@@ -120,7 +120,7 @@ async fn manual_lines_wait_for_approval_and_rejected_ones_stay_home() {
     );
     assert_eq!(
         table(&sandbox, PLACEMENTS).unwrap(),
-        [format!("{KEY}|t1-0|0.95")]
+        [format!("{KEY}|T1|0.95")]
     );
 }
 

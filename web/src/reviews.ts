@@ -124,12 +124,12 @@ class Queue {
   private async reject(key: string, reason: string, leak: HTMLTextAreaElement): Promise<void> {
     this.error.textContent = "";
     const pasted = leak.hidden ? undefined : leak.value;
+    leak.value = "";
     try {
       const { error } = await this.client.PATCH("/api/reviews/{key}", {
         body: { leak: pasted, reason, state: "rejected" },
         params: { path: { key } },
       });
-      leak.value = "";
       if (error) this.error.textContent = error.code;
       else this.drop(key);
     } catch {

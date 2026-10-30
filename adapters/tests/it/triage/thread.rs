@@ -37,11 +37,11 @@ async fn failed_resume_starts_a_new_thread() {
     let sandbox = two_rounds("thread-drop", &patch).await.unwrap();
     assert_eq!(
         table(&sandbox, ALERTS).unwrap(),
-        ["t1-0@1|sent|0|ANALYSIS|", "t1-0@2|sent|0|ANALYSIS|"]
+        ["T1@2|sent|0|ANALYSIS|", "t1-0@1|sent|0|ANALYSIS|"]
     );
     assert_eq!(calls(&sandbox, "codex").unwrap(), 3);
     assert_eq!(sandbox.read("codex-args.txt").unwrap(), "codex -\n");
-    assert_eq!(table(&sandbox, TOPICS).unwrap(), ["t1-0|server d|T1"]);
+    assert_eq!(table(&sandbox, TOPICS).unwrap(), ["T2|server d|T2"]);
 }
 
 #[tokio::test]
@@ -54,10 +54,10 @@ async fn first_analysis_binds_the_thread_and_follow_ups_resume() {
     let prompt = sandbox.read("codex-stdin.txt").unwrap();
     assert!(prompt.starts_with("next:") && prompt.contains("still down"));
     assert!(!prompt.contains("server down"));
-    assert_eq!(table(&sandbox, TOPICS).unwrap(), ["t1-0|server d|T1"]);
+    assert_eq!(table(&sandbox, TOPICS).unwrap(), ["T1|server d|T1"]);
     assert_eq!(
         table(&sandbox, ALERTS).unwrap(),
-        ["t1-0@1|sent|0|ANALYSIS|", "t1-0@2|sent|0|ANALYSIS|"]
+        ["T1@2|sent|0|ANALYSIS|", "t1-0@1|sent|0|ANALYSIS|"]
     );
 }
 

@@ -2,6 +2,7 @@ extern crate alloc;
 
 pub mod config;
 mod dingtalk;
+pub mod http;
 pub mod ingest;
 mod ledger;
 mod pipe;

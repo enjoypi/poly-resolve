@@ -1,14 +1,17 @@
+use std::time::Instant;
+
 use serde_json::{Value, from_str, json};
 
-use super::{HOUR_MS, NONE, Shift, current, failure, number, retry_before, text};
+use super::trace::{Outcome, external};
+use super::{HOUR_MS, NONE, Shift, current, number, retry_before, text};
+use crate::http::Call;
 use crate::ingest::now_ms;
-use crate::pipe::Job;
 
 const READY: &str = "ready";
 const SENT: &str = "sent";
 const URGENT: &str = "urgent";
 
-fn alerts(shift: &Shift<'_>, topics: &[Value], batch_id: u64) -> Vec<Value> {
+fn alerts(_shift: &Shift<'_>, topics: &[Value], batch_id: u64) -> Vec<Value> {
     let now = now_ms();
     topics
         .iter()
@@ -16,10 +19,7 @@ fn alerts(shift: &Shift<'_>, topics: &[Value], batch_id: u64) -> Vec<Value> {
         .map(|topic| {
             json!({
                 "at_ms": now,
-                "cooldown_since_ms": now.saturating_sub(shift.triage.handoff_cooldown_ms()),
-                "hour_since_ms": now.saturating_sub(HOUR_MS),
                 "key": format!("{}@{batch_id}", text(topic, "topic")),
-                "max_per_hour": shift.triage.max_handoffs_per_hour(),
                 "topic_id": text(topic, "topic"),
             })
         })
@@ -39,6 +39,10 @@ fn judge(shift: &Shift<'_>, batch: &Value, reply: Result<String, String>) {
             let saved = shift
                 .ledger
                 .answer(&json!({"batch_id": batch_id, "body": body}));
+            if saved == 0 {
+                tracing::warn!(batch_id, "decision answer store failed");
+                return;
+            }
             let rows = shift.ledger.apply(
                 &json!({
                     "at_ms": now,
@@ -65,25 +69,44 @@ fn judge(shift: &Shift<'_>, batch: &Value, reply: Result<String, String>) {
 
 async fn request(shift: &mut Shift<'_>, batch: &Value) -> Option<Option<Result<String, String>>> {
     let triage = shift.triage;
+    let setup = triage.decide();
+    let url = match setup.url() {
+        Ok(url) => url,
+        Err(err) => return Some(Some(Err(err))),
+    };
+    let key = setup.key();
+    let call = Call::new(&url, text(batch, "payload"), setup.timeout_ms()).with_key(key.as_deref());
     let claim = json!({"at_ms": now_ms(), "id": number(batch, "id"), "max_attempts": triage.max_attempts()});
     if shift.ledger.claim_batch(&claim) == 0 {
         return Some(None);
     }
-    let Some(done) = shift
-        .exec(Job::new(triage.decide(), &[], text(batch, "payload")))
-        .await
-    else {
+    let started = Instant::now();
+    let attempt = number(batch, "attempts").saturating_add(1);
+    let Some(done) = shift.post(&call).await else {
+        let elapsed = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
+        external(
+            "decide",
+            text(batch, "payload").len(),
+            &Outcome::new(0, "stopped".to_owned(), elapsed).attempt(attempt),
+        );
         let released = shift.ledger.release_batch(&claim);
         tracing::debug!(released, "batch claim released");
         return None;
     };
-    Some(Some(
-        done.as_ref()
-            .ok()
-            .filter(|output| output.status.success())
-            .map(|output| String::from_utf8_lossy(&output.stdout).into_owned())
-            .ok_or_else(|| failure(&done)),
-    ))
+    let elapsed = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
+    let outcome = done.as_ref().map_or_else(
+        |reason| Outcome::new(0, reason.clone(), elapsed),
+        |reply| {
+            Outcome::new(reply.body().len(), "success".to_owned(), elapsed)
+                .code(Some(reply.status()))
+        },
+    );
+    external(
+        "decide",
+        text(batch, "payload").len(),
+        &outcome.attempt(attempt),
+    );
+    Some(Some(done.map(|reply| reply.body().to_owned())))
 }
 
 pub(super) fn seal(shift: &Shift<'_>) {
@@ -141,19 +164,20 @@ pub(super) fn seal(shift: &Shift<'_>) {
 }
 
 pub(super) async fn send(shift: &mut Shift<'_>) -> Option<()> {
-    let now = now_ms();
-    let used = shift.ledger.requests_since(&json!({
-        "since_ms": now.saturating_sub(HOUR_MS),
-    }));
-    if used >= u64::from(shift.triage.max_decisions_per_hour()) {
-        return Some(());
-    }
     let due = shift.ledger.next_batch(&json!({
         "max_attempts": shift.triage.max_attempts(),
         "retry_before_ms": retry_before(shift),
     }));
     for batch in &due {
         let stored = batch.get("answer").and_then(Value::as_str);
+        if stored.is_none() {
+            let used = shift.ledger.requests_since(&json!({
+                "since_ms": now_ms().saturating_sub(HOUR_MS),
+            }));
+            if used >= u64::from(shift.triage.max_decisions_per_hour()) {
+                return Some(());
+            }
+        }
         let reply = match stored {
             Some(body) => Some(Ok(body.to_owned())),
             None => request(shift, batch).await?,

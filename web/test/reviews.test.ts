@@ -97,8 +97,18 @@ test("渲染待审行：正文只作文本，批、会话、发送人、时间�
   expect(cards(root)[1]?.className).toBe("review flagged");
   expect(root.querySelectorAll(".meta")[1]?.textContent).toContain(TEXT.flagged("unmasked"));
   expect(root.querySelector("script")).toBeNull();
-  const options = [...(cards(root)[0]?.querySelectorAll("option") ?? [])].map((node) => node.textContent);
+  const options = Array.from(cards(root)[0]?.querySelectorAll("option") ?? [], (node) => node.textContent);
   expect(options).toEqual([TEXT.reasonPick, "漏脱敏", "排除"]);
+});
+
+test("待审列表：一次 GET limit=200，渲染 200 张卡片与计数", async () => {
+  const items = Array.from({ length: 200 }, (_, index) => item(`k${index}`));
+  const { calls, root } = await open([{ body: { items, reasons } }]);
+  expect(calls).toHaveLength(1);
+  expect(calls[0]?.body).toEqual({ limit: "200" });
+  expect(cards(root)).toHaveLength(200);
+  expect(root.querySelector(".count")?.textContent).toBe(TEXT.pending(200));
+  expect((root.querySelector(".approve-all") as HTMLButtonElement).hidden).toBe(false);
 });
 
 test("通过：不填审核人、不带审核人请求头，成功后卡片移除", async () => {
@@ -111,7 +121,7 @@ test("通过：不填审核人、不带审核人请求头，成功后卡片移�
 });
 
 test("通过：失败时保留卡片并显示错误码", async () => {
-  const { calls, root } = await open([
+  const { root } = await open([
     { body: listing() },
     { body: { code: "bad_request" }, status: 400 },
   ]);
@@ -198,6 +208,44 @@ test("拒绝：网络失败显示 unreachable", async () => {
   pickReason(root, "noise");
   click(root, ".reject");
   await until(() => root.querySelector(".error")?.textContent === TEXT.unreachable);
+});
+
+test("拒绝：PATCH 未返回前粘贴框已同步清空", async () => {
+  let settle: ((response: Response) => void) | undefined;
+  const pending = connect("http://localhost", (request: Request) =>
+    request.method === "GET"
+      ? Promise.resolve(Response.json(listing()))
+      : new Promise<Response>((resolve) => {
+          settle = resolve;
+        }),
+  );
+  const root = document.createElement("div");
+  await renderReviews(pending, root, "UTC");
+  pickReason(root, "leak");
+  const leak = root.querySelector(".leak") as HTMLTextAreaElement;
+  leak.value = "secret-abc";
+  leak.dispatchEvent(new Event("input"));
+  click(root, ".reject");
+  expect(leak.value).toBe("");
+  settle?.(Response.json({ state: "rejected" }));
+  await until(() => cards(root).length === 1);
+  expect(root.querySelector(".count")?.textContent).toBe(TEXT.pending(1));
+});
+
+test("拒绝：网络失败也清空粘贴框", async () => {
+  const down = connect("http://localhost", async (request: Request) =>
+    request.method === "GET" ? Response.json(listing()) : Promise.reject(new Error("down")),
+  );
+  const root = document.createElement("div");
+  await renderReviews(down, root);
+  pickReason(root, "leak");
+  const leak = root.querySelector(".leak") as HTMLTextAreaElement;
+  leak.value = "secret-abc";
+  leak.dispatchEvent(new Event("input"));
+  click(root, ".reject");
+  expect(leak.value).toBe("");
+  await until(() => root.querySelector(".error")?.textContent === TEXT.unreachable);
+  expect(leak.value).toBe("");
 });
 
 test("空列表显示提示并隐藏整批按钮，刷新重新加载", async () => {

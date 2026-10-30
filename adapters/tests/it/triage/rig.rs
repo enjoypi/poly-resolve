@@ -6,10 +6,11 @@ use domain::review::{Docket as _, Ruling};
 use rusqlite::{Connection, Error};
 use serde_json::{Value, from_str, json};
 
-use crate::support::{BUSY, Fallible, NOON, Sandbox, triage_logged};
+use crate::support::{BUSY, Fallible, NOON, Run, Sandbox};
 
 pub(super) const ALERTS: &str = "SELECT key || '|' || state || '|' || attempts || '|' || COALESCE(analysis, '') || '|' || reason AS item FROM alerts ORDER BY key";
 pub(super) const BATCHES: &str = "SELECT id || '|' || state || '|' || attempts || '|' || reason AS item FROM batches ORDER BY id";
+pub(super) const CALLS: &str = "SELECT kind || '|' || subject || '|' || attempt AS item FROM calls ORDER BY kind, subject, attempt";
 pub(super) const KEY: &str = "dingtalk:acct:m1";
 pub(super) const LATER: u64 = 60_000;
 pub(super) const LINES: &str = "SELECT key || '|' || state || '|' || reason || '|' || batch_id AS item FROM lines ORDER BY key";
@@ -24,6 +25,22 @@ pub(super) const TOPICS: &str =
 
 pub(super) type Seed<'seed> = (&'seed str, &'seed str, &'seed str, &'seed str);
 
+fn behave(sandbox: &Sandbox, patch: &Value) -> Fallible<Value> {
+    let Some(stub) = patch.get("stub") else {
+        return Ok(patch.clone());
+    };
+    for role in ["decide", "screen"] {
+        if let Some(plan) = stub.get(role) {
+            sandbox.write(&format!("{role}-stub.json"), &plan.to_string())?;
+        }
+    }
+    let mut clean = patch.clone();
+    if let Some(map) = clean.as_object_mut() {
+        drop(map.remove("stub"));
+    }
+    Ok(clean)
+}
+
 pub(super) fn calls(sandbox: &Sandbox, role: &str) -> Fallible<usize> {
     match sandbox.read(&format!("{role}-calls.txt")) {
         Ok(text) => Ok(text.lines().count()),
@@ -33,7 +50,7 @@ pub(super) fn calls(sandbox: &Sandbox, role: &str) -> Fallible<usize> {
 }
 
 pub(super) fn decided(sandbox: &Sandbox) -> Fallible<Value> {
-    Ok(from_str(&sandbox.read("decide-stdin.txt")?)?)
+    Ok(from_str(&sandbox.read("decide-body.txt")?)?)
 }
 
 pub(super) fn home() -> Fallible<String> {
@@ -49,17 +66,16 @@ pub(super) fn input_of(body: &Value) -> Fallible<Value> {
 }
 
 pub(super) async fn logged(sandbox: &Sandbox, patch: &Value, millis: u64) -> Fallible<String> {
+    let behavior = behave(sandbox, patch)?;
     let ingest = sandbox.config(&json!({}))?;
-    let triage = sandbox.triage(patch)?;
-    triage_logged(&ingest, &triage, millis).await
+    let triage = sandbox.triage(&behavior)?;
+    sandbox
+        .triage_logged(&Run::new(&ingest, &triage), millis)
+        .await
 }
 
 pub(super) const fn one() -> [Seed<'static>; 1] {
     [(KEY, "u1", "c1", "server down")]
-}
-
-pub(super) fn path() -> Fallible<String> {
-    Ok(env::var("PATH")?)
 }
 
 pub(super) fn questions_of(body: &Value) -> Vec<String> {
@@ -71,6 +87,16 @@ pub(super) fn questions_of(body: &Value) -> Vec<String> {
                 .map(str::to_owned)
                 .collect()
         })
+}
+
+pub(super) fn requests(sandbox: &Sandbox, role: &str) -> Fallible<Vec<Value>> {
+    let raw = match sandbox.read(&format!("{role}-calls.txt")) {
+        Ok(raw) => raw,
+        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(err) => return Err(err.into()),
+    };
+    let entries: Fallible<Vec<Value>> = raw.lines().map(|line| Ok(from_str(line)?)).collect();
+    entries
 }
 
 pub(super) fn rule(sandbox: &Sandbox, ruling: &Ruling<'_>) -> Fallible<Option<String>> {
@@ -131,6 +157,10 @@ pub(super) fn table(sandbox: &Sandbox, sql: &str) -> Fallible<Vec<String>> {
         .query_row_and_then(&wrapped, [], |row| row.get(0).map_err(Box::new))
         .map_err(|err: Box<Error>| err)?;
     Ok(from_str(&json)?)
+}
+
+pub(super) fn text<'row>(row: &'row Value, key: &str) -> &'row str {
+    row.get(key).and_then(Value::as_str).unwrap_or_default()
 }
 
 pub(super) const fn two() -> [Seed<'static>; 2] {

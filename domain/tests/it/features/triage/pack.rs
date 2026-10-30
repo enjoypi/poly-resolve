@@ -3,8 +3,10 @@ use serde_json::{Error, Value, from_str, json};
 use super::{Reply, call, patched};
 
 const FIRST_QUESTION: usize = 1;
+const HIGH: f64 = 0.9;
 const MINUTE: u64 = 60_000;
 const NOON: u64 = 1_783_483_235_000;
+const OLD: f64 = 0.8;
 const ROOMY: u32 = 10_000;
 const SECOND_QUESTION: usize = 2;
 const WINDOW: u64 = 2 * MINUTE;
@@ -65,6 +67,25 @@ fn pack_asks_to_merge_new_segments_into_known_topics() {
     assert_eq!(
         segment.first().and_then(|first| first.get("question")),
         Some(&json!(FIRST_QUESTION))
+    );
+}
+
+#[test]
+fn pack_attaches_historical_probabilities_to_layout() {
+    let lines = json!([entry(["k1", "c1", "hello world"], NOON)]);
+    let attach = json!([{
+        "conversation_id": "c1",
+        "last_ms": NOON,
+        "probability": OLD,
+        "topic_id": "t9-0",
+    }]);
+    let topics = json!([{"label": "old", "probability": HIGH, "topic": "t3-0"}]);
+    let reply = pack(&lines, &attach, &topics).unwrap().unwrap();
+    assert_eq!(
+        reply
+            .get("layout")
+            .and_then(|layout| layout.get("probabilities")),
+        Some(&json!({"t3-0": HIGH, "t9-0": OLD}))
     );
 }
 

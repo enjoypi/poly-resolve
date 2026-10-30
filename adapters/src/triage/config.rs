@@ -7,6 +7,8 @@ use domain::review::Reason;
 use futures_util::future::join_all;
 use serde::{Deserialize, Serialize};
 
+use super::endpoint::Http;
+
 use crate::pipe::probe;
 use crate::seatbelt::Sandbox;
 
@@ -73,6 +75,7 @@ struct Limits {
     max_attempts: NonZeroU32,
     max_decisions_per_hour: u32,
     max_handoffs_per_hour: u32,
+    parallel: NonZeroU32,
     poll_ms: NonZeroU64,
     retry_after_ms: u64,
 }
@@ -148,15 +151,15 @@ pub(crate) struct Rule {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Screen {
-    exec: Exec,
+    http: Http,
     instructions: String,
     model: String,
     placeholder: String,
 }
 
 impl Screen {
-    pub(crate) const fn exec(&self) -> &Exec {
-        &self.exec
+    pub(crate) const fn http(&self) -> &Http {
+        &self.http
     }
 
     pub(crate) fn instructions(&self) -> &str {
@@ -185,7 +188,7 @@ struct Session {
 #[serde(deny_unknown_fields)]
 pub struct Settings {
     codex: Exec,
-    decide: Exec,
+    decide: Http,
     limits: Limits,
     mode: Mode,
     model: String,
@@ -206,12 +209,10 @@ impl Settings {
     }
 
     pub async fn check(&self) -> Result<(), String> {
-        let screening = self.screen.iter().map(|screen| &screen.exec);
-        let checks = [&self.decide, &self.codex, &self.notify]
+        join_all([&self.codex, &self.notify].into_iter().map(probe))
+            .await
             .into_iter()
-            .chain(screening)
-            .map(probe);
-        join_all(checks).await.into_iter().collect()
+            .collect()
     }
 
     pub(crate) const fn codex(&self) -> &Exec {
@@ -222,7 +223,7 @@ impl Settings {
         self.sizes.context_max_chars.get()
     }
 
-    pub(crate) const fn decide(&self) -> &Exec {
+    pub(crate) const fn decide(&self) -> &Http {
         &self.decide
     }
 
@@ -276,16 +277,11 @@ impl Settings {
     pub fn missing(&self) -> Vec<&str> {
         once(&self.notify_target)
             .chain(self.codex.vars.values())
-            .chain(self.decide.vars.values())
+            .chain(self.decide.vars())
             .chain(self.notify.vars.values())
             .chain(self.codex.sandbox.vars())
-            .chain(self.decide.sandbox.vars())
             .chain(self.notify.sandbox.vars())
-            .chain(
-                self.screen
-                    .iter()
-                    .flat_map(|screen| screen.exec.vars.values().chain(screen.exec.sandbox.vars())),
-            )
+            .chain(self.screen.iter().flat_map(|screen| screen.http.vars()))
             .filter(|var| var.value().is_none())
             .map(|var| var.name.as_str())
             .collect()
@@ -305,6 +301,10 @@ impl Settings {
 
     pub(crate) const fn notify_target(&self) -> &Var {
         &self.notify_target
+    }
+
+    pub(crate) const fn parallel(&self) -> u32 {
+        self.limits.parallel.get()
     }
 
     pub(crate) const fn poll_ms(&self) -> u64 {

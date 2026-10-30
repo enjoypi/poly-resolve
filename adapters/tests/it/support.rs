@@ -11,13 +11,14 @@ use adapters::triage::{Lane, Setup, run as run_triage, validate};
 use domain::Errors;
 use domain::features::{Context, Ports, Rules};
 use domain::inbox::Paging;
-use futures_util::future::join;
+use futures_util::future::{Either, join, select};
 use rusqlite::Connection;
 use serde_json::{Map, Value, from_str, from_value, json};
 use tokio::time::sleep;
 use tracing::instrument::WithSubscriber as _;
 
 use crate::capture::Capture;
+use crate::triage::stub::{CHAT, DECISIONS, Stub};
 
 const ATTEMPTS: u32 = 2;
 const BACKFILL: u64 = 3_600_000;
@@ -58,6 +59,7 @@ pub(crate) const OPEN: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/it/fix
 const OVERLAP: u64 = 1_000;
 const PAGING: &str = r#"{"default":2,"max":3}"#;
 const PARALLEL: u32 = 1;
+const PARALLEL_LIMIT: u32 = 2;
 const POLL: u64 = 20;
 const PROFILE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/it/fixtures/fake.sb");
 const QUOTA: u32 = 100;
@@ -81,9 +83,21 @@ const ZERO: u64 = 0;
 
 pub(crate) type Fallible<T> = Result<T, Box<dyn Error>>;
 
+pub(crate) struct Run<'run> {
+    ingest: &'run Settings,
+    triage: &'run Triage,
+}
+
+impl<'run> Run<'run> {
+    pub(crate) const fn new(ingest: &'run Settings, triage: &'run Triage) -> Self {
+        Self { ingest, triage }
+    }
+}
+
 pub(crate) struct Sandbox {
     dir: PathBuf,
     outside: PathBuf,
+    stub: Stub,
 }
 
 impl Sandbox {
@@ -108,13 +122,12 @@ impl Sandbox {
         self.dir.join("store.db")
     }
 
-    fn exec(&self, role: &str, mode: &str) -> Value {
+    fn exec(&self, role: &str) -> Value {
         json!({
             "args": [role],
             "bin": FAKE,
             "env": {
                 "FAKE_DIR": self.dir.to_string_lossy(),
-                "FAKE_SCREEN": mode,
                 "FAKE_OUTSIDE": self.outside.to_string_lossy(),
             },
             "sandbox": self.fence(),
@@ -134,6 +147,14 @@ impl Sandbox {
         })
     }
 
+    fn http(&self, path: &str) -> Value {
+        json!({
+            "key": "${CARGO_PKG_NAME}",
+            "timeout_ms": EXEC_TIMEOUT,
+            "url": self.stub.url(path),
+        })
+    }
+
     pub(crate) fn new(name: &str) -> io::Result<Self> {
         let root = Path::new(env!("CARGO_TARGET_TMPDIR"));
         let dir = root.join(name);
@@ -145,7 +166,8 @@ impl Sandbox {
             fs::create_dir_all(path)?;
         }
         fs::write(outside.join("secret.txt"), "secret")?;
-        Ok(Self { dir, outside })
+        let stub = Stub::bind(dir.clone())?;
+        Ok(Self { dir, outside, stub })
     }
 
     pub(crate) fn outside(&self) -> &Path {
@@ -157,14 +179,21 @@ impl Sandbox {
     }
 
     pub(crate) fn screen(&self, mode: &str) -> Value {
-        json!({
+        let mut patch = json!({
             "screen": {
-                "exec": self.exec("screen", mode),
+                "http": self.http(CHAT),
                 "instructions": "judge",
                 "model": "local",
                 "placeholder": "[s]",
             },
-        })
+        });
+        if !mode.is_empty() {
+            merge(
+                &mut patch,
+                &json!({ "stub": { "screen": { "mode": mode } } }),
+            );
+        }
+        patch
     }
 
     pub(crate) fn seed(&self, sql: &str) -> Fallible<()> {
@@ -216,10 +245,9 @@ impl Sandbox {
     }
 
     pub(crate) fn triage(&self, patch: &Value) -> Fallible<Triage> {
-        let exec = |role: &str| self.exec(role, "");
         let mut base = json!({
-            "codex": exec("codex"),
-            "decide": exec("decide"),
+            "codex": self.exec("codex"),
+            "decide": self.http(DECISIONS),
             "limits": {
                 "batch": BATCH,
                 "handoff_cooldown_ms": ZERO,
@@ -228,13 +256,14 @@ impl Sandbox {
                 "max_attempts": ATTEMPTS,
                 "max_decisions_per_hour": QUOTA,
                 "max_handoffs_per_hour": QUOTA,
+                "parallel": PARALLEL_LIMIT,
                 "poll_ms": POLL,
                 "retry_after_ms": ZERO,
             },
             "mode": "enabled",
             "model": "m",
             "notice": "[{probability}] {topic}|{analysis}",
-            "notify": exec("send"),
+            "notify": self.exec("send"),
             "notify_target": "${CARGO_PKG_VERSION}",
             "questions": {
                 "threshold": THRESHOLD,
@@ -262,6 +291,37 @@ impl Sandbox {
         merge(&mut base, &text_settings());
         merge(&mut base, patch);
         Ok(from_value(base)?)
+    }
+
+    pub(crate) async fn triage_logged(&self, request: &Run<'_>, millis: u64) -> Fallible<String> {
+        let capture = Capture::default();
+        let errors: Errors = from_str(ERRORS)?;
+        let paging: Paging = from_str(PAGING)?;
+        let store = request.ingest.shelf();
+        let context = Context::new(
+            &errors,
+            Rules::new(&paging, &[], LEARN_MIN),
+            Ports::new(&store, &store),
+        );
+        let setup = Setup::new(request.ingest, request.triage, &context);
+        let mut batches = Box::pin(sleep(Duration::from_millis(millis)));
+        let mut alerts = Box::pin(sleep(Duration::from_millis(millis)));
+        let lanes = Box::pin(async move {
+            let _done = join(
+                run_triage(setup, Lane::Batches, &mut batches),
+                run_triage(setup, Lane::Alerts, &mut alerts),
+            )
+            .await;
+        });
+        let server = Box::pin(self.stub.serve());
+        let outcome = select(lanes, server)
+            .with_subscriber(capture.dispatch())
+            .await;
+        match outcome {
+            Either::Left(((), _server)) => {}
+            Either::Right((result, _lanes)) => result?,
+        }
+        Ok(capture.text())
     }
 
     pub(crate) fn write(&self, file: &str, body: &str) -> io::Result<()> {
@@ -379,32 +439,6 @@ pub(crate) fn texts(database: &Path) -> Fallible<Vec<String>> {
         texts.push(row.get(0)?);
     }
     Ok(texts)
-}
-
-pub(crate) async fn triage_logged(
-    ingest: &Settings,
-    triage: &Triage,
-    millis: u64,
-) -> Fallible<String> {
-    let capture = Capture::default();
-    let errors: Errors = from_str(ERRORS)?;
-    let paging: Paging = from_str(PAGING)?;
-    let shelf = ingest.shelf();
-    let context = Context::new(
-        &errors,
-        Rules::new(&paging, &[], LEARN_MIN),
-        Ports::new(&shelf, &shelf),
-    );
-    let setup = Setup::new(ingest, triage, &context);
-    let mut batches = Box::pin(sleep(Duration::from_millis(millis)));
-    let mut alerts = Box::pin(sleep(Duration::from_millis(millis)));
-    let ((), ()) = join(
-        run_triage(setup, Lane::Batches, &mut batches),
-        run_triage(setup, Lane::Alerts, &mut alerts),
-    )
-    .with_subscriber(capture.dispatch())
-    .await;
-    Ok(capture.text())
 }
 
 pub(crate) fn triage_validate(ingest: &Settings, triage: &Triage) -> Fallible<Result<(), String>> {

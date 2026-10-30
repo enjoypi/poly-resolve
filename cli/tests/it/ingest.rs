@@ -64,8 +64,8 @@ async fn serve_exits_when_triage_sandbox_fails() {
     let yaml = live(&dir)
         .replace("mode: disabled", "mode: enabled")
         .replace(
-            &format!("decide: {{args: [x], bin: {TRIAGE}"),
-            "decide: {args: [x], bin: /nonexistent/triage",
+            &format!("codex: {{args: [x], bin: {TRIAGE}"),
+            "codex: {args: [x], bin: /nonexistent/triage",
         );
     let path = config("cli-serve-triage-sandbox.yaml", &yaml).unwrap();
     let code = run(&["cli", "serve", "--config", &path]).await;

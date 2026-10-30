@@ -16,6 +16,7 @@ const TRANSPORT: &str = "adapters";
 pub(crate) struct Brief {
     prompt: String,
     start: String,
+    until_key: String,
     until_ms: u64,
 }
 
@@ -26,6 +27,10 @@ impl Brief {
 
     pub(crate) fn resumed(&self) -> bool {
         self.start == RESUME
+    }
+
+    pub(crate) fn until_key(&self) -> &str {
+        &self.until_key
     }
 
     pub(crate) const fn until_ms(&self) -> u64 {

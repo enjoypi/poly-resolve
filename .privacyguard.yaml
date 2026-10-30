@@ -1,0 +1,5 @@
+ignore:
+  - fingerprint: adapters/tests/it/fixtures/tls/key.pem:private-key-file:0
+    reason: 仅测试用自签名私钥，不对应真实服务
+  - fingerprint: adapters/tests/it/fixtures/tls/key.pem:private-key:1
+    reason: 仅测试用自签名私钥，不对应真实服务

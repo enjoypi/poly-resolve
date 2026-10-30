@@ -26,6 +26,7 @@ pub(crate) struct BriefRequest {
 pub(crate) struct BriefResponse {
     prompt: String,
     start: Start,
+    until_key: String,
     until_ms: u64,
 }
 
@@ -49,6 +50,8 @@ pub(crate) struct NoticeResponse {
 #[schemars(rename = "TriageResume")]
 pub(crate) struct Resume {
     until: u64,
+    #[serde(default)]
+    until_key: String,
 }
 
 #[derive(Clone, Copy, JsonSchema, Serialize)]
@@ -63,26 +66,31 @@ pub(crate) fn brief(req: &BriefRequest) -> Result<BriefResponse, AppError> {
     let mask = Mask::new(&req.rules)?;
     let max = usize::try_from(req.max_chars).unwrap_or(usize::MAX);
     let style = Style::new(&mask, max);
-    let after = req.resume.as_ref().map(|point| point.until);
+    let after = req
+        .resume
+        .as_ref()
+        .map(|point| (point.until, point.until_key.as_str()));
     let (template, start) = after.map_or((&req.template, Start::Fresh), |_| {
         (&req.followup, Start::Resume)
     });
     let mut sorted: Vec<&Row> = req.rows.iter().collect();
-    sorted.sort_by_key(|row| row.occurred_at_ms());
+    sorted.sort_by_key(|row| (row.occurred_at_ms(), row.key()));
     let lines = sorted
         .into_iter()
-        .filter(|row| after.is_none_or(|until| row.occurred_at_ms() > until))
+        .filter(|row| {
+            after.is_none_or(|(until, key)| (row.occurred_at_ms(), row.key()) > (until, key))
+        })
         .map(|row| row.render(&style))
         .collect();
+    let last = req
+        .rows
+        .iter()
+        .max_by_key(|row| (row.occurred_at_ms(), row.key()));
     Ok(BriefResponse {
         prompt: template.replacen(MESSAGES, &fit(lines, max), 1),
         start,
-        until_ms: req
-            .rows
-            .iter()
-            .map(Row::occurred_at_ms)
-            .max()
-            .unwrap_or_default(),
+        until_key: last.map_or_else(String::new, |row| row.key().to_owned()),
+        until_ms: last.map_or(0, Row::occurred_at_ms),
     })
 }
 

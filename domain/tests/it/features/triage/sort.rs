@@ -69,6 +69,28 @@ fn sort(response: &str) -> Result<Reply, Error> {
 }
 
 #[test]
+fn sort_accepts_null_answers() {
+    let response = answers(&[
+        Value::Null,
+        predicate(LOW),
+        predicate(LOW),
+        choice(&json!("S2"), STRONG),
+        Value::Null,
+    ]);
+    let reply = sort(&response).unwrap().unwrap();
+    assert_eq!(topics_of(&reply), ["t-old", "t7-1", "t7-2"]);
+    let placements = reply.get("placements").and_then(Value::as_array).unwrap();
+    assert_eq!(
+        placements.first().and_then(|item| item.get("probability")),
+        Some(&Value::Null)
+    );
+    assert_eq!(
+        placements.get(1).and_then(|item| item.get("probability")),
+        Some(&json!(LOW))
+    );
+}
+
+#[test]
 fn sort_falls_back_to_new_topics() {
     let weak = answers(&[
         predicate(LOW),
@@ -119,6 +141,34 @@ fn sort_groups_lines_by_topic_with_the_highest_probability() {
 }
 
 #[test]
+fn sort_keeps_historical_topic_probability_when_new_lines_score_lower() {
+    let mut historical = layout();
+    drop(historical.as_object_mut().unwrap().insert(
+        "probabilities".to_owned(),
+        json!({"t-old": HIGH, "t-open": HIGH}),
+    ));
+    let response = answers(&[
+        predicate(LOW),
+        predicate(LOW),
+        predicate(LOW),
+        choice(&json!("t-open"), STRONG),
+        choice(&json!("S2"), STRONG),
+    ]);
+    let request = json!({
+        "layout": historical,
+        "min_confidence": MIN_CONFIDENCE,
+        "response": response,
+        "threshold": THRESHOLD,
+    });
+    let reply = call("sort", &request.to_string()).unwrap().unwrap();
+    let topics = reply.get("topics").and_then(Value::as_array).unwrap();
+    for topic in topics {
+        assert_eq!(topic.get("probability"), Some(&json!(HIGH)));
+        assert_eq!(topic.get("urgent"), Some(&json!("urgent")));
+    }
+}
+
+#[test]
 fn sort_picks_a_new_topic_for_each_new_choice() {
     let response = answers(&[
         predicate(LOW),
@@ -132,6 +182,36 @@ fn sort_picks_a_new_topic_for_each_new_choice() {
 }
 
 #[test]
+fn sort_rejects_answers_of_the_wrong_type() {
+    for (position, answer) in [
+        (0, choice(&json!("x"), STRONG)),
+        (3, predicate(LOW)),
+        (0, json!({"name": "x", "type": "mystery"})),
+        (0, json!({"name": "x"})),
+    ] {
+        let items: Vec<Value> = [
+            predicate(LOW),
+            predicate(LOW),
+            predicate(LOW),
+            choice(&json!("new"), STRONG),
+            choice(&json!("new"), STRONG),
+        ]
+        .into_iter()
+        .enumerate()
+        .map(|(index, item)| {
+            if index == position {
+                answer.clone()
+            } else {
+                item
+            }
+        })
+        .collect();
+        let response = answers(&items);
+        assert_eq!(sort(&response).unwrap(), Err(400), "{position}");
+    }
+}
+
+#[test]
 fn sort_rejects_unusable_responses() {
     for response in ["nope", "{}", r#"{"answers":[]}"#] {
         assert_eq!(sort(response).unwrap(), Err(400), "{response}");
@@ -141,13 +221,13 @@ fn sort_rejects_unusable_responses() {
 }
 
 #[test]
-fn sort_treats_refusals_wrong_types_and_bad_probabilities_as_unanswered() {
+fn sort_treats_refusals_missing_fields_and_bad_probabilities_as_unanswered() {
     let response = answers(&[
         json!({"name": null, "type": "refusal"}),
         predicate(BAD),
-        json!({"name": "x", "probability": HIGH, "type": "choice"}),
+        json!({"name": "x", "type": "predicate"}),
         json!({"name": "x", "type": "refusal"}),
-        json!({"name": "x", "probability": MID}),
+        json!({"name": "x", "type": "choice"}),
     ]);
     let reply = sort(&response).unwrap().unwrap();
     assert_eq!(topics_of(&reply), ["t-old", "t7-1", "t7-2"]);

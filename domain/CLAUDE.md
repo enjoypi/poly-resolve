@@ -57,20 +57,20 @@
 
 - 九个路由，请求都带消息内容，均标 `Trace::Redacted`；`notice`、`screen` 为 `typed`，其余为 `fallible`；`notice` 按值收请求以满足 `needless_pass_by_value`，用解构消耗
 - `line`（`triage/line.rs`）：`{message{conversation_id,sender_id,sender_name,text}, rules, max_chars, unknown_sender, self_sender_id, notify_conversation_id, cipher_min_length}` → `{sender, text, skip}`；后三项可为 null（数据源无此概念），为 null 即不做该项判定；依次判本人发送（`own`）、通知会话（`notice`）、空正文（`empty`）、仍是密文（`sealed`）则只给 `skip`（此时不编译规则），否则发送人与正文过 `redact::Mask`，正文按 `max_chars` 截断
-- `pack`（`triage/pack.rs`）：`{lines[{key,conversation_id,occurred_at_ms,sender,text,hints?}], attach[{conversation_id,last_ms,topic_id}], topics[{topic,label}], batch_id, gap_ms, label_chars, max_chars, model, new_label, questions{urgent,topic}, rules}` → `{body, layout}`
+- `pack`（`triage/pack.rs`）：`{lines[{key,conversation_id,occurred_at_ms,sender,text,hints?}], attach[{conversation_id,last_ms,probability?,topic_id}], topics[{topic,label,probability?}], batch_id, gap_ms, label_chars, max_chars, model, new_label, questions{urgent,topic}, rules}` → `{body, layout}`
   - 行按会话、时间切段（相邻间隔 `<= gap_ms`），再按首行时间排序
   - 每行一个 `predicate`（`name` 为 `<urgent.name>_<行号>`）
   - `attach` 里同会话且间隔内的段直接并入该话题、不提问；其余段在“开放话题（值为话题 ID）、更早的段（`S<n>`）、`new`”里出 `choice`，选项不足 2 个不出；`hints` 非空的段只列这些话题
   - `body` 的 `input` 只含别名（`C<n>` 会话、`L<n>` 行、`S<n>` 段），外发前对每行再套 `rules`；`layout` 记行序、段与题号，供 `sort` 对号入座
-- `sort`（`triage/sort.rs`）：`{layout, response, min_confidence, threshold}` → `{placements[{key,probability,topic}], topics[{topic,label,last_ms,probability,urgent}]}`；答案数量须等于 `layout.questions()`，否则请求无效；按位置核对类型，`refusal`、类型不符、概率不在 [0,1]、置信度低于下限、选项不在列表都当未作答（无概率或新话题）；新话题 ID 为 `t<批号>-<段序号>`，话题概率取成员最大
-- `brief`（`triage/prompt.rs`）：`{rows[{occurred_at_ms,sender,text}], rules, max_chars, template, followup, resume?{until}}` → `{prompt, start, until_ms}`；有 `resume` 时用 `followup` 且只含 `occurred_at_ms > until` 的行；`{messages}` 只替换一次
+- `sort`（`triage/sort.rs`）：`{layout, response, min_confidence, threshold}` → `{placements[{key,probability,topic}], topics[{topic,label,last_ms,probability,urgent}]}`；答案数量须等于 `layout.questions()`，否则请求无效；按位置核对类型，类型不符整批失败，单项 null、缺字段、`refusal`、概率不在 [0,1]、置信度低于下限、选项不在列表只当未作答（无概率或新话题）；新话题 ID 为 `t<批号>-<段序号>`，话题概率取 `layout.probabilities` 的历史分与当前成员分的最大值
+- `brief`（`triage/prompt.rs`）：`{rows[{key?,occurred_at_ms,sender,text}], rules, max_chars, template, followup, resume?{until,until_key?}}` → `{prompt, start, until_ms, until_key}`；有 `resume` 时用 `followup` 且只含 `(occurred_at_ms, key)` 位于游标之后的行；`{messages}` 只替换一次
 - `notice`：代入 `{topic}`、`{probability}`（两位小数），最后才代入截断后的 `{analysis}`
 - `reply`：`{stdout, max_chars}` → `{thread_id, text}`；从 `codex exec --json` 的 JSONL 取首个 `thread.started` 的 `thread_id` 与最后一条 `item.completed` 里 `agent_message` 的文本，缺任一或文本为空按请求无效
 - `redact`：`{text, rules}` → `{text}`，供启动自检；`tests/it/redact.rs` 读取真实的 `cli/config.yaml` 里 `triage.redact.patterns` 跑样例表：每条规则至少一例必须被替换、几例明文必须原样；规则是数据，改规则必须同步样例，源码里的中文用 `\u{…}` 转义（`non_ascii_literal`）
 - `screen`（`triage/screen.rs`）：`{instructions, lines[{key,text}], model, topics[{topic,label}]}` → `{body}`；OpenAI 兼容的 chat 请求体（`system` 放指令，`user` 放只含别名 `L<n>` 与话题的 JSON，`response_format` 为 `json_object`，温度 0），不含消息键
 - `screened`（`triage/screened.rs`）：`{lines, min_chars, placeholder, response, topics}` → `{lines[{key,text,flag,hints}]}`；从 `choices[0].message.content` 解出 `{lines[{line,risk,spans,topics}]}`；片段去空白后须不短于 `min_chars` 且是该行文字的子串才用 `placeholder` 遮盖；话题须在给定话题内且去重；`risk == high` 且无可用片段 `flag = unmasked`，缺该行的判断 `flag = missing`；响应无法解析按请求无效
 - `learn`（`triage/learn.rs`，不是路由，供 `review.update`）：粘贴的原文去空白后须不短于 `min_chars` 且是该行文字的子串，转义成字面量正则，否则 `Unprocessable`
-- `transcript.rs`：`Row`（`occurred_at_ms,sender,text`，`render` 过 `Mask` 并按 `max` 截断）、`Style`、`fit`（整个 JSON 数组超 `max_chars` 就丢最旧的行，至少留最后一条）
+- `transcript.rs`：`Row`（`key?`、`occurred_at_ms,sender,text`，`render` 过 `Mask` 并按 `max` 截断）、`Style`、`fit`（整个 JSON 数组超 `max_chars` 就丢最旧的行，至少留最后一条）
 - 脱敏（`triage/redact.rs`）：`Mask::new(&[Rule])` 编译全部正则，任一无效返回 `BadRequest`（失败即不外发）；`apply` 按序 `replace_all`，placeholder 里可写 `${1}`；`regex` 只开 `std`、`perf`、`unicode-perl`、`unicode-case`，无环视，规则里数字类用 `[0-9]`、不用 `\b`（CJK 属 word 字符）；每次调用现编译，不缓存
 - 提示词模板里的“不可信数据”说明在配置里；domain 只做占位符替换
 

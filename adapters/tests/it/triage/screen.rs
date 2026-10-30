@@ -32,7 +32,7 @@ async fn auto_mode_drops_flagged_lines_and_keeps_the_rest() {
     assert_eq!(questions_of(&decided(&sandbox).unwrap()), ["urgent_1"]);
     assert_eq!(
         table(&sandbox, PLACEMENTS).unwrap(),
-        [format!("{SECOND}|t1-0|0.95")]
+        [format!("{SECOND}|T1|0.95")]
     );
 }
 
@@ -50,9 +50,9 @@ async fn clean_lines_pass_through_to_the_decision() {
             format!("{SECOND}|approved||1")
         ]
     );
-    let prompt: Value = from_str(&sandbox.read("screen-stdin.txt").unwrap()).unwrap();
+    let prompt: Value = from_str(&sandbox.read("screen-body.txt").unwrap()).unwrap();
     assert_eq!(prompt.get("model"), Some(&json!("local")));
-    assert!(!sandbox.read("screen-stdin.txt").unwrap().contains(KEY));
+    assert!(!sandbox.read("screen-body.txt").unwrap().contains(KEY));
 }
 
 #[tokio::test]
@@ -73,13 +73,9 @@ async fn failed_screening_is_retried_and_never_lets_lines_through() {
 async fn hints_narrow_the_topic_options() {
     let sandbox = Sandbox::new("screen-hints").unwrap();
     seed(&sandbox, &[(KEY, "u1", "c1", "server down")]).unwrap();
-    start(
-        &sandbox,
-        &json!({"decide": {"env": {"FAKE_P": "0.1"}}}),
-        QUICK,
-    )
-    .await
-    .unwrap();
+    start(&sandbox, &json!({"stub": {"decide": {"p": "0.1"}}}), QUICK)
+        .await
+        .unwrap();
     seed_next(&sandbox).unwrap();
     sandbox
         .write(
@@ -90,8 +86,8 @@ async fn hints_narrow_the_topic_options() {
     let mut patch = screened(&sandbox);
     if let Some(map) = patch.as_object_mut() {
         drop(map.insert(
-            "decide".to_owned(),
-            json!({"env": {"FAKE_P": "0.1", "FAKE_TOPICS": "t1-0"}}),
+            "stub".to_owned(),
+            json!({"decide": {"p": "0.1", "topics": "t1-0"}}),
         ));
     }
     start(&sandbox, &patch, QUICK).await.unwrap();

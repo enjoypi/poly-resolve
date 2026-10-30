@@ -14,7 +14,9 @@ chrono = { version = "*", default-features = false, features = ["std"] }
 clap = { version = "*", default-features = false, features = ["std", "derive", "help", "usage", "error-context"] }
 domain = { path = "domain" }
 futures-util = { version = "*", default-features = false, features = ["std"] }
+http = { version = "*", default-features = false, features = ["std"] }
 regex = { version = "*", default-features = false, features = ["std", "perf", "unicode-perl", "unicode-case"] }
+security-framework = "*"
 rusqlite = { version = "*", features = ["bundled"] }
 schemars = { version = "*", default-features = false, features = ["derive", "std"] }
 serde = { version = "*", features = ["derive"] }

@@ -1,8 +1,8 @@
 use serde_json::{Value, json};
 
 use super::rig::{
-    KEY, LATER, PLACEMENTS, QUICK, SECOND, TOPICS, decided, one, questions_of, seed, seed_from,
-    seed_stamped, start, table, two_chats,
+    ALERTS, KEY, LATER, PLACEMENTS, QUICK, SECOND, TOPICS, decided, one, questions_of, seed,
+    seed_from, seed_stamped, start, table, two_chats,
 };
 use crate::support::{Fallible, Sandbox};
 
@@ -12,7 +12,7 @@ const TWO_HOURS: u64 = 7_200_000;
 
 #[tokio::test]
 async fn another_conversation_can_join_an_open_topic() {
-    let patch = json!({"decide": {"env": {"FAKE_P": QUIET, "FAKE_TOPICS": FIRST_TOPIC}}});
+    let patch = json!({"stub": {"decide": {"p": QUIET, "topics": FIRST_TOPIC}}});
     let sandbox = second_run("topic-join", &patch).await.unwrap();
     let body = decided(&sandbox).unwrap();
     assert_eq!(questions_of(&body), ["urgent_1", "topic_1"]);
@@ -37,7 +37,7 @@ async fn another_conversation_can_join_an_open_topic() {
 async fn follow_up_in_the_same_conversation_joins_the_open_topic() {
     let sandbox = Sandbox::new("topic-attach").unwrap();
     seed(&sandbox, &one()).unwrap();
-    let quiet = json!({"decide": {"env": {"FAKE_P": QUIET}}});
+    let quiet = json!({"stub": {"decide": {"p": QUIET}}});
     start(&sandbox, &quiet, QUICK).await.unwrap();
     seed_from(&sandbox, &[(SECOND, "u1", "c1", "still down")], LATER).unwrap();
     start(&sandbox, &quiet, QUICK).await.unwrap();
@@ -48,6 +48,25 @@ async fn follow_up_in_the_same_conversation_joins_the_open_topic() {
             format!("{KEY}|{FIRST_TOPIC}|0.1"),
             format!("{SECOND}|{FIRST_TOPIC}|0.1"),
         ]
+    );
+}
+
+#[tokio::test]
+async fn historical_high_topic_stays_urgent_after_low_scored_batch() {
+    let sandbox = Sandbox::new("topic-history-high").unwrap();
+    seed(&sandbox, &one()).unwrap();
+    start(&sandbox, &json!({}), QUICK).await.unwrap();
+    seed_from(&sandbox, &[(SECOND, "u1", "c1", "still down")], LATER).unwrap();
+    start(&sandbox, &json!({"stub": {"decide": {"p": QUIET}}}), QUICK)
+        .await
+        .unwrap();
+    assert_eq!(
+        table(&sandbox, PLACEMENTS).unwrap(),
+        [format!("{KEY}|T1|0.95"), format!("{SECOND}|T1|0.1")]
+    );
+    assert_eq!(
+        table(&sandbox, ALERTS).unwrap(),
+        ["T1@2|sent|0|ANALYSIS|", "t1-0@1|sent|0|ANALYSIS|"]
     );
 }
 
@@ -65,16 +84,16 @@ async fn long_pauses_split_a_conversation() {
     start(&sandbox, &json!({}), QUICK).await.unwrap();
     assert_eq!(
         table(&sandbox, PLACEMENTS).unwrap(),
-        [format!("{KEY}|t1-0|0.95"), format!("{SECOND}|t1-1|0.95")]
+        [format!("{KEY}|T1|0.95"), format!("{SECOND}|T2|0.95")]
     );
 }
 
 #[tokio::test]
 async fn low_confidence_starts_a_new_topic() {
-    let patch = json!({"decide": {"env": {
-        "FAKE_CONFIDENCE": "0.2",
-        "FAKE_P": QUIET,
-        "FAKE_TOPICS": FIRST_TOPIC,
+    let patch = json!({"stub": {"decide": {
+        "confidence": "0.2",
+        "p": QUIET,
+        "topics": FIRST_TOPIC,
     }}});
     let sandbox = second_run("topic-weak", &patch).await.unwrap();
     assert_eq!(
@@ -88,7 +107,7 @@ async fn low_confidence_starts_a_new_topic() {
 
 #[tokio::test]
 async fn new_topic_when_the_choice_is_new() {
-    let patch = json!({"decide": {"env": {"FAKE_P": QUIET}}});
+    let patch = json!({"stub": {"decide": {"p": QUIET}}});
     let sandbox = second_run("topic-new", &patch).await.unwrap();
     assert_eq!(
         table(&sandbox, PLACEMENTS).unwrap(),
@@ -103,7 +122,7 @@ async fn new_topic_when_the_choice_is_new() {
 async fn second_run(name: &str, patch: &Value) -> Fallible<Sandbox> {
     let sandbox = Sandbox::new(name)?;
     seed(&sandbox, &one())?;
-    let quiet = json!({"decide": {"env": {"FAKE_P": QUIET}}});
+    let quiet = json!({"stub": {"decide": {"p": QUIET}}});
     start(&sandbox, &quiet, QUICK).await?;
     seed_from(&sandbox, &[(SECOND, "u1", "c2", "still down")], LATER)?;
     start(&sandbox, patch, QUICK).await?;
@@ -114,7 +133,7 @@ async fn second_run(name: &str, patch: &Value) -> Fallible<Sandbox> {
 async fn segments_of_one_batch_can_merge() {
     let sandbox = Sandbox::new("topic-merge").unwrap();
     seed(&sandbox, &two_chats()).unwrap();
-    let patch = json!({"decide": {"env": {"FAKE_P": QUIET, "FAKE_TOPICS": "x S1"}}});
+    let patch = json!({"stub": {"decide": {"p": QUIET, "topics": "x S1"}}});
     start(&sandbox, &patch, QUICK).await.unwrap();
     assert_eq!(
         questions_of(&decided(&sandbox).unwrap()),

@@ -1,3 +1,5 @@
+use alloc::collections::BTreeMap;
+
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json, to_string};
@@ -15,6 +17,8 @@ const SEGMENT: &str = "{segment}";
 pub(crate) struct Attach {
     conversation_id: String,
     last_ms: u64,
+    #[serde(default)]
+    probability: Option<f64>,
     topic_id: String,
 }
 
@@ -75,6 +79,8 @@ pub(crate) struct Entry {
 pub(crate) struct Layout {
     batch_id: u64,
     lines: Vec<Placed>,
+    #[serde(default)]
+    probabilities: BTreeMap<String, Option<f64>>,
     segments: Vec<Segment>,
 }
 
@@ -85,6 +91,10 @@ impl Layout {
 
     pub(super) fn lines(&self) -> &[Placed] {
         &self.lines
+    }
+
+    pub(super) const fn probabilities(&self) -> &BTreeMap<String, Option<f64>> {
+        &self.probabilities
     }
 
     pub(super) fn questions(&self) -> usize {
@@ -105,6 +115,8 @@ impl Layout {
 #[schemars(rename = "TriageOpen")]
 pub(crate) struct Open {
     label: String,
+    #[serde(default)]
+    probability: Option<f64>,
     topic: String,
 }
 
@@ -429,6 +441,16 @@ pub(crate) fn pack(req: &PackRequest) -> Result<PackResponse, AppError> {
         layout: Layout {
             batch_id: req.batch_id,
             lines: drafted.lines,
+            probabilities: req
+                .topics
+                .iter()
+                .map(|topic| (topic.topic.clone(), topic.probability))
+                .chain(
+                    req.attach
+                        .iter()
+                        .map(|point| (point.topic_id.clone(), point.probability)),
+                )
+                .collect(),
             segments,
         },
     })

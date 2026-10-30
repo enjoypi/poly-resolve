@@ -10,13 +10,14 @@ use crate::AppError;
 const CHOICE: &str = "choice";
 const ONE: f64 = 1.0;
 const PREDICATE: &str = "predicate";
+const REFUSAL: &str = "refusal";
 const ZERO: f64 = 0.0;
 
 #[derive(Deserialize)]
 struct Answer {
     choice: Option<Value>,
     confidence: Option<f64>,
-    #[serde(default, rename = "type")]
+    #[serde(rename = "type")]
     kind: String,
     probability: Option<f64>,
 }
@@ -37,11 +38,11 @@ pub(crate) struct Placement {
 
 #[derive(Deserialize)]
 struct Reply {
-    answers: Vec<Answer>,
+    answers: Vec<Option<Answer>>,
 }
 
 struct Resolve<'resolve> {
-    answers: &'resolve [Answer],
+    answers: &'resolve [Option<Answer>],
     min: f64,
 }
 
@@ -49,7 +50,8 @@ impl Resolve<'_> {
     fn chosen(&self, segment: &Segment, done: &[String]) -> Option<String> {
         let answer = segment
             .question()
-            .and_then(|index| self.answers.get(index))?;
+            .and_then(|index| self.answers.get(index))
+            .and_then(Option::as_ref)?;
         let value = (answer.kind == CHOICE
             && answer.confidence.is_some_and(|score| score >= self.min))
         .then_some(answer.choice.as_ref())
@@ -112,6 +114,27 @@ pub(crate) enum Verdict {
     Urgent,
 }
 
+fn check(reply: &Reply, layout: &Layout) -> Result<(), AppError> {
+    if reply.answers.len() != layout.questions() {
+        return Err(AppError::BadRequest);
+    }
+    let line_count = layout.lines().len();
+    for (index, answer) in reply.answers.iter().enumerate() {
+        let expected = if index < line_count {
+            PREDICATE
+        } else {
+            CHOICE
+        };
+        if let Some(found) = answer.as_ref()
+            && found.kind != expected
+            && found.kind != REFUSAL
+        {
+            return Err(AppError::BadRequest);
+        }
+    }
+    Ok(())
+}
+
 fn grouped(layout: &Layout, placements: &[Placement], threshold: f64) -> Vec<Touched> {
     let mut groups: BTreeMap<&str, Group> = BTreeMap::new();
     for (line, placement) in layout.lines().iter().zip(placements) {
@@ -123,7 +146,11 @@ fn grouped(layout: &Layout, placements: &[Placement], threshold: f64) -> Vec<Tou
                     .get(line.segment())
                     .map_or_default(|segment| segment.label().to_owned()),
                 last_ms: 0,
-                probability: None,
+                probability: layout
+                    .probabilities()
+                    .get(placement.topic.as_str())
+                    .copied()
+                    .flatten(),
             });
         group.last_ms = group.last_ms.max(line.occurred_at_ms());
         group.probability = group
@@ -158,9 +185,7 @@ fn probability(answer: &Answer) -> Option<f64> {
 pub(crate) fn sort(req: &SortRequest) -> Result<SortResponse, AppError> {
     let reply: Reply = from_str(&req.response).map_err(|_err| AppError::BadRequest)?;
     let layout = &req.layout;
-    if reply.answers.len() != layout.questions() {
-        return Err(AppError::BadRequest);
-    }
+    check(&reply, layout)?;
     let resolved = Resolve {
         answers: &reply.answers,
         min: req.min_confidence,
@@ -172,7 +197,11 @@ pub(crate) fn sort(req: &SortRequest) -> Result<SortResponse, AppError> {
         .enumerate()
         .map(|(index, line)| Placement {
             key: line.key().to_owned(),
-            probability: reply.answers.get(index).and_then(probability),
+            probability: reply
+                .answers
+                .get(index)
+                .and_then(Option::as_ref)
+                .and_then(probability),
             topic: resolved.get(line.segment()).cloned().unwrap_or_default(),
         })
         .collect();

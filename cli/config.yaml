@@ -90,39 +90,9 @@ triage:
       CODEX_BASE_URL: "${CODEX_BASE_URL}"
       PATH: "${PATH}"
   decide:
-    args:
-      - -q
-      - -sS
-      - --fail-with-body
-      - --max-time
-      - "30"
-      - --variable
-      - "%TRIAGE_URL"
-      - --variable
-      - "%TRIAGE_KEY"
-      - --expand-url
-      - "{{TRIAGE_URL}}"
-      - --expand-header
-      - "Authorization: Bearer {{TRIAGE_KEY}}"
-      - -H
-      - "Content-Type: application/json"
-      - --data-binary
-      - "@-"
-    bin: curl
-    env: {}
-    sandbox:
-      bin: /usr/bin/sandbox-exec
-      canary: /usr/bin/true
-      paths:
-        BREW: /opt/homebrew
-      probe: [--help]
-      profile: cli/sandbox/curl.sb
-      vars: {}
+    key: "${DECISIONS_API_KEY}"
     timeout_ms: 35000
-    vars:
-      PATH: "${PATH}"
-      TRIAGE_KEY: "${DECISIONS_API_KEY}"
-      TRIAGE_URL: "${DECISIONS_URL}"
+    url: "${DECISIONS_URL}"
   limits:
     batch: 20
     handoff_cooldown_ms: 600000
@@ -131,10 +101,11 @@ triage:
     max_attempts: 3
     max_decisions_per_hour: 30
     max_handoffs_per_hour: 1
+    parallel: 4
     poll_ms: 5000
     retry_after_ms: 60000
   mode: enabled
-  model: gpt-6-luna-decisions
+  model: gpt-6-luna
   notice: |-
     【消息提醒】优先级 {probability}｜话题 {topic}
     {analysis}

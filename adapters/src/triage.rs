@@ -2,8 +2,10 @@ mod alert;
 mod batch;
 pub mod config;
 mod desk;
+mod endpoint;
 mod intake;
 mod screen;
+mod trace;
 
 use core::pin::pin;
 use core::time::Duration;
@@ -14,16 +16,16 @@ use domain::features::Context;
 use serde_json::{Value, json};
 use tokio::time::sleep;
 
-use self::alert::{analyze, deliver};
+use self::alert::run as relay_alerts;
 use self::batch::{seal, send};
 use self::config::Settings;
 use self::desk::Desk;
 use self::intake::{form, intake, rerender};
 use self::screen::screen;
 use crate::config::Settings as Ingest;
+use crate::http::{Call, Client as HttpClient, Reply};
 use crate::ingest::now_ms;
 use crate::ledger::Ledger;
-use crate::pipe::{Job, feed};
 use crate::race::{Stop, race};
 
 const ANALYZED: &str = "analyzed";
@@ -65,6 +67,7 @@ impl<'setup> Setup<'setup> {
 
 struct Shift<'shift> {
     desk: Desk<'shift>,
+    http: HttpClient,
     lane: Lane,
     ledger: Ledger,
     stop: Stop<'shift>,
@@ -72,14 +75,14 @@ struct Shift<'shift> {
 }
 
 impl Shift<'_> {
-    async fn exec(&mut self, job: Job<'_>) -> Option<io::Result<Output>> {
-        let mut work = pin!(feed(job));
-        race(&mut *self.stop, work.as_mut()).await
-    }
-
     async fn pause(&mut self) -> Option<()> {
         let mut nap = pin!(sleep(Duration::from_millis(self.triage.poll_ms())));
         race(&mut *self.stop, nap.as_mut()).await
+    }
+
+    async fn post(&mut self, call: &Call<'_>) -> Option<Result<Reply, String>> {
+        let mut work = pin!(self.http.post(call));
+        race(&mut *self.stop, work.as_mut()).await
     }
 
     async fn prepare(&mut self) -> Option<()> {
@@ -92,13 +95,11 @@ impl Shift<'_> {
     }
 
     async fn relay(&mut self) -> Option<()> {
-        for alert in self.waiting(PENDING) {
-            analyze(self, &alert).await?;
-        }
-        for alert in self.waiting(ANALYZED) {
-            deliver(self, &alert).await?;
-        }
-        Some(())
+        let woken = self.ledger.wake_alerts();
+        tracing::debug!(woken, "alerts activated");
+        let pending = self.waiting(PENDING);
+        let analyzed = self.waiting(ANALYZED);
+        relay_alerts(self, &pending, &analyzed).await
     }
 
     async fn serve(&mut self) {
@@ -120,8 +121,13 @@ impl Shift<'_> {
     }
 
     fn waiting(&self, state: &str) -> Vec<Value> {
+        let now = now_ms();
         self.ledger.next_alert(&json!({
+            "cooldown_since_ms": now.saturating_sub(self.triage.handoff_cooldown_ms()),
+            "hour_since_ms": now.saturating_sub(HOUR_MS),
             "max_attempts": self.triage.max_attempts(),
+            "max_per_hour": self.triage.max_handoffs_per_hour(),
+            "parallel": self.triage.parallel(),
             "retry_before_ms": retry_before(self),
             "state": state,
         }))
@@ -154,13 +160,18 @@ fn retry_before(shift: &Shift<'_>) -> u64 {
 }
 
 pub async fn run(setup: Setup<'_>, lane: Lane, stop: Stop<'_>) {
-    if !setup.triage.enabled() {
-        return;
-    }
     match Ledger::open(setup.ingest.store_path(), setup.ingest.busy_timeout_ms()) {
         Ok(ledger) => {
+            if !setup.triage.enabled() {
+                let _: Option<u64> = ledger.intake_since(&json!({
+                    "enabled": false,
+                    "since_ms": NONE,
+                }));
+                return;
+            }
             Shift {
                 desk: Desk::new(setup.context, setup.ingest, setup.triage),
+                http: HttpClient::new(),
                 lane,
                 ledger,
                 stop,
@@ -183,6 +194,18 @@ pub fn validate(setup: Setup<'_>) -> Result<(), String> {
         || triage.topics_max_open().saturating_add(triage.batch()) > MAX_CHOICES
     {
         return Err("triage.limits.batch or triage.sizes.topics_max_open too large".to_owned());
+    }
+    triage
+        .decide()
+        .url()
+        .map(drop)
+        .map_err(|_err| "triage.decide.url invalid".to_owned())?;
+    if let Some(screen) = triage.screen() {
+        screen
+            .http()
+            .local_url()
+            .map(drop)
+            .map_err(|_err| "triage.screen.http.url invalid".to_owned())?;
     }
     let desk = Desk::new(setup.context, setup.ingest, triage);
     desk.redact(&desk.rules(&[]), "")

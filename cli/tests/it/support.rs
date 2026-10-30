@@ -46,7 +46,7 @@ errors:
     code: refused
 triage:
   codex: {args: [x], bin: /nonexistent/triage, env: {FAKE_DIR: /nonexistent}, sandbox: &fence {bin: /usr/bin/sandbox-exec, canary: /usr/bin/true, paths: {DIR: /nonexistent/sandbox-dir, FIXTURES: /nonexistent/fixtures}, probe: [noop], profile: /nonexistent/fake.sb, vars: {HOME: \"${HOME}\"}}, timeout_ms: 1000, vars: {PATH: \"${PATH}\"}}
-  decide: {args: [x], bin: /nonexistent/triage, env: {FAKE_DIR: /nonexistent}, sandbox: *fence, timeout_ms: 1000, vars: {PATH: \"${PATH}\"}}
+  decide: {key: \"${CARGO_PKG_NAME}\", timeout_ms: 1000, url: \"http://localhost:15801/decisions\"}
   limits:
     batch: 1
     handoff_cooldown_ms: 0
@@ -55,6 +55,7 @@ triage:
     max_attempts: 1
     max_decisions_per_hour: 1
     max_handoffs_per_hour: 1
+    parallel: 2
     poll_ms: 10
     retry_after_ms: 0
   mode: disabled
