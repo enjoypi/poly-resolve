@@ -41,16 +41,8 @@ class Queue {
   ) {}
 
   private async approveAll(): Promise<void> {
-    const keys = [...this.cards.keys()];
-    this.error.textContent = "";
-    try {
-      const { data, error } = await this.client.POST("/review/approve", {
-        body: { keys }
-      });
-      if (data) keys.forEach((key, index) => data.states[index] === "approved" && this.drop(key));
-      else this.error.textContent = error?.code ?? "";
-    } catch {
-      this.error.textContent = TEXT.unreachable;
+    for (const key of [...this.cards.keys()]) {
+      if (!(await this.approve(key))) return;
     }
   }
 
@@ -94,16 +86,19 @@ class Queue {
     );
   }
 
-  private async approve(key: string): Promise<void> {
+  private async approve(key: string): Promise<boolean> {
     this.error.textContent = "";
     try {
-      const { error } = await this.client.POST("/review/approve", {
-        body: { keys: [key] }
+      const { error } = await this.client.PATCH("/api/reviews/{key}", {
+        body: { state: "approved" },
+        params: { path: { key } },
       });
       if (error) this.error.textContent = error.code;
       else this.drop(key);
+      return !error;
     } catch {
       this.error.textContent = TEXT.unreachable;
+      return false;
     }
   }
 
@@ -116,8 +111,8 @@ class Queue {
   async load(): Promise<void> {
     this.error.textContent = "";
     try {
-      const { data, error } = await this.client.POST("/review/list", {
-        body: { limit: REVIEW_LIMIT },
+      const { data, error } = await this.client.GET("/api/reviews", {
+        params: { query: { limit: REVIEW_LIMIT } },
       });
       if (data) this.show(data.items, data.reasons);
       else this.error.textContent = error?.code ?? "";
@@ -130,8 +125,9 @@ class Queue {
     this.error.textContent = "";
     const pasted = leak.hidden ? undefined : leak.value;
     try {
-      const { error } = await this.client.POST("/review/reject", {
-        body: { key, leak: pasted, reason }
+      const { error } = await this.client.PATCH("/api/reviews/{key}", {
+        body: { leak: pasted, reason, state: "rejected" },
+        params: { path: { key } },
       });
       leak.value = "";
       if (error) this.error.textContent = error.code;

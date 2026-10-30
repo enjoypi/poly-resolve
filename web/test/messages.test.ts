@@ -6,7 +6,7 @@ import { renderMessages } from "../src/messages";
 
 if (!GlobalRegistrator.isRegistered) GlobalRegistrator.register();
 
-const path = Object.keys(spec.paths).find((candidate) => candidate.endsWith("/list")) ?? "";
+const path = Object.keys(spec.paths).find((candidate) => candidate.endsWith("/messages")) ?? "";
 const NOON = Date.UTC(2026, 9, 28, 1, 20, 9);
 
 type Reply = { body: unknown; status?: number };
@@ -29,7 +29,9 @@ function item(key: string, patch: Record<string, unknown> = {}) {
 function stub(replies: Reply[]) {
   const calls: { path: string; body: Record<string, unknown> }[] = [];
   const fetch = async (request: Request) => {
-    calls.push({ path: new URL(request.url).pathname, body: await request.json() });
+    const url = new URL(request.url);
+    const query = [...url.searchParams].map(([name, value]) => [name, /^\d+$/.test(value) ? Number(value) : value]);
+    calls.push({ path: url.pathname, body: Object.fromEntries(query) });
     const reply = replies[Math.min(calls.length, replies.length) - 1];
     return Response.json(reply?.body, { status: reply?.status ?? 200 });
   };

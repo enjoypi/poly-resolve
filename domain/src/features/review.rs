@@ -9,15 +9,9 @@ use crate::review::{Item, Listing, Reason, Rule, Ruling};
 const PENDING: &str = "pending";
 
 #[derive(Deserialize, JsonSchema)]
-#[schemars(rename = "ReviewApproveRequest")]
-pub(crate) struct ApproveRequest {
-    keys: Vec<String>,
-}
-
-#[derive(JsonSchema, Serialize)]
-#[schemars(rename = "ReviewApproveResponse")]
-pub(crate) struct ApproveResponse {
-    states: Vec<String>,
+#[schemars(rename = "ReviewKey")]
+pub(crate) struct Key {
+    key: String,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -34,30 +28,21 @@ pub(crate) struct ListResponse {
     reasons: Vec<Reason>,
 }
 
-#[derive(Deserialize, JsonSchema)]
-#[schemars(rename = "ReviewRejectRequest")]
-pub(crate) struct RejectRequest {
-    key: String,
-    leak: Option<String>,
-    reason: String,
-}
-
 #[derive(JsonSchema, Serialize)]
 #[schemars(rename = "ReviewRulingResponse")]
 pub(crate) struct RulingResponse {
     state: String,
 }
 
-pub(crate) fn approve(
-    req: &ApproveRequest,
-    context: &Context<'_>,
-) -> Result<ApproveResponse, AppError> {
-    let states = req
-        .keys
-        .iter()
-        .map(|key| settle(context, &Ruling::approve(key)).map(|done| done.state))
-        .collect::<Result<Vec<String>, AppError>>()?;
-    Ok(ApproveResponse { states })
+#[derive(Deserialize, JsonSchema)]
+#[schemars(rename = "ReviewUpdateRequest")]
+#[serde(tag = "state", rename_all = "lowercase")]
+pub(crate) enum Update {
+    Approved,
+    Rejected {
+        leak: Option<String>,
+        reason: String,
+    },
 }
 
 pub(crate) fn list(req: &ListRequest, context: &Context<'_>) -> Result<ListResponse, AppError> {
@@ -73,40 +58,52 @@ pub(crate) fn list(req: &ListRequest, context: &Context<'_>) -> Result<ListRespo
     })
 }
 
-pub(crate) fn reject(
-    req: &RejectRequest,
+fn reject(
     context: &Context<'_>,
+    ruling: Ruling<'_>,
+    leak: Option<&str>,
 ) -> Result<RulingResponse, AppError> {
     let reason = context
         .reasons()
         .iter()
-        .find(|known| known.code() == req.reason)
-        .ok_or(AppError::BadRequest)?;
-    let leak = req
-        .leak
-        .as_deref()
-        .map(str::trim)
-        .filter(|text| !text.is_empty());
-    let ruling = Ruling::reject(&req.key, &req.reason);
-    match (reason.placeholder(), leak) {
+        .find(|known| known.code() == ruling.reason())
+        .ok_or(AppError::Unprocessable)?;
+    let pasted = leak.map(str::trim).filter(|text| !text.is_empty());
+    match (reason.placeholder(), pasted) {
         (Some(placeholder), Some(raw)) => {
             let text = context
                 .docket()
-                .source(&req.key)?
-                .ok_or(AppError::BadRequest)?;
+                .source(ruling.key())?
+                .ok_or(AppError::NotFound)?;
             let pattern = learn::rule(raw, &text, context.learn_min_chars())?;
             let rule = Rule::new(pattern, placeholder.to_owned());
             settle(context, &ruling.learned(&rule))
         }
         (None, None) => settle(context, &ruling),
-        _ => Err(AppError::BadRequest),
+        _ => Err(AppError::Unprocessable),
     }
 }
 
 fn settle(context: &Context<'_>, ruling: &Ruling<'_>) -> Result<RulingResponse, AppError> {
-    context
-        .docket()
-        .settle(ruling)?
-        .map(|state| RulingResponse { state })
-        .ok_or(AppError::BadRequest)
+    let state = context.docket().settle(ruling)?.ok_or(AppError::NotFound)?;
+    if state == ruling.state() {
+        Ok(RulingResponse { state })
+    } else {
+        Err(AppError::Conflict)
+    }
+}
+
+pub(crate) fn update(
+    target: &Key,
+    change: Update,
+    context: &Context<'_>,
+) -> Result<RulingResponse, AppError> {
+    match change {
+        Update::Approved => settle(context, &Ruling::approve(&target.key)),
+        Update::Rejected { leak, reason } => reject(
+            context,
+            Ruling::reject(&target.key, &reason),
+            leak.as_deref(),
+        ),
+    }
 }

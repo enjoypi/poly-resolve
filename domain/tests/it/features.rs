@@ -9,7 +9,7 @@ use serde::Deserialize;
 use serde_json::{Error, Map, Value, from_str, json};
 
 use crate::log::Capture;
-use crate::support::{Fixture, Rows, cli, row};
+use crate::support::{Fixture, Rows, local, row};
 
 #[derive(Deserialize)]
 struct Line {
@@ -45,6 +45,7 @@ fn dispatch_logs_all_fields() {
             "action": "check",
             "feature": "health",
             "ok": true,
+            "params": "",
             "request": "{}",
             "response": body,
             "session_id": "s1",
@@ -60,7 +61,7 @@ fn dispatch_logs_error_code_as_response() {
     let errors = fixture.errors();
     let capture = Capture::default();
     let err = capture
-        .record(|| fixture.dispatch(&cli("nope", "nope", "{}")))
+        .record(|| fixture.dispatch(&local("nope", "nope", "{}")))
         .unwrap_err();
     let line = parse(&capture).unwrap();
     assert_eq!(line.fields.get("ok"), Some(&json!(false)));
@@ -74,7 +75,7 @@ fn dispatch_redacts_ingest_errors() {
     let fixture = Fixture::new().unwrap();
     let errors = fixture.errors();
     let capture = Capture::default();
-    let call = cli("ingest", "parse_event", "top-secret-body");
+    let call = local("ingest", "parse_event", "top-secret-body");
     let err = capture.record(|| fixture.dispatch(&call)).unwrap_err();
     let line = parse(&capture).unwrap();
     assert!(!capture.text().contains("top-secret-body"));
@@ -98,7 +99,7 @@ fn dispatch_redacts_ingest_payloads() {
         "utc_offset_minutes": offset,
     })
     .to_string();
-    let call = cli("ingest", "parse_event", &request);
+    let call = local("ingest", "parse_event", &request);
     let body = capture
         .record(|| Fixture::new().unwrap().dispatch(&call))
         .unwrap();
@@ -119,7 +120,7 @@ fn dispatch_redacts_ingest_payloads() {
 fn dispatch_redacts_message_payloads() {
     let capture = Capture::default();
     let rows = Rows::new(vec![row("dingtalk:acct:m1", 10).unwrap()]);
-    let call = cli("messages", "list", r#"{"cursor":"20:secret-key"}"#);
+    let call = local("messages", "list", "").with_params("cursor=20:secret-key");
     let body = capture
         .record(|| Fixture::new().unwrap().dispatch_with(&rows, &call))
         .unwrap();
@@ -152,7 +153,7 @@ fn dispatch_redacts_triage_payloads() {
         "unknown_sender": "unknown",
     })
     .to_string();
-    let call = cli("triage", "line", &request);
+    let call = local("triage", "line", &request);
     let body = capture
         .record(|| Fixture::new().unwrap().dispatch(&call))
         .unwrap();

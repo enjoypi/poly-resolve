@@ -1,6 +1,6 @@
 use serde_json::{Error, Value, from_str, json};
 
-use crate::support::{Fixture, cli};
+use crate::support::{Fixture, local};
 
 const BODY: &str = "QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo0MTIzNDU2";
 const CIPHER_MIN: u32 = 32;
@@ -40,7 +40,7 @@ fn assemble_rejects_malformed_request() {
 }
 
 fn call(action: &str, request: &str) -> Result<Reply, Error> {
-    match Fixture::new()?.dispatch(&cli("ingest", action, request)) {
+    match Fixture::new()?.dispatch(&local("ingest", action, request)) {
         Ok(response) => Ok(Ok(from_str(&response)?)),
         Err(err) => Ok(Err(err.status())),
     }

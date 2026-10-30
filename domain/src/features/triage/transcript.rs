@@ -46,12 +46,22 @@ impl<'style> Style<'style> {
     }
 }
 
-pub(super) fn fit(mut lines: Vec<Value>, max: usize) -> String {
-    loop {
-        let text = Value::Array(lines.clone()).to_string();
-        if text.chars().count() <= max || lines.len() <= 1 {
-            return text;
-        }
-        drop(lines.remove(0));
-    }
+pub(super) fn fit(lines: Vec<Value>, max: usize) -> String {
+    let sizes: Vec<usize> = lines
+        .iter()
+        .map(|line| line.to_string().chars().count().saturating_add(1))
+        .collect();
+    let mut total = sizes
+        .iter()
+        .fold(1, |sum: usize, size| sum.saturating_add(*size));
+    let skip = sizes
+        .iter()
+        .take(sizes.len().saturating_sub(1))
+        .take_while(|size| {
+            let over = total > max;
+            total = total.saturating_sub(**size);
+            over
+        })
+        .count();
+    Value::Array(lines.into_iter().skip(skip).collect()).to_string()
 }

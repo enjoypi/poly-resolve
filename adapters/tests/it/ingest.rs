@@ -1,3 +1,5 @@
+mod timeout;
+
 use std::io::ErrorKind;
 
 use adapters::store::Archive;

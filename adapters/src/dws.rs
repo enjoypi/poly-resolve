@@ -3,7 +3,7 @@ use core::future::poll_fn;
 use core::pin::Pin;
 use core::task::Poll;
 use core::time::Duration;
-use std::io;
+use std::io::{self, ErrorKind};
 use std::process::{Output, Stdio};
 
 use serde::{Deserialize, Serialize};
@@ -45,11 +45,9 @@ impl<'dws> Dws<'dws> {
     }
 
     pub(crate) async fn decrypt(&self, cipher: &str) -> io::Result<Output> {
-        self.prepare(self.config.decrypt())
-            .arg(format!("--text={cipher}"))
-            .stdin(Stdio::null())
-            .output()
-            .await
+        let mut command = self.prepare(self.config.decrypt());
+        let _: &mut Command = command.arg(format!("--text={cipher}"));
+        self.output(command).await
     }
 
     pub(crate) fn listen(&self) -> io::Result<Listener> {
@@ -72,11 +70,9 @@ impl<'dws> Dws<'dws> {
     }
 
     pub(crate) async fn lookup(&self, ids: &[String]) -> io::Result<Output> {
-        self.prepare(self.config.lookup())
-            .arg(format!("--msg-ids={}", ids.join(",")))
-            .stdin(Stdio::null())
-            .output()
-            .await
+        let mut command = self.prepare(self.config.lookup());
+        let _: &mut Command = command.arg(format!("--msg-ids={}", ids.join(",")));
+        self.output(command).await
     }
 
     pub(crate) fn manual(&self, code: Option<i32>) -> bool {
@@ -87,6 +83,13 @@ impl<'dws> Dws<'dws> {
         Self { config }
     }
 
+    async fn output(&self, mut command: Command) -> io::Result<Output> {
+        let limit = Duration::from_millis(self.config.timeout_ms());
+        timeout(limit, command.stdin(Stdio::null()).output())
+            .await
+            .unwrap_or_else(|_elapsed| Err(io::Error::from(ErrorKind::TimedOut)))
+    }
+
     fn prepare(&self, process: &Process) -> Command {
         let mut command = self.bare(process);
         let _: &mut Command = command.args(process.args());
@@ -94,11 +97,9 @@ impl<'dws> Dws<'dws> {
     }
 
     pub(crate) async fn pull(&self, start: &str, end: &str) -> io::Result<Output> {
-        self.prepare(self.config.pull())
-            .args(["--start", start, "--end", end])
-            .stdin(Stdio::null())
-            .output()
-            .await
+        let mut command = self.prepare(self.config.pull());
+        let _: &mut Command = command.args(["--start", start, "--end", end]);
+        self.output(command).await
     }
 }
 

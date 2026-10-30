@@ -8,9 +8,12 @@ use crate::{AppError, Body};
 #[derive(Debug)]
 pub struct Entry {
     action: &'static str,
+    body: Option<Value>,
     failures: &'static [AppError],
     feature: &'static str,
-    request: Value,
+    method: &'static str,
+    params: Option<Value>,
+    path: &'static str,
     response: Value,
 }
 
@@ -18,6 +21,11 @@ impl Entry {
     #[must_use = "动作名需写入接口说明"]
     pub const fn action(&self) -> &'static str {
         self.action
+    }
+
+    #[must_use = "请求体结构需写入接口说明"]
+    pub const fn body(&self) -> Option<&Value> {
+        self.body.as_ref()
     }
 
     #[must_use = "错误清单需写入接口说明"]
@@ -30,9 +38,19 @@ impl Entry {
         self.feature
     }
 
-    #[must_use = "请求结构需写入接口说明"]
-    pub const fn request(&self) -> &Value {
-        &self.request
+    #[must_use = "方法需写入路由与接口说明"]
+    pub const fn method(&self) -> &'static str {
+        self.method
+    }
+
+    #[must_use = "参数结构需写入接口说明"]
+    pub const fn params(&self) -> Option<&Value> {
+        self.params.as_ref()
+    }
+
+    #[must_use = "路径需写入路由与接口说明"]
+    pub const fn path(&self) -> &'static str {
+        self.path
     }
 
     #[must_use = "响应结构需写入接口说明"]
@@ -74,15 +92,19 @@ pub fn build() -> Listing {
     let mut generator = SchemaGenerator::new(settings);
     let entries = ROUTES
         .iter()
-        .map(|route| {
-            let (request, response) = (route.schema)(&mut generator);
-            Entry {
+        .filter_map(|route| {
+            let (method, path, describe) = route.http.binding()?;
+            let (params, body, response) = describe(&mut generator);
+            Some(Entry {
                 action: route.action,
+                body: body.map(Value::from),
                 failures: route.failures,
                 feature: route.feature,
-                request: request.into(),
+                method,
+                params: params.map(Value::from),
+                path,
                 response: response.into(),
-            }
+            })
         })
         .collect();
     let error = generator.subschema_for::<Body<'static>>().into();

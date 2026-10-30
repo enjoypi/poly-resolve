@@ -11,13 +11,16 @@ messages:
 errors:
   bad_request:
     code: bad_request
-    exit_code: 3
+  conflict:
+    code: conflict
+  not_found:
+    code: not_found
   storage:
     code: storage
-    exit_code: 10
   unknown_action:
     code: unknown_action
-    exit_code: 4
+  unprocessable:
+    code: unprocessable
 triage:
   codex:
     args:
@@ -301,6 +304,7 @@ ingest:
       args: [chat, message, list-all, --limit, "100", --page-all, --page-limit, "20", --no-reactions, -f, json]
       bin: dws
       sandbox: *dws_sandbox
+    timeout_ms: 120000
     vars:
       HOME: "${HOME}"
       PATH: "${PATH}"

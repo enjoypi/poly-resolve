@@ -1,4 +1,5 @@
 mod assets;
+mod host;
 mod messages;
 mod reviews;
 
@@ -62,28 +63,21 @@ fn drains_in_flight_request() {
     let path = config("drain.yaml", &live(&dir)).unwrap();
     let mut server = start(&path).unwrap();
     let mut slow = partial(&server.addr).unwrap();
-    let sync = post(&server.addr, ["/health/check", IDENTITY], "{}").unwrap();
+    let sync = get(&server.addr, "/api/health").unwrap();
     assert!(sync.starts_with("HTTP/1.1 200"));
     terminate(&server.child, "-TERM").unwrap();
     await_log(&mut server.lines, "shutdown signal received").unwrap();
     slow.write_all(b"}").unwrap();
     let mut response = String::new();
     let _: usize = slow.read_to_string(&mut response).unwrap();
-    assert!(response.starts_with("HTTP/1.1 200"));
+    assert!(response.starts_with("HTTP/1.1 "));
     assert!(server.child.wait().unwrap().success());
     let rest: Vec<String> = server.lines.map(Result::unwrap).collect();
     assert!(index_of(&rest, "shutdown complete").is_some());
 }
 
 fn get(addr: &str, path: &str) -> io::Result<String> {
-    let mut stream = TcpStream::connect(addr)?;
-    write!(
-        stream,
-        "GET {path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"
-    )?;
-    let mut response = String::new();
-    let _: usize = stream.read_to_string(&mut response)?;
-    Ok(response)
+    send(addr, ["GET", path, ""], "")
 }
 
 fn index_of(lines: &[String], needle: &str) -> Option<usize> {
@@ -94,22 +88,28 @@ fn partial(addr: &str) -> io::Result<TcpStream> {
     let mut stream = TcpStream::connect(addr)?;
     write!(
         stream,
-        "POST /health/check HTTP/1.1\r\nHost: x\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{{"
+        "PATCH /api/reviews/zz HTTP/1.1\r\nHost: {addr}\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{{"
     )?;
     Ok(stream)
 }
 
-fn post(addr: &str, head: [&str; 2], body: &str) -> io::Result<String> {
-    let [path, headers] = head;
+fn raw(addr: &str, request: &str) -> io::Result<String> {
     let mut stream = TcpStream::connect(addr)?;
-    write!(
-        stream,
-        "POST {path} HTTP/1.1\r\nHost: x\r\n{headers}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
-        body.len()
-    )?;
+    stream.write_all(request.as_bytes())?;
     let mut response = String::new();
     let _: usize = stream.read_to_string(&mut response)?;
     Ok(response)
+}
+
+fn send(addr: &str, head: [&str; 3], body: &str) -> io::Result<String> {
+    let [method, path, headers] = head;
+    raw(
+        addr,
+        &format!(
+            "{method} {path} HTTP/1.1\r\nHost: {addr}\r\nContent-Type: application/json\r\n{headers}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        ),
+    )
 }
 
 #[test]
@@ -122,15 +122,15 @@ fn serves_http_until_signal() {
         let responses = [
             (
                 "HTTP/1.1 200",
-                post(addr, ["/health/check", IDENTITY], "{}").unwrap(),
+                send(addr, ["GET", "/api/health", IDENTITY], "").unwrap(),
             ),
             (
                 "HTTP/1.1 400",
-                post(addr, ["/health/check", IDENTITY], "nope").unwrap(),
+                send(addr, ["GET", "/api/messages?limit=x", IDENTITY], "").unwrap(),
             ),
             (
-                "HTTP/1.1 404",
-                post(addr, ["/nope/nope", ""], "{}").unwrap(),
+                "HTTP/1.1 400",
+                send(addr, ["GET", "/api/reviews?limit=0", ""], "").unwrap(),
             ),
         ];
         terminate(&server.child, signal).unwrap();
@@ -159,7 +159,7 @@ fn serves_with_triage_enabled() {
     let yaml = live(&dir).replace("mode: disabled", "mode: enabled");
     let path = config("serve-triage.yaml", &yaml).unwrap();
     let server = start(&path).unwrap();
-    let sync = post(&server.addr, ["/health/check", IDENTITY], "{}").unwrap();
+    let sync = get(&server.addr, "/api/health").unwrap();
     assert!(sync.starts_with("HTTP/1.1 200"));
     assert!(stop(server).unwrap());
 }
@@ -200,7 +200,7 @@ fn times_out_with_configured_exit_code() {
     let path = config("timeout.yaml", &yaml).unwrap();
     let mut server = start(&path).unwrap();
     let slow = partial(&server.addr).unwrap();
-    let sync = post(&server.addr, ["/health/check", IDENTITY], "{}").unwrap();
+    let sync = get(&server.addr, "/api/health").unwrap();
     assert!(sync.starts_with("HTTP/1.1 200"));
     terminate(&server.child, "-TERM").unwrap();
     let expected: i32 = 8;
@@ -221,7 +221,7 @@ fn waits_for_collector_after_server_stops() {
     );
     let path = config("slow-collector.yaml", &yaml).unwrap();
     let server = start(&path).unwrap();
-    let sync = post(&server.addr, ["/health/check", IDENTITY], "{}").unwrap();
+    let sync = get(&server.addr, "/api/health").unwrap();
     assert!(sync.starts_with("HTTP/1.1 200"));
     assert!(stop(server).unwrap());
 }

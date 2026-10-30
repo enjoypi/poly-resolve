@@ -5,8 +5,9 @@ use domain::{AppError, Errors};
 use serde_json::{Error, from_str, from_value, json};
 
 const BATCH: u64 = 1;
-pub(crate) const ERRORS: &str = r#"{"bad_request":{"code":"invalid","exit_code":13},"storage":{"code":"unavailable","exit_code":15},"unknown_action":{"code":"missing","exit_code":14}}"#;
+pub(crate) const ERRORS: &str = r#"{"bad_request":{"code":"invalid"},"conflict":{"code":"clash"},"not_found":{"code":"absent"},"storage":{"code":"unavailable"},"unknown_action":{"code":"missing"},"unprocessable":{"code":"refused"}}"#;
 pub(crate) const LEAKED: &str = "the secret-token-123 here";
+const LEARNED: &str = r"secret\-token\-123";
 pub(crate) const LEARN_MIN: u32 = 4;
 pub(crate) const PAGING: &str = r#"{"default":2,"max":3}"#;
 pub(crate) const REASONS: &str =
@@ -83,17 +84,14 @@ impl Docket for Dock {
             .iter()
             .find(|entry| entry.key == ruling.key())
             .map(|entry| {
-                if entry.state != "pending" {
-                    entry.state.clone()
-                } else if let Some(rule) = ruling.rule() {
-                    format!(
-                        "{}:{}:{}",
-                        ruling.state(),
-                        rule.pattern(),
-                        rule.placeholder()
-                    )
+                if entry.state == "pending" {
+                    ruling
+                        .rule()
+                        .filter(|rule| (rule.pattern(), rule.placeholder()) != (LEARNED, "[x]"))
+                        .map_or_else(|| ruling.state(), |_| "mislearned")
+                        .to_owned()
                 } else {
-                    ruling.state().to_owned()
+                    entry.state.clone()
                 }
             }))
     }
@@ -197,13 +195,13 @@ impl Reader for Rows {
     }
 }
 
-pub(crate) const fn cli<'call>(
+pub(crate) const fn local<'call>(
     feature: &'call str,
     action: &'call str,
     request: &'call str,
 ) -> Call<'call> {
     Call::new(
-        Origin::new("cli", None, None),
+        Origin::new("adapters", None, None),
         Target::new(feature, action),
         request,
     )

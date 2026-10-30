@@ -33,13 +33,16 @@ messages:
 errors:
   bad_request:
     code: invalid
-    exit_code: 13
+  conflict:
+    code: clash
+  not_found:
+    code: absent
   storage:
     code: unavailable
-    exit_code: 15
   unknown_action:
     code: missing
-    exit_code: 14
+  unprocessable:
+    code: refused
 triage:
   codex: {args: [x], bin: /nonexistent/triage, env: {FAKE_DIR: /nonexistent}, sandbox: &fence {bin: /usr/bin/sandbox-exec, canary: /usr/bin/true, paths: {DIR: /nonexistent/sandbox-dir, FIXTURES: /nonexistent/fixtures}, probe: [noop], profile: /nonexistent/fake.sb, vars: {HOME: \"${HOME}\"}}, timeout_ms: 1000, vars: {PATH: \"${PATH}\"}}
   decide: {args: [x], bin: /nonexistent/triage, env: {FAKE_DIR: /nonexistent}, sandbox: *fence, timeout_ms: 1000, vars: {PATH: \"${PATH}\"}}
@@ -101,6 +104,7 @@ ingest:
       args: [pull]
       bin: /nonexistent/dws
       sandbox: *fence
+    timeout_ms: 30000
     vars:
       PATH: \"${PATH}\"
   failure_exit_code: 16
@@ -125,14 +129,6 @@ pub(crate) fn await_log(lines: &mut Stderr, needle: &str) -> io::Result<()> {
     Err(io::Error::other(format!("log not found: {needle}")))
 }
 
-pub(crate) async fn call(config: &str, target: [&str; 2], json: &str) -> ExitCode {
-    let [feature, action] = target;
-    run(&[
-        "cli", "call", feature, action, "--config", config, "--json", json,
-    ])
-    .await
-}
-
 pub(crate) fn config(name: &str, body: &str) -> io::Result<String> {
     let path = format!("{}/{name}", env!("CARGO_TARGET_TMPDIR"));
     fs::write(&path, body)?;
@@ -147,6 +143,10 @@ pub(crate) fn live(dir: &str) -> String {
         .replace("/nonexistent/sandbox-dir", dir)
         .replace("FAKE_DIR: /nonexistent", &format!("FAKE_DIR: {dir}"))
         .replace("/nonexistent/dir/store.db", &format!("{dir}/store.db"))
+}
+
+pub(crate) async fn load(config: &str) -> ExitCode {
+    run(&["cli", "ingest", "--config", config]).await
 }
 
 pub(crate) async fn run(args: &[&str]) -> ExitCode {

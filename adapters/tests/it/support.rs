@@ -1,12 +1,8 @@
-extern crate alloc;
-
-use alloc::sync::Arc;
 use core::error::Error;
 use core::time::Duration;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::{LazyLock, Mutex, PoisonError};
 
 use adapters::config::Settings;
 use adapters::ingest::run;
@@ -19,12 +15,9 @@ use rusqlite::Connection;
 use serde_json::{Value, from_str, from_value, json};
 use tokio::time::sleep;
 use tracing::instrument::WithSubscriber as _;
-use tracing::subscriber::NoSubscriber;
-use tracing::{Dispatch, Level};
-use tracing_subscriber::fmt;
-use tracing_subscriber::fmt::MakeWriter;
 
-static ANCHOR: LazyLock<Dispatch> = LazyLock::new(|| Dispatch::new(NoSubscriber::default()));
+use crate::capture::Capture;
+
 const ATTEMPTS: u32 = 2;
 const BACKFILL: u64 = 3_600_000;
 const BACKOFF_INITIAL: u64 = 5;
@@ -37,7 +30,8 @@ const CAP_CHARS: u32 = 1_000;
 const CHILD_EXIT: u64 = 300;
 const CIPHER_MIN: u32 = 32;
 const CONTEXT_CHARS: u32 = 10_000;
-const ERRORS: &str = r#"{"bad_request":{"code":"invalid","exit_code":13},"storage":{"code":"unavailable","exit_code":15},"unknown_action":{"code":"missing","exit_code":14}}"#;
+const DWS_TIMEOUT: u64 = 60_000;
+const ERRORS: &str = r#"{"bad_request":{"code":"invalid"},"conflict":{"code":"clash"},"not_found":{"code":"absent"},"storage":{"code":"unavailable"},"unknown_action":{"code":"missing"},"unprocessable":{"code":"refused"}}"#;
 const EXEC_TIMEOUT: u64 = 5_000;
 pub(crate) const FAILURE: u8 = 7;
 const FAKE: &str = concat!(
@@ -74,42 +68,6 @@ const THRESHOLD: f64 = 0.8;
 const TOPICS: u32 = 5;
 const ZERO: u64 = 0;
 
-#[derive(Clone, Default)]
-struct Capture(Arc<Mutex<Vec<u8>>>);
-
-impl Capture {
-    fn text(&self) -> String {
-        let bytes = self
-            .0
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clone();
-        String::from_utf8(bytes).unwrap_or_default()
-    }
-}
-
-impl<'writer> MakeWriter<'writer> for Capture {
-    type Writer = Self;
-
-    fn make_writer(&'writer self) -> Self::Writer {
-        self.clone()
-    }
-}
-
-impl io::Write for Capture {
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.0
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .extend_from_slice(buf);
-        Ok(buf.len())
-    }
-}
-
 pub(crate) type Fallible<T> = Result<T, Box<dyn Error>>;
 
 pub(crate) struct Sandbox {
@@ -136,6 +94,7 @@ impl Sandbox {
                 "lookup": process("lookup"),
                 "manual_exit_codes": MANUAL_CODES,
                 "pull": process("pull"),
+                "timeout_ms": DWS_TIMEOUT,
                 "vars": {"HOME": "${HOME}", "PATH": "${PATH}"},
             },
             "failure_exit_code": FAILURE,
@@ -405,13 +364,7 @@ pub(crate) async fn run_for(config: &Settings, millis: u64) -> Fallible<u8> {
 }
 
 pub(crate) async fn run_logged(config: &Settings, millis: u64) -> Fallible<(u8, String)> {
-    let _: &Dispatch = LazyLock::force(&ANCHOR);
     let capture = Capture::default();
-    let subscriber = fmt()
-        .json()
-        .with_max_level(Level::DEBUG)
-        .with_writer(capture.clone())
-        .finish();
     let errors: Errors = from_str(ERRORS)?;
     let paging: Paging = from_str(PAGING)?;
     let shelf = config.shelf();
@@ -422,7 +375,7 @@ pub(crate) async fn run_logged(config: &Settings, millis: u64) -> Fallible<(u8, 
     );
     let mut stop = Box::pin(sleep(Duration::from_millis(millis)));
     let code = run(config, &context, &mut stop)
-        .with_subscriber(subscriber)
+        .with_subscriber(capture.dispatch())
         .await;
     Ok((code, capture.text()))
 }
@@ -516,13 +469,7 @@ pub(crate) async fn triage_logged(
     triage: &Triage,
     millis: u64,
 ) -> Fallible<String> {
-    let _: &Dispatch = LazyLock::force(&ANCHOR);
     let capture = Capture::default();
-    let subscriber = fmt()
-        .json()
-        .with_max_level(Level::DEBUG)
-        .with_writer(capture.clone())
-        .finish();
     let errors: Errors = from_str(ERRORS)?;
     let paging: Paging = from_str(PAGING)?;
     let shelf = ingest.shelf();
@@ -533,7 +480,7 @@ pub(crate) async fn triage_logged(
     );
     let mut stop = Box::pin(sleep(Duration::from_millis(millis)));
     run_triage(Setup::new(ingest, triage, &context), &mut stop)
-        .with_subscriber(subscriber)
+        .with_subscriber(capture.dispatch())
         .await;
     Ok(capture.text())
 }

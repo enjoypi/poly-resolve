@@ -356,7 +356,7 @@ fn options(req: &PackRequest, found: &[Block<'_>], style: &Style<'_>) -> Vec<Pic
                         topic: Some(open.topic.clone()),
                         value: open.topic.clone(),
                     },
-                    text: open.label.clone(),
+                    text: style.mask().apply(&open.label),
                 });
             let earlier = found
                 .iter()

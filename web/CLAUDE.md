@@ -43,7 +43,7 @@
 
 ## 审核页
 
-- `POST /review/list` 取 `REVIEW_LIMIT` 条待审行；顶部显示待审条数（`TEXT.pending`）与“整批通过”（`POST /review/approve` 一次提交当前全部键，只移除返回 `approved` 的卡片）；不自动轮询
+- `GET /api/reviews` 取 `REVIEW_LIMIT` 条待审行；通过与拒绝都是 `PATCH /api/reviews/{key}`（`params.path.key`，openapi-fetch 负责编码）；顶部显示待审条数（`TEXT.pending`）与“整批通过”（逐条 PATCH，成功的移除卡片，遇到失败即停并显示错误码）；不自动轮询
 - 每行一张卡片：批号、会话、发送人、时间、脱敏文字、“通过”、原因下拉、漏脱敏类原因（`ReviewReason.placeholder` 非空）才出现的 `textarea`、“拒绝”；成功后移除卡片，失败显示错误码
 - 安全：文字只经 `textContent` 写入 `<pre>`，不渲染；拒绝按钮在选了原因前禁用，漏脱敏类原因还须粘贴非空原文；`textarea` 设 `autocomplete=off`，提交后无论成败都清空；不填审核人、不带 `x-user`
 - happy-dom 无全局 `Option`，下拉项用 `createElement("option")`
