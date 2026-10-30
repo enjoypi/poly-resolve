@@ -63,7 +63,7 @@ YAML 文件，各项均必填（注明可选的除外），不允许其他字段
 | triage.session | prompt 第一次发话题转写的提示词模板；followup 同一话题后续只发新增消息的模板（`{messages}` 处填入消息）；fresh 新会话追加在 codex 参数后的参数；resume 续写追加的参数（`{thread}` 换成会话 ID） |
 | triage.notice | 发给本人的通知模板（`{probability}`、`{topic}`、`{analysis}`） |
 | triage.decide / codex / notify / screen.exec | 外部命令，共同字段：bin、args、env（字面量环境变量）、vars（`${NAME}` 写法，运行时读同名环境变量传给子进程；args 里的 `${NAME}` 若在 vars 里声明则换成其值）、sandbox、timeout_ms；子进程环境先清空再只放 env 与 vars |
-| triage.codex.args | 须含 `--json`，不含 `--ephemeral` 与结尾的 `-` |
+| triage.codex.args | 须含 `--json`，用 `-m` 指定模型；不含 `--ephemeral` 与结尾的 `-` |
 | triage.notify.args | 须含 `--yes` 并以接收人参数名结尾；程序追加 `notify_target` 与 `--idempotency-key=<话题>@<批号>` |
 | triage.notify_target | 通知接收人，写成 `${NAME}` |
 | triage.screen | 可选，见“本地模型筛查”：exec 外部命令；instructions 系统提示词；model 模型名；placeholder 遮盖用的占位符 |
