@@ -11,7 +11,6 @@ mod spec;
 
 use alloc::sync::Arc;
 use core::fmt::Display;
-use core::pin::pin;
 use std::ffi::OsString;
 use std::io::{self, Write as _};
 use std::process::ExitCode;
@@ -22,7 +21,6 @@ use tokio::net::TcpListener;
 
 use crate::args::Command;
 use crate::config::Settings;
-use crate::signal::shutdown;
 
 const CONFIG_ERROR: u8 = 2;
 
@@ -33,7 +31,7 @@ fn emit(code: u8, written: &io::Result<()>) -> ExitCode {
 async fn execute(command: Command) -> ExitCode {
     match command {
         Command::Ingest { config } => match config::load(&config) {
-            Ok(settings) => ingest(&settings).await,
+            Ok(settings) => ingest(settings).await,
             Err(err) => fail(CONFIG_ERROR, &err),
         },
         Command::Serve { config } => match config::load(&config) {
@@ -48,12 +46,11 @@ fn fail(code: u8, err: &dyn Display) -> ExitCode {
     emit(code, &writeln!(io::stderr().lock(), "{err}"))
 }
 
-async fn ingest(settings: &Settings) -> ExitCode {
-    if let Err(err) = verify(settings).await {
+async fn ingest(settings: Settings) -> ExitCode {
+    if let Err(err) = verify(&settings).await {
         return fail(settings.sandbox_exit_code(), &err);
     }
-    let mut stop = pin!(shutdown());
-    let code = service::collect(settings, &mut stop).await;
+    let code = service::collect(Arc::new(settings)).await;
     emit(code, &Ok(()))
 }
 
@@ -68,7 +65,12 @@ pub async fn run(args: Vec<OsString>) -> ExitCode {
 }
 
 async fn serve(settings: Settings) -> ExitCode {
-    let missing = settings.triage().missing();
+    let missing: Vec<&str> = settings
+        .triage()
+        .missing()
+        .into_iter()
+        .chain(settings.ingest().missing())
+        .collect();
     if settings.triage().enabled() && !missing.is_empty() {
         let names = missing.join(", ");
         return fail(

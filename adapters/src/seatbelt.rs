@@ -5,6 +5,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{ExitStatus, Stdio};
 
+use futures_util::future::join;
 use serde::Deserialize;
 use tokio::process::Command;
 
@@ -43,9 +44,8 @@ impl Sandbox {
     }
 
     pub(crate) async fn check(&self, mut probe: Command, name: &str) -> Result<(), String> {
-        let canary = run(self.command(&self.canary)).await;
         let _: &mut Command = probe.args(&self.probe);
-        let allowed = run(probe).await;
+        let (canary, allowed) = join(run(self.command(&self.canary)), run(probe)).await;
         match (canary, allowed) {
             (Err(err), _) | (_, Err(err)) => {
                 Err(format!("{name}: sandbox did not start: {}", err.kind()))

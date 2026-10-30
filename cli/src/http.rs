@@ -30,6 +30,8 @@ const JSON: &str = "application/json";
 pub(crate) const SESSION_HEADER: &str = "x-session-id";
 pub(crate) const USER_HEADER: &str = "x-user";
 
+type Outcome = (u8, io::Result<()>);
+
 async fn deadline(signal: impl Future<Output = ()>, settings: &Settings) {
     signal.await;
     with_default(settings.log(), || {
@@ -61,6 +63,24 @@ fn endpoint(entry: &Entry) -> MethodRouter<Arc<Settings>> {
             respond(&settings, &call)
         },
     )
+}
+
+fn finish(served: Poll<io::Result<()>>, expiry: Poll<()>, settings: &Settings) -> Poll<Outcome> {
+    if let Poll::Ready(result) = served {
+        with_default(settings.log(), || tracing::info!("shutdown complete"));
+        Poll::Ready((0, result))
+    } else if expiry.is_ready() {
+        with_default(settings.log(), || {
+            tracing::error!(
+                timeout_ms = settings.shutdown_timeout_ms(),
+                exit_code = settings.shutdown_timeout_exit_code(),
+                "shutdown timeout"
+            );
+        });
+        Poll::Ready((settings.shutdown_timeout_exit_code(), Ok(())))
+    } else {
+        Poll::Pending
+    }
 }
 
 async fn guard(State(hosts): State<Arc<[String]>>, request: Request, next: Next) -> Response {
@@ -109,7 +129,10 @@ fn respond(settings: &Settings, call: &Call<'_>) -> Response {
     (status, [(CONTENT_TYPE, JSON)], response).into_response()
 }
 
-pub(crate) async fn run(listener: TcpListener, settings: Arc<Settings>) -> (u8, io::Result<()>) {
+pub(crate) fn start(
+    listener: TcpListener,
+    settings: Arc<Settings>,
+) -> impl Future<Output = Outcome> + Send {
     let (graceful, expiry) = (shutdown(), shutdown());
     let bound = listener.local_addr().ok();
     let addr = bound.map_or_default(|local| local.to_string());
@@ -125,29 +148,17 @@ pub(crate) async fn run(listener: TcpListener, settings: Arc<Settings>) -> (u8, 
         })
         .layer(from_fn_with_state(Arc::from(hosts(bound)), guard))
         .with_state(Arc::clone(&settings));
-    let mut server = pin!(
-        serve(listener, app)
-            .with_graceful_shutdown(graceful)
-            .into_future()
-    );
-    let mut limit = pin!(deadline(expiry, &settings));
-    poll_fn(|context| {
-        let expired = limit.as_mut().poll(context).is_ready();
-        if let Poll::Ready(result) = server.as_mut().poll(context) {
-            with_default(settings.log(), || tracing::info!("shutdown complete"));
-            Poll::Ready((0, result))
-        } else if expired {
-            with_default(settings.log(), || {
-                tracing::error!(
-                    timeout_ms = settings.shutdown_timeout_ms(),
-                    exit_code = settings.shutdown_timeout_exit_code(),
-                    "shutdown timeout"
-                );
-            });
-            Poll::Ready((settings.shutdown_timeout_exit_code(), Ok(())))
-        } else {
-            Poll::Pending
-        }
-    })
-    .await
+    async move {
+        let mut server = pin!(
+            serve(listener, app)
+                .with_graceful_shutdown(graceful)
+                .into_future()
+        );
+        let mut limit = pin!(deadline(expiry, &settings));
+        poll_fn(|context| {
+            let expired = limit.as_mut().poll(context);
+            finish(server.as_mut().poll(context), expired, &settings)
+        })
+        .await
+    }
 }

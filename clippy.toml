@@ -23,9 +23,13 @@ disallowed-macros = [
 ]
 disallowed-methods = [
   { path = "tokio::signal::ctrl_c", reason = "只覆盖 SIGINT，停机须同时处理 SIGINT 与 SIGTERM", allow-invalid = true },
-  { path = "tokio::task::spawn", reason = "日志靠 with_default 绑定当前作用域，新任务会丢日志", allow-invalid = true },
-  { path = "tokio::task::spawn_blocking", reason = "日志靠 with_default 绑定当前作用域，新任务会丢日志", allow-invalid = true },
-  { path = "tokio::task::spawn_local", reason = "日志靠 with_default 绑定当前作用域，新任务会丢日志", allow-invalid = true },
+  { path = "tokio::runtime::Handle::spawn", reason = "游离任务无人监督且丢日志；用 service::Crew::launch", allow-invalid = true },
+  { path = "tokio::runtime::Handle::spawn_blocking", reason = "游离任务无人监督且丢日志；用 service::Crew::launch", allow-invalid = true },
+  { path = "tokio::task::JoinSet::spawn_blocking", reason = "同步闭包无法 with_subscriber，会丢日志", allow-invalid = true },
+  { path = "tokio::task::JoinSet::spawn_local", reason = "只能经 service::Crew::launch 起任务", allow-invalid = true },
+  { path = "tokio::task::spawn", reason = "游离任务无人监督且丢日志；用 service::Crew::launch", allow-invalid = true },
+  { path = "tokio::task::spawn_blocking", reason = "游离任务无人监督且丢日志；用 service::Crew::launch", allow-invalid = true },
+  { path = "tokio::task::spawn_local", reason = "游离任务无人监督且丢日志；用 service::Crew::launch", allow-invalid = true },
   { path = "tracing::dispatcher::set_default", reason = "subscriber 不设全局，用 with_default 绑定", allow-invalid = true },
   { path = "tracing::dispatcher::set_global_default", reason = "subscriber 不设全局，用 with_default 绑定", allow-invalid = true },
   { path = "tracing::subscriber::set_default", reason = "subscriber 不设全局，用 with_default 绑定", allow-invalid = true },

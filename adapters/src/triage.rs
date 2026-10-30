@@ -35,6 +35,13 @@ const PENDING: &str = "pending";
 const SENT: &str = "sent";
 
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
+pub enum Lane {
+    Alerts,
+    Batches,
+}
+
+#[derive(Clone, Copy, Debug)]
 pub struct Setup<'setup> {
     context: &'setup Context<'setup>,
     ingest: &'setup Ingest,
@@ -58,7 +65,7 @@ impl<'setup> Setup<'setup> {
 
 struct Shift<'shift> {
     desk: Desk<'shift>,
-    ingest: &'shift Ingest,
+    lane: Lane,
     ledger: Ledger,
     stop: Stop<'shift>,
     triage: &'shift Settings,
@@ -103,13 +110,18 @@ impl Shift<'_> {
     }
 
     async fn tick(&mut self) -> Option<()> {
-        self.prepare().await?;
-        send(self).await?;
-        self.relay().await
+        match self.lane {
+            Lane::Alerts => self.relay().await,
+            Lane::Batches => {
+                self.prepare().await?;
+                send(self).await
+            }
+        }
     }
 
     fn waiting(&self, state: &str) -> Vec<Value> {
         self.ledger.next_alert(&json!({
+            "max_attempts": self.triage.max_attempts(),
             "retry_before_ms": retry_before(self),
             "state": state,
         }))
@@ -141,15 +153,15 @@ fn retry_before(shift: &Shift<'_>) -> u64 {
     now_ms().saturating_sub(shift.triage.retry_after_ms())
 }
 
-pub async fn run(setup: Setup<'_>, stop: Stop<'_>) {
+pub async fn run(setup: Setup<'_>, lane: Lane, stop: Stop<'_>) {
     if !setup.triage.enabled() {
         return;
     }
-    match Ledger::open(setup.ingest.store_path()) {
+    match Ledger::open(setup.ingest.store_path(), setup.ingest.busy_timeout_ms()) {
         Ok(ledger) => {
             Shift {
                 desk: Desk::new(setup.context, setup.ingest, setup.triage),
-                ingest: setup.ingest,
+                lane,
                 ledger,
                 stop,
                 triage: setup.triage,

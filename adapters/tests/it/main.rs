@@ -1,7 +1,9 @@
 mod capture;
+mod feeds;
 mod ingest;
 mod review;
 mod sandbox;
+mod sources;
 mod store;
 mod support;
 mod triage;

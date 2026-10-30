@@ -1,4 +1,5 @@
 mod batch;
+mod claim;
 mod review;
 mod rig;
 mod screen;
@@ -12,7 +13,9 @@ use self::rig::{
     decided, home, input_of, logged, one, path, questions_of, seed, seed_from, start, table,
     two_chats,
 };
-use crate::support::{SEALED, Sandbox, triage_logged, triage_validate};
+use adapters::store::Archive;
+
+use crate::support::{BUSY, NOON, SEALED, Sandbox, triage_logged, triage_validate};
 
 const COOLDOWN: u64 = 3_600_000;
 const FAILED_TWICE: &str = "1|failed|2|";
@@ -111,7 +114,7 @@ fn config_lists_missing_variables() {
 fn config_rejects_plain_variables() {
     let sandbox = Sandbox::new("triage-config-plain").unwrap();
     for plain in ["plain", "${}", "${OPEN", "OPEN}"] {
-        let patch = json!({"self_sender_id": plain});
+        let patch = json!({"notify_target": plain});
         let err = sandbox.triage(&patch).unwrap_err();
         assert!(err.to_string().contains("expected ${NAME}"), "{plain}");
     }
@@ -351,6 +354,31 @@ async fn normal_message_is_scored_only() {
     );
     assert_eq!(table(&sandbox, ALERTS).unwrap(), NOTHING);
     assert_eq!(calls(&sandbox, "codex").unwrap(), 0);
+}
+
+#[tokio::test]
+async fn other_sources_are_not_judged_by_dingtalk_identity() {
+    let sandbox = Sandbox::new("triage-other-source").unwrap();
+    let archive = Archive::open(&sandbox.database(), BUSY).unwrap();
+    let envelope = json!({
+        "account": "acct",
+        "conversation_id": env!("CARGO_PKG_NAME"),
+        "key": "imap:acct:m1",
+        "occurred_at_ms": NOON,
+        "raw": "{}",
+        "received_at_ms": NOON,
+        "sender_id": home().unwrap(),
+        "sender_name": "",
+        "source": "imap",
+        "text": SEALED,
+    });
+    assert_eq!(archive.save_event(&envelope.to_string()).unwrap(), 1);
+    let ingest = sandbox.config(&json!({})).unwrap();
+    let triage = sandbox.triage(&json!({})).unwrap();
+    drop(triage_logged(&ingest, &triage, QUICK).await.unwrap());
+    let lines = table(&sandbox, LINES).unwrap();
+    assert_eq!(lines.len(), 1);
+    assert!(!lines.concat().contains("skipped"), "{lines:?}");
 }
 
 #[tokio::test]

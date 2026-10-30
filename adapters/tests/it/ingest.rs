@@ -1,3 +1,5 @@
+mod busy;
+mod parallel;
 mod timeout;
 
 use std::io::ErrorKind;
@@ -5,10 +7,10 @@ use std::io::ErrorKind;
 use adapters::store::Archive;
 use serde_json::json;
 
+use crate::feeds::{barred, event, feed, fragment_event, fragment_page, page, sealed, sealed_page};
 use crate::support::{
-    BAD_SCHEMA, FAILURE, FRAGMENTS, MANUAL, NOON, REFUSE_INSERT, REFUSE_UPDATE, SEALED, Sandbox,
-    TEXT_STAMP, barred, envelope, event, feed, fragment_event, fragment_page, keys, page, run_for,
-    run_logged, sealed, sealed_envelope, sealed_page, stored, texts,
+    BAD_SCHEMA, BUSY, FAILURE, FRAGMENTS, MANUAL, NOON, REFUSE_INSERT, REFUSE_UPDATE, SEALED,
+    Sandbox, TEXT_STAMP, envelope, keys, run_for, run_logged, sealed_envelope, stored, texts,
 };
 
 const ASSEMBLED: &str = "title\nalice:hello\nbob:world";
@@ -87,7 +89,7 @@ async fn failed_decrypt_keeps_ciphertext() {
 #[tokio::test]
 async fn failed_heal_keeps_ciphertext() {
     let sandbox = Sandbox::new("ingest-heal-fail").unwrap();
-    let store = Archive::open(&sandbox.database()).unwrap();
+    let store = Archive::open(&sandbox.database(), BUSY).unwrap();
     assert_eq!(store.save_event(&sealed_envelope("k1", NOON)).unwrap(), 1);
     let barred = stored("k2", NOON + 5, "x||1||2||3");
     assert_eq!(store.save_event(&barred).unwrap(), 1);
@@ -129,7 +131,7 @@ async fn heal_respects_limit() {
     ];
     for (name, limit, expected) in cases {
         let sandbox = Sandbox::new(name).unwrap();
-        let store = Archive::open(&sandbox.database()).unwrap();
+        let store = Archive::open(&sandbox.database(), BUSY).unwrap();
         for (key, millis) in [("k1", NOON), ("k2", NOON + 5), ("k3", NOON + 10)] {
             assert_eq!(store.save_event(&sealed_envelope(key, millis)).unwrap(), 1);
         }
@@ -323,7 +325,7 @@ async fn sealed_page_message_is_decrypted_before_storing() {
 #[tokio::test]
 async fn seeded_watermark_bounds_pull_window() {
     let sandbox = Sandbox::new("ingest-watermark").unwrap();
-    let store = Archive::open(&sandbox.database()).unwrap();
+    let store = Archive::open(&sandbox.database(), BUSY).unwrap();
     assert_eq!(store.save_event(&envelope("seed", NOON)).unwrap(), 1);
     let config = sandbox.config(&json!({})).unwrap();
     assert_eq!(run_for(&config, SHORT).await.unwrap(), 0);
@@ -358,7 +360,7 @@ async fn stop_during_decrypt_ends_run() {
 #[tokio::test]
 async fn stop_during_heal_ends_run() {
     let sandbox = Sandbox::new("ingest-heal-stop").unwrap();
-    let store = Archive::open(&sandbox.database()).unwrap();
+    let store = Archive::open(&sandbox.database(), BUSY).unwrap();
     assert_eq!(store.save_event(&sealed_envelope("k1", NOON)).unwrap(), 1);
     let config = sandbox
         .config(&json!({"dws": {"env": {"FAKE_DECRYPT": "slow"}}}))
@@ -414,7 +416,7 @@ async fn stop_during_pull_ends_run() {
 #[tokio::test]
 async fn store_failure_is_fatal_for_events() {
     let sandbox = Sandbox::new("ingest-store-events").unwrap();
-    drop(Archive::open(&sandbox.database()).unwrap());
+    drop(Archive::open(&sandbox.database(), BUSY).unwrap());
     sandbox.seed(REFUSE_INSERT).unwrap();
     sandbox.write("listen.txt", &feed(&[event("m1")])).unwrap();
     let config = sandbox.config(&json!({})).unwrap();
@@ -432,7 +434,7 @@ async fn store_failure_is_fatal_for_heal() {
 #[tokio::test]
 async fn store_failure_is_fatal_for_pages() {
     let sandbox = Sandbox::new("ingest-store-pages").unwrap();
-    drop(Archive::open(&sandbox.database()).unwrap());
+    drop(Archive::open(&sandbox.database(), BUSY).unwrap());
     sandbox.seed(REFUSE_INSERT).unwrap();
     sandbox.write("pull.json", &page(&["m1"], None)).unwrap();
     let config = sandbox.config(&json!({})).unwrap();
@@ -442,7 +444,7 @@ async fn store_failure_is_fatal_for_pages() {
 #[tokio::test]
 async fn store_failure_is_fatal_for_replace() {
     let sandbox = Sandbox::new("ingest-store-replace").unwrap();
-    let store = Archive::open(&sandbox.database()).unwrap();
+    let store = Archive::open(&sandbox.database(), BUSY).unwrap();
     assert_eq!(store.save_event(&sealed_envelope("k1", NOON)).unwrap(), 1);
     sandbox.seed(REFUSE_UPDATE).unwrap();
     let config = sandbox.config(&json!({})).unwrap();
@@ -469,7 +471,7 @@ async fn store_open_failure_is_fatal() {
 #[tokio::test]
 async fn stored_ciphertext_is_decrypted_on_start() {
     let sandbox = Sandbox::new("ingest-heal").unwrap();
-    let store = Archive::open(&sandbox.database()).unwrap();
+    let store = Archive::open(&sandbox.database(), BUSY).unwrap();
     assert_eq!(store.save_event(&sealed_envelope("k1", NOON)).unwrap(), 1);
     assert_eq!(store.save_event(&envelope("k2", NOON + 5)).unwrap(), 1);
     let config = sandbox.config(&json!({})).unwrap();
@@ -485,7 +487,7 @@ async fn stored_ciphertext_is_decrypted_on_start() {
 #[tokio::test]
 async fn unrepresentable_watermark_skips_reconcile() {
     let sandbox = Sandbox::new("ingest-huge").unwrap();
-    let store = Archive::open(&sandbox.database()).unwrap();
+    let store = Archive::open(&sandbox.database(), BUSY).unwrap();
     assert_eq!(store.save_event(&envelope("huge", HUGE)).unwrap(), 1);
     sandbox.write("listen.txt", &feed(&[event("m1")])).unwrap();
     let config = sandbox.config(&json!({})).unwrap();

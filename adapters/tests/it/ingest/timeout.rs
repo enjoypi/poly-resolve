@@ -1,8 +1,7 @@
 use serde_json::json;
 
-use crate::support::{
-    FRAGMENTS, SEALED, Sandbox, event, feed, fragment_event, keys, run_logged, sealed, texts,
-};
+use crate::feeds::{event, feed, fragment_event, sealed};
+use crate::support::{FRAGMENTS, SEALED, Sandbox, keys, run_logged, texts};
 
 const BRIEF: u64 = 200;
 const SHORT: u64 = 4_000;

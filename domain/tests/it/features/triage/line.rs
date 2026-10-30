@@ -113,3 +113,23 @@ fn line_skips_each_reason() {
         assert_eq!(reply.get("text"), Some(&json!("")));
     }
 }
+
+#[test]
+fn line_without_identity_skips_nothing_by_source() {
+    let message = json!({
+        "conversation_id": "",
+        "sender_id": "",
+        "sender_name": "",
+        "text": format!("{BODY}||2||1||196"),
+    });
+    let mut request = body(&message);
+    for field in [
+        "cipher_min_length",
+        "notify_conversation_id",
+        "self_sender_id",
+    ] {
+        request = patched(request, field, &Value::Null);
+    }
+    let reply = call("line", &request.to_string()).unwrap().unwrap();
+    assert_eq!(reply.get("skip"), Some(&Value::Null));
+}

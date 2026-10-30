@@ -6,13 +6,14 @@ use core::time::Duration;
 use std::io::{self, ErrorKind};
 use std::process::{Output, Stdio};
 
+use futures_util::future::join_all;
 use serde::{Deserialize, Serialize};
 use serde_json::from_slice;
 use tokio::io::{AsyncBufReadExt as _, BufReader, Lines};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::time::timeout;
 
-use crate::config::{Dws as DwsConfig, Process};
+use super::config::{Dws as DwsConfig, Process};
 
 pub(crate) struct Dws<'dws> {
     config: &'dws DwsConfig,
@@ -30,18 +31,14 @@ impl<'dws> Dws<'dws> {
     }
 
     pub(crate) async fn check(&self) -> Result<(), String> {
-        for process in [
+        let checks = [
             self.config.decrypt(),
             self.config.listen(),
             self.config.lookup(),
             self.config.pull(),
-        ] {
-            process
-                .sandbox()
-                .check(self.bare(process), process.bin())
-                .await?;
-        }
-        Ok(())
+        ]
+        .map(|process| process.sandbox().check(self.bare(process), process.bin()));
+        join_all(checks).await.into_iter().collect()
     }
 
     pub(crate) async fn decrypt(&self, cipher: &str) -> io::Result<Output> {

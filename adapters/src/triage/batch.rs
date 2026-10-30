@@ -26,6 +26,66 @@ fn alerts(shift: &Shift<'_>, topics: &[Value], batch_id: u64) -> Vec<Value> {
         .collect()
 }
 
+fn judge(shift: &Shift<'_>, batch: &Value, reply: Result<String, String>) {
+    let now = now_ms();
+    let batch_id = number(batch, "id");
+    let layout: Value = from_str(text(batch, "layout")).unwrap_or_default();
+    let sorted = reply
+        .as_deref()
+        .ok()
+        .and_then(|body| shift.desk.sort(&layout, body));
+    match (sorted, reply) {
+        (Some(found), Ok(body)) => {
+            let saved = shift
+                .ledger
+                .answer(&json!({"batch_id": batch_id, "body": body}));
+            let rows = shift.ledger.apply(
+                &json!({
+                    "at_ms": now,
+                    "batch_id": batch_id,
+                    "placements": found.placements(),
+                    "topics": found.topics(),
+                }),
+                &alerts(shift, found.topics(), batch_id),
+            );
+            tracing::info!(saved, rows, topics = found.topics().len(), "batch decided");
+        }
+        (_, outcome) => {
+            let reason = outcome.map_or_else(|failed| failed, |_| "bad_answer".to_owned());
+            let rows = shift.ledger.fail_batch(&json!({
+                "at_ms": now,
+                "id": batch_id,
+                "max_attempts": shift.triage.max_attempts(),
+                "reason": reason,
+            }));
+            tracing::warn!(rows, reason, "decision failed");
+        }
+    }
+}
+
+async fn request(shift: &mut Shift<'_>, batch: &Value) -> Option<Option<Result<String, String>>> {
+    let triage = shift.triage;
+    let claim = json!({"at_ms": now_ms(), "id": number(batch, "id"), "max_attempts": triage.max_attempts()});
+    if shift.ledger.claim_batch(&claim) == 0 {
+        return Some(None);
+    }
+    let Some(done) = shift
+        .exec(Job::new(triage.decide(), &[], text(batch, "payload")))
+        .await
+    else {
+        let released = shift.ledger.release_batch(&claim);
+        tracing::debug!(released, "batch claim released");
+        return None;
+    };
+    Some(Some(
+        done.as_ref()
+            .ok()
+            .filter(|output| output.status.success())
+            .map(|output| String::from_utf8_lossy(&output.stdout).into_owned())
+            .ok_or_else(|| failure(&done)),
+    ))
+}
+
 pub(super) fn seal(shift: &Shift<'_>) {
     let Some(batch_id) = shift
         .ledger
@@ -88,44 +148,18 @@ pub(super) async fn send(shift: &mut Shift<'_>) -> Option<()> {
     if used >= u64::from(shift.triage.max_decisions_per_hour()) {
         return Some(());
     }
-    let due = shift
-        .ledger
-        .next_batch(&json!({"retry_before_ms": retry_before(shift)}));
+    let due = shift.ledger.next_batch(&json!({
+        "max_attempts": shift.triage.max_attempts(),
+        "retry_before_ms": retry_before(shift),
+    }));
     for batch in &due {
-        let triage = shift.triage;
-        let done = shift
-            .exec(Job::new(triage.decide(), &[], text(batch, "payload")))
-            .await?;
-        let reply = done
-            .as_ref()
-            .ok()
-            .filter(|output| output.status.success())
-            .map(|output| String::from_utf8_lossy(&output.stdout).into_owned());
-        let layout: Value = from_str(text(batch, "layout")).unwrap_or_default();
-        let sorted = reply
-            .as_deref()
-            .and_then(|body| shift.desk.sort(&layout, body));
-        let batch_id = number(batch, "id");
-        if let Some(found) = sorted {
-            let rows = shift.ledger.apply(
-                &json!({
-                    "at_ms": now,
-                    "batch_id": batch_id,
-                    "placements": found.placements(),
-                    "topics": found.topics(),
-                }),
-                &alerts(shift, found.topics(), batch_id),
-            );
-            tracing::info!(rows, topics = found.topics().len(), "batch decided");
-        } else {
-            let reason = reply.map_or_else(|| failure(&done), |_| "bad_answer".to_owned());
-            let rows = shift.ledger.fail_batch(&json!({
-                "at_ms": now,
-                "id": batch_id,
-                "max_attempts": triage.max_attempts(),
-                "reason": reason,
-            }));
-            tracing::warn!(rows, reason, "decision failed");
+        let stored = batch.get("answer").and_then(Value::as_str);
+        let reply = match stored {
+            Some(body) => Some(Ok(body.to_owned())),
+            None => request(shift, batch).await?,
+        };
+        if let Some(outcome) = reply {
+            judge(shift, batch, outcome);
         }
     }
     Some(())

@@ -6,7 +6,7 @@ use adapters::store::Archive;
 use serde_json::{Value, from_str, json};
 
 use super::{get, start, stop};
-use crate::support::{EVENT, await_log, config, live, sandbox};
+use crate::support::{BUSY, EVENT, await_log, config, live, sandbox};
 
 const LIMIT: u32 = 2;
 
@@ -43,7 +43,7 @@ fn envelope(key: &str, millis: u64) -> String {
         "received_at_ms": millis,
         "sender_id": "u1",
         "sender_name": "alice",
-        "source": "dingtalk",
+        "source": key.split(':').next().unwrap_or_default(),
         "text": "hello",
     })
     .to_string()
@@ -68,7 +68,7 @@ fn lists_messages_page_by_page() {
     let response = get(&server.addr, &format!("/api/messages?limit={LIMIT}")).unwrap();
     assert!(response.starts_with("HTTP/1.1 200"));
     let reply = body(&response).unwrap();
-    assert_eq!(keys(&reply), ["dingtalk:acct:m3", "dingtalk:acct:m2"]);
+    assert_eq!(keys(&reply), ["dingtalk:acct:m3", "imap:acct:m2"]);
     let cursor = reply.get("next_cursor").and_then(Value::as_str).unwrap();
     let next = format!(
         "/api/messages?cursor={}&limit={LIMIT}",
@@ -88,7 +88,7 @@ fn lists_messages_within_window() {
     let server = start(&path).unwrap();
     let window = "/api/messages?from_ms=15&to_ms=30";
     let reply = body(&get(&server.addr, window).unwrap()).unwrap();
-    assert_eq!(keys(&reply), ["dingtalk:acct:m2"]);
+    assert_eq!(keys(&reply), ["imap:acct:m2"]);
     let inverted = "/api/messages?from_ms=30&to_ms=15";
     let bad = get(&server.addr, inverted).unwrap();
     assert!(bad.starts_with("HTTP/1.1 400"));
@@ -97,10 +97,10 @@ fn lists_messages_within_window() {
 
 fn seeded(name: &str) -> Fallible<String> {
     let dir = sandbox(name)?;
-    let store = Archive::open(Path::new(&format!("{dir}/store.db")))?;
+    let store = Archive::open(Path::new(&format!("{dir}/store.db")), BUSY)?;
     for (key, millis) in [
         ("dingtalk:acct:m1", 10),
-        ("dingtalk:acct:m2", 20),
+        ("imap:acct:m2", 20),
         ("dingtalk:acct:m3", 30),
     ] {
         let _: usize = store.save_event(&envelope(key, millis))?;

@@ -1,8 +1,7 @@
 extern crate alloc;
 
-mod bridge;
 pub mod config;
-mod dws;
+mod dingtalk;
 pub mod ingest;
 mod ledger;
 mod pipe;

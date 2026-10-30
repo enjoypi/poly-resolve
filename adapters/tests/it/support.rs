@@ -5,14 +5,15 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use adapters::config::Settings;
-use adapters::ingest::run;
+use adapters::ingest::{Site, run};
 use adapters::triage::config::Settings as Triage;
-use adapters::triage::{Setup, run as run_triage, validate};
+use adapters::triage::{Lane, Setup, run as run_triage, validate};
 use domain::Errors;
 use domain::features::{Context, Ports, Rules};
 use domain::inbox::Paging;
+use futures_util::future::join;
 use rusqlite::Connection;
-use serde_json::{Value, from_str, from_value, json};
+use serde_json::{Map, Value, from_str, from_value, json};
 use tokio::time::sleep;
 use tracing::instrument::WithSubscriber as _;
 
@@ -26,6 +27,7 @@ pub(crate) const BAD_SCHEMA: &str = "CREATE TABLE messages (key TEXT PRIMARY KEY
 pub(crate) const BAD_STAMP: &str = "CREATE TABLE messages (key TEXT PRIMARY KEY, source TEXT, account TEXT, conversation_id TEXT, sender_id TEXT, sender_name TEXT, text TEXT, occurred_at_ms TEXT, received_at_ms INTEGER, raw TEXT); INSERT INTO messages VALUES ('k', 'dingtalk', 'acct', 'c', 'u', 'n', 't', 'abc', 1, '{}'); CREATE TABLE placements (key TEXT, probability REAL, topic_id TEXT); CREATE TABLE alerts (topic_id TEXT, analysis TEXT, created_at_ms INTEGER);";
 const BATCH: u32 = 10;
 pub(crate) const BIN: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/it/fixtures/fake-dws.sh");
+pub(crate) const BUSY: u64 = 5_000;
 const CAP_CHARS: u32 = 1_000;
 const CHILD_EXIT: u64 = 300;
 const CIPHER_MIN: u32 = 32;
@@ -55,6 +57,7 @@ const OFFSET: i16 = 480;
 pub(crate) const OPEN: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/it/fixtures/open.sb");
 const OVERLAP: u64 = 1_000;
 const PAGING: &str = r#"{"default":2,"max":3}"#;
+const PARALLEL: u32 = 1;
 const POLL: u64 = 20;
 const PROFILE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/it/fixtures/fake.sb");
 const QUOTA: u32 = 100;
@@ -63,6 +66,14 @@ pub(crate) const REFUSE_INSERT: &str =
 pub(crate) const REFUSE_UPDATE: &str =
     "CREATE TRIGGER refuse BEFORE UPDATE ON messages BEGIN SELECT RAISE(ABORT, 'refused'); END;";
 pub(crate) const SEALED: &str = "QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo0MTIzNDU2||2||1||196";
+const SHARED: [&str; 6] = [
+    "backoff_initial_ms",
+    "backoff_max_ms",
+    "busy_timeout_ms",
+    "failure_exit_code",
+    "manual_exit_code",
+    "store_path",
+];
 pub(crate) const TEXT_STAMP: &str = "CREATE TABLE messages (key TEXT PRIMARY KEY, source TEXT, account TEXT, occurred_at_ms TEXT); INSERT INTO messages VALUES ('k', 'dingtalk', 'acct', 'abc');";
 const THRESHOLD: f64 = 0.8;
 const TOPICS: u32 = 5;
@@ -77,37 +88,19 @@ pub(crate) struct Sandbox {
 
 impl Sandbox {
     pub(crate) fn config(&self, patch: &Value) -> Fallible<Settings> {
-        let process = |action: &str| json!({"args": [action], "bin": BIN, "sandbox": self.fence()});
-        let mut base = json!({
-            "account": "acct",
-            "backoff_initial_ms": BACKOFF_INITIAL,
-            "backoff_max_ms": BACKOFF_MAX,
-            "child_exit_timeout_ms": CHILD_EXIT,
-            "cipher_min_length": CIPHER_MIN,
-            "dws": {
-                "decrypt": process("decrypt"),
-                "env": {
-                    "FAKE_DIR": self.dir.to_string_lossy(),
-                    "FAKE_OUTSIDE": self.outside.to_string_lossy(),
-                },
-                "listen": process("listen"),
-                "lookup": process("lookup"),
-                "manual_exit_codes": MANUAL_CODES,
-                "pull": process("pull"),
-                "timeout_ms": DWS_TIMEOUT,
-                "vars": {"HOME": "${HOME}", "PATH": "${PATH}"},
-            },
-            "failure_exit_code": FAILURE,
-            "heal_limit": HEAL_LIMIT,
-            "initial_backfill_ms": BACKFILL,
-            "lookup_batch": LOOKUP_BATCH,
-            "manual_exit_code": MANUAL,
-            "reconcile_overlap_ms": OVERLAP,
-            "source": "dingtalk",
-            "source_utc_offset_minutes": OFFSET,
-            "store_path": self.database(),
-        });
-        merge(&mut base, patch);
+        let mut shared = Map::new();
+        let mut own = Map::new();
+        for (key, value) in patch.as_object().into_iter().flatten() {
+            let target = if SHARED.contains(&key.as_str()) {
+                &mut shared
+            } else {
+                &mut own
+            };
+            drop(target.insert(key.clone(), value.clone()));
+        }
+        let sources = json!([{"dingtalk": self.source(&Value::Object(own))}]);
+        let mut base = self.shared(&sources);
+        merge(&mut base, &Value::Object(shared));
         Ok(from_value(base)?)
     }
 
@@ -178,6 +171,50 @@ impl Sandbox {
         Ok(Connection::open(self.database())?.execute_batch(sql)?)
     }
 
+    pub(crate) fn shared(&self, sources: &Value) -> Value {
+        json!({
+            "backoff_initial_ms": BACKOFF_INITIAL,
+            "backoff_max_ms": BACKOFF_MAX,
+            "busy_timeout_ms": BUSY,
+            "failure_exit_code": FAILURE,
+            "manual_exit_code": MANUAL,
+            "sources": sources,
+            "store_path": self.database(),
+        })
+    }
+
+    pub(crate) fn source(&self, patch: &Value) -> Value {
+        let process = |action: &str| json!({"args": [action], "bin": BIN, "sandbox": self.fence()});
+        let mut source = json!({
+            "account": "acct",
+            "child_exit_timeout_ms": CHILD_EXIT,
+            "cipher_min_length": CIPHER_MIN,
+            "dws": {
+                "decrypt": process("decrypt"),
+                "env": {
+                    "FAKE_DIR": self.dir.to_string_lossy(),
+                    "FAKE_OUTSIDE": self.outside.to_string_lossy(),
+                },
+                "listen": process("listen"),
+                "lookup": process("lookup"),
+                "manual_exit_codes": MANUAL_CODES,
+                "parallel": PARALLEL,
+                "pull": process("pull"),
+                "timeout_ms": DWS_TIMEOUT,
+                "vars": {"HOME": "${HOME}", "PATH": "${PATH}"},
+            },
+            "heal_limit": HEAL_LIMIT,
+            "initial_backfill_ms": BACKFILL,
+            "lookup_batch": LOOKUP_BATCH,
+            "notify_conversation_id": "${CARGO_PKG_NAME}",
+            "reconcile_overlap_ms": OVERLAP,
+            "self_sender_id": "${HOME}",
+            "utc_offset_minutes": OFFSET,
+        });
+        merge(&mut source, patch);
+        source
+    }
+
     pub(crate) fn triage(&self, patch: &Value) -> Fallible<Triage> {
         let exec = |role: &str| self.exec(role, "");
         let mut base = json!({
@@ -198,7 +235,6 @@ impl Sandbox {
             "model": "m",
             "notice": "[{probability}] {topic}|{analysis}",
             "notify": exec("send"),
-            "notify_conversation_id": "${CARGO_PKG_NAME}",
             "notify_target": "${CARGO_PKG_VERSION}",
             "questions": {
                 "threshold": THRESHOLD,
@@ -222,7 +258,6 @@ impl Sandbox {
                 "patterns": [{"pattern": "[0-9]{11,}", "placeholder": "[num]"}],
                 "unknown_sender": "unknown",
             },
-            "self_sender_id": "${HOME}",
         });
         merge(&mut base, &text_settings());
         merge(&mut base, patch);
@@ -232,19 +267,6 @@ impl Sandbox {
     pub(crate) fn write(&self, file: &str, body: &str) -> io::Result<()> {
         fs::write(self.dir.join(file), body)
     }
-}
-
-pub(crate) fn barred(ident: &str) -> String {
-    json!({
-        "type": "user_im_message_receive_o2o_all",
-        "message_id": ident,
-        "conversation_id": "c1",
-        "sender": "alice",
-        "sender_open_dingtalk_id": "u1",
-        "content": "a || b",
-        "create_time": "2026-07-08 12:00:35",
-    })
-    .to_string()
 }
 
 pub(crate) fn envelope(key: &str, occurred_at_ms: u64) -> String {
@@ -259,57 +281,6 @@ pub(crate) fn envelope(key: &str, occurred_at_ms: u64) -> String {
         "sender_name": "alice",
         "source": "dingtalk",
         "text": "hello",
-    })
-    .to_string()
-}
-
-pub(crate) fn event(ident: &str) -> String {
-    json!({
-        "type": "user_im_message_receive_o2o_all",
-        "message_id": ident,
-        "conversation_id": "c1",
-        "sender": "alice",
-        "sender_open_dingtalk_id": "u1",
-        "content": "hello",
-        "create_time": "2026-07-08 12:00:35",
-    })
-    .to_string()
-}
-
-pub(crate) fn feed(lines: &[String]) -> String {
-    format!("{}\n", lines.join("\n"))
-}
-
-pub(crate) fn fragment_event(ident: &str) -> String {
-    json!({
-        "type": "user_im_message_receive_group_all",
-        "message_id": ident,
-        "conversation_id": "c1",
-        "sender": "alice",
-        "sender_open_dingtalk_id": "u1",
-        "content": FRAGMENTS,
-        "create_time": "2026-07-08 12:00:35",
-    })
-    .to_string()
-}
-
-pub(crate) fn fragment_page(ids: &[&str]) -> String {
-    let messages: Vec<Value> = ids
-        .iter()
-        .map(|ident| {
-            json!({
-                "messageId": ident,
-                "sender": "bob",
-                "content": if ident.starts_with('p') { "plain" } else { FRAGMENTS },
-                "createTime": "2026-07-08 12:00:35",
-            })
-        })
-        .collect();
-    json!({
-        "result": {
-            "conversationMessagesList": [{"openConversationId": "c1", "messages": messages}],
-            "nextCursor": null,
-        }
     })
     .to_string()
 }
@@ -338,27 +309,6 @@ fn merge(base: &mut Value, patch: &Value) {
     }
 }
 
-pub(crate) fn page(ids: &[&str], cursor: Option<&str>) -> String {
-    let messages: Vec<Value> = ids
-        .iter()
-        .map(|ident| {
-            json!({
-                "messageId": ident,
-                "sender": "bob",
-                "text": "yo",
-                "createTime": "2026-07-08 12:00:35",
-            })
-        })
-        .collect();
-    json!({
-        "result": {
-            "conversationMessagesList": [{"openConversationId": "c1", "messages": messages}],
-            "nextCursor": cursor,
-        }
-    })
-    .to_string()
-}
-
 pub(crate) async fn run_for(config: &Settings, millis: u64) -> Fallible<u8> {
     Ok(run_logged(config, millis).await?.0)
 }
@@ -374,48 +324,15 @@ pub(crate) async fn run_logged(config: &Settings, millis: u64) -> Fallible<(u8, 
         Ports::new(&shelf, &shelf),
     );
     let mut stop = Box::pin(sleep(Duration::from_millis(millis)));
-    let code = run(config, &context, &mut stop)
+    let source = config.sources().first().ok_or("no source")?;
+    let code = run(Site::new(config, &context), source, &mut stop)
         .with_subscriber(capture.dispatch())
         .await;
     Ok((code, capture.text()))
 }
 
-pub(crate) fn sealed(ident: &str) -> String {
-    json!({
-        "type": "user_im_message_receive_o2o_all",
-        "message_id": ident,
-        "conversation_id": "c1",
-        "sender": "alice",
-        "sender_open_dingtalk_id": "u1",
-        "content": SEALED,
-        "create_time": "2026-07-08 12:00:35",
-    })
-    .to_string()
-}
-
 pub(crate) fn sealed_envelope(key: &str, occurred_at_ms: u64) -> String {
     stored(key, occurred_at_ms, SEALED)
-}
-
-pub(crate) fn sealed_page(ids: &[&str]) -> String {
-    let messages: Vec<Value> = ids
-        .iter()
-        .map(|ident| {
-            json!({
-                "messageId": ident,
-                "sender": "bob",
-                "text": SEALED,
-                "createTime": "2026-07-08 12:00:35",
-            })
-        })
-        .collect();
-    json!({
-        "result": {
-            "conversationMessagesList": [{"openConversationId": "c1", "messages": messages}],
-            "nextCursor": null,
-        }
-    })
-    .to_string()
 }
 
 pub(crate) fn stored(key: &str, occurred_at_ms: u64, text: &str) -> String {
@@ -478,10 +395,15 @@ pub(crate) async fn triage_logged(
         Rules::new(&paging, &[], LEARN_MIN),
         Ports::new(&shelf, &shelf),
     );
-    let mut stop = Box::pin(sleep(Duration::from_millis(millis)));
-    run_triage(Setup::new(ingest, triage, &context), &mut stop)
-        .with_subscriber(capture.dispatch())
-        .await;
+    let setup = Setup::new(ingest, triage, &context);
+    let mut batches = Box::pin(sleep(Duration::from_millis(millis)));
+    let mut alerts = Box::pin(sleep(Duration::from_millis(millis)));
+    let ((), ()) = join(
+        run_triage(setup, Lane::Batches, &mut batches),
+        run_triage(setup, Lane::Alerts, &mut alerts),
+    )
+    .with_subscriber(capture.dispatch())
+    .await;
     Ok(capture.text())
 }
 

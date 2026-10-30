@@ -4,7 +4,7 @@ use rusqlite::{Connection, Error};
 use serde_json::{Value, from_str, json, to_value};
 
 use crate::support::{
-    BAD_SCHEMA, BAD_STAMP, NOON, Sandbox, TEXT_STAMP, envelope, keys, sealed_envelope, texts,
+    BAD_SCHEMA, BAD_STAMP, BUSY, NOON, Sandbox, TEXT_STAMP, envelope, keys, sealed_envelope, texts,
 };
 
 const OTHER: &str = "INSERT INTO messages (key, source, account, conversation_id, sender_id, sender_name, text, occurred_at_ms, received_at_ms, raw) VALUES ('x1', 'dingtalk', 'other', 'c1', 'u1', 'bob', 'hi', 9, 9, '{}'), ('x2', 'slack', 'acct', 'c1', 'u1', 'bob', 'hi', 9, 9, '{}');";
@@ -19,9 +19,21 @@ fn ids(rows: &[Row]) -> Vec<&str> {
 }
 
 #[test]
+fn open_enables_write_ahead_log() {
+    let sandbox = Sandbox::new("store-wal").unwrap();
+    drop(Archive::open(&sandbox.database(), BUSY).unwrap());
+    let mode: Result<String, Box<Error>> = Connection::open(sandbox.database())
+        .unwrap()
+        .query_row_and_then("PRAGMA journal_mode", [], |row| {
+            row.get(0).map_err(Box::new)
+        });
+    assert_eq!(mode.unwrap(), "wal");
+}
+
+#[test]
 fn open_fails_in_missing_directory() {
     let sandbox = Sandbox::new("store-missing-dir").unwrap();
-    let err = Archive::open(&sandbox.database().join("nested").join("store.db")).unwrap_err();
+    let err = Archive::open(&sandbox.database().join("nested").join("store.db"), BUSY).unwrap_err();
     assert!(err.to_string().contains("unable to open"));
 }
 
@@ -29,7 +41,7 @@ fn open_fails_in_missing_directory() {
 fn open_fails_on_incompatible_schema() {
     let sandbox = Sandbox::new("store-incompatible").unwrap();
     sandbox.seed("CREATE TABLE messages (other TEXT);").unwrap();
-    let err = Archive::open(&sandbox.database()).unwrap_err();
+    let err = Archive::open(&sandbox.database(), BUSY).unwrap_err();
     assert!(err.to_string().contains("no such column"));
 }
 
@@ -37,14 +49,14 @@ fn open_fails_on_incompatible_schema() {
 fn open_fails_on_non_database_file() {
     let sandbox = Sandbox::new("store-garbage").unwrap();
     sandbox.write("store.db", &"x".repeat(500)).unwrap();
-    let err = Archive::open(&sandbox.database()).unwrap_err();
+    let err = Archive::open(&sandbox.database(), BUSY).unwrap_err();
     assert!(err.to_string().contains("not a database"));
 }
 
 #[test]
 fn replace_reopens_only_lines_skipped_as_sealed() {
     let sandbox = Sandbox::new("store-reopen").unwrap();
-    let store = Archive::open(&sandbox.database()).unwrap();
+    let store = Archive::open(&sandbox.database(), BUSY).unwrap();
     let stale = sealed_envelope("k1", NOON);
     assert_eq!(store.save_event(&stale).unwrap(), 1);
     sandbox.seed(SKIPPED).unwrap();
@@ -58,7 +70,7 @@ fn replace_reopens_only_lines_skipped_as_sealed() {
 #[test]
 fn replace_swaps_text_only_while_unchanged() {
     let sandbox = Sandbox::new("store-replace").unwrap();
-    let store = Archive::open(&sandbox.database()).unwrap();
+    let store = Archive::open(&sandbox.database(), BUSY).unwrap();
     let stale = sealed_envelope("k1", NOON);
     assert_eq!(store.save_event(&stale).unwrap(), 1);
     let fresh = envelope("k1", NOON);
@@ -70,7 +82,7 @@ fn replace_swaps_text_only_while_unchanged() {
 #[test]
 fn save_event_inserts_once() {
     let sandbox = Sandbox::new("store-event").unwrap();
-    let store = Archive::open(&sandbox.database()).unwrap();
+    let store = Archive::open(&sandbox.database(), BUSY).unwrap();
     let body = envelope("k1", NOON);
     assert_eq!(store.save_event(&body).unwrap(), 1);
     assert_eq!(store.save_event(&body).unwrap(), 0);
@@ -81,7 +93,7 @@ fn save_event_inserts_once() {
 fn save_fails_without_required_columns() {
     let sandbox = Sandbox::new("store-columns").unwrap();
     sandbox.seed(BAD_SCHEMA).unwrap();
-    let store = Archive::open(&sandbox.database()).unwrap();
+    let store = Archive::open(&sandbox.database(), BUSY).unwrap();
     let event = store.save_event(&envelope("k1", NOON)).unwrap_err();
     let page = store.save_page(r#"{"envelopes":[]}"#).unwrap_err();
     assert!(event.to_string().contains("no column named"));
@@ -91,7 +103,7 @@ fn save_fails_without_required_columns() {
 #[test]
 fn save_page_inserts_new_only() {
     let sandbox = Sandbox::new("store-page").unwrap();
-    let store = Archive::open(&sandbox.database()).unwrap();
+    let store = Archive::open(&sandbox.database(), BUSY).unwrap();
     assert_eq!(store.save_event(&envelope("k1", NOON)).unwrap(), 1);
     let page = format!(
         r#"{{"envelopes":[{},{}],"next_cursor":null,"skipped":0}}"#,
@@ -106,7 +118,7 @@ fn save_page_inserts_new_only() {
 #[test]
 fn sealed_lists_candidates_newest_first_within_limit() {
     let sandbox = Sandbox::new("store-sealed").unwrap();
-    let store = Archive::open(&sandbox.database()).unwrap();
+    let store = Archive::open(&sandbox.database(), BUSY).unwrap();
     for (key, millis) in [("k1", NOON), ("k2", NOON + 5)] {
         assert_eq!(store.save_event(&sealed_envelope(key, millis)).unwrap(), 1);
     }
@@ -131,7 +143,7 @@ fn shelf_fails_on_incompatible_schema() {
     let sandbox = Sandbox::new("shelf-incompatible").unwrap();
     sandbox.seed(BAD_SCHEMA).unwrap();
     let path = sandbox.database();
-    let shelf = Shelf::new(&path, "dingtalk", "acct");
+    let shelf = Shelf::new(&path, BUSY);
     let err = shelf
         .page(&Query::new(None, PAGE, Window::default()))
         .unwrap_err();
@@ -142,7 +154,7 @@ fn shelf_fails_on_incompatible_schema() {
 fn shelf_fails_on_missing_database() {
     let sandbox = Sandbox::new("shelf-missing").unwrap();
     let path = sandbox.database();
-    let shelf = Shelf::new(&path, "dingtalk", "acct");
+    let shelf = Shelf::new(&path, BUSY);
     let err = shelf
         .page(&Query::new(None, PAGE, Window::default()))
         .unwrap_err();
@@ -155,7 +167,7 @@ fn shelf_fails_on_undecodable_row() {
     let sandbox = Sandbox::new("shelf-undecodable").unwrap();
     sandbox.seed(BAD_STAMP).unwrap();
     let path = sandbox.database();
-    let shelf = Shelf::new(&path, "dingtalk", "acct");
+    let shelf = Shelf::new(&path, BUSY);
     let err = shelf
         .page(&Query::new(None, PAGE, Window::default()))
         .unwrap_err();
@@ -165,12 +177,12 @@ fn shelf_fails_on_undecodable_row() {
 #[test]
 fn shelf_filters_by_half_open_window() {
     let sandbox = Sandbox::new("shelf-window").unwrap();
-    let store = Archive::open(&sandbox.database()).unwrap();
+    let store = Archive::open(&sandbox.database(), BUSY).unwrap();
     for (key, millis) in [("k1", NOON), ("k2", NOON + 5), ("k3", NOON + 10)] {
         assert_eq!(store.save_event(&envelope(key, millis)).unwrap(), 1);
     }
     let path = sandbox.database();
-    let shelf = Shelf::new(&path, "dingtalk", "acct");
+    let shelf = Shelf::new(&path, BUSY);
     let page = |since, until| {
         shelf
             .page(&Query::new(None, PAGE, Window::new(since, until)))
@@ -185,7 +197,7 @@ fn shelf_filters_by_half_open_window() {
 #[test]
 fn shelf_joins_priority_and_analysis() {
     let sandbox = Sandbox::new("shelf-join").unwrap();
-    let store = Archive::open(&sandbox.database()).unwrap();
+    let store = Archive::open(&sandbox.database(), BUSY).unwrap();
     for key in ["k1", "k2"] {
         assert_eq!(store.save_event(&envelope(key, NOON)).unwrap(), 1);
     }
@@ -193,7 +205,7 @@ fn shelf_joins_priority_and_analysis() {
         .seed("INSERT INTO placements VALUES ('k1', 't1-0', 0.5, 1); INSERT INTO alerts VALUES ('t1-0@1', 't1-0', 'sent', 0, 'mulled', '', 1, 0);")
         .unwrap();
     let path = sandbox.database();
-    let rows = Shelf::new(&path, "dingtalk", "acct")
+    let rows = Shelf::new(&path, BUSY)
         .page(&Query::new(None, PAGE, Window::default()))
         .unwrap();
     let shown: Vec<Value> = rows.iter().map(|row| to_value(row).unwrap()).collect();
@@ -206,46 +218,32 @@ fn shelf_joins_priority_and_analysis() {
 }
 
 #[test]
-fn shelf_pages_newest_first_for_one_account() {
+fn shelf_pages_newest_first_across_sources() {
     let sandbox = Sandbox::new("shelf-pages").unwrap();
-    let store = Archive::open(&sandbox.database()).unwrap();
+    let store = Archive::open(&sandbox.database(), BUSY).unwrap();
     for (key, millis) in [("k1", NOON), ("k2", NOON + 5), ("k3", NOON + 5)] {
         assert_eq!(store.save_event(&envelope(key, millis)).unwrap(), 1);
     }
     sandbox.seed(OTHER).unwrap();
     let path = sandbox.database();
-    let shelf = Shelf::new(&path, "dingtalk", "acct");
+    let shelf = Shelf::new(&path, BUSY);
     let all = shelf
         .page(&Query::new(None, PAGE, Window::default()))
         .unwrap();
-    assert_eq!(ids(&all), ["k3", "k2", "k1"]);
+    assert_eq!(ids(&all), ["k3", "k2", "k1", "x2", "x1"]);
     let first = shelf.page(&Query::new(None, 1, Window::default())).unwrap();
     assert_eq!(ids(&first), ["k3"]);
     let after = Mark::new("k2".to_owned(), NOON + 5);
     let rest = shelf
         .page(&Query::new(Some(after), PAGE, Window::default()))
         .unwrap();
-    assert_eq!(ids(&rest), ["k1"]);
-    let beyond = Mark::new("k1".to_owned(), NOON);
+    assert_eq!(ids(&rest), ["k1", "x2", "x1"]);
+    let beyond = Mark::new("x1".to_owned(), 9);
     assert!(
         shelf
             .page(&Query::new(Some(beyond), PAGE, Window::default()))
             .unwrap()
             .is_empty()
-    );
-    let other = Shelf::new(&path, "dingtalk", "other");
-    assert_eq!(
-        ids(&other
-            .page(&Query::new(None, PAGE, Window::default()))
-            .unwrap()),
-        ["x1"]
-    );
-    let slack = Shelf::new(&path, "slack", "acct");
-    assert_eq!(
-        ids(&slack
-            .page(&Query::new(None, PAGE, Window::default()))
-            .unwrap()),
-        ["x2"]
     );
 }
 
@@ -253,7 +251,7 @@ fn shelf_pages_newest_first_for_one_account() {
 fn watermark_fails_on_non_numeric_value() {
     let sandbox = Sandbox::new("store-text-stamp").unwrap();
     sandbox.seed(TEXT_STAMP).unwrap();
-    let store = Archive::open(&sandbox.database()).unwrap();
+    let store = Archive::open(&sandbox.database(), BUSY).unwrap();
     let err = store.watermark("dingtalk", "acct").unwrap_err();
     assert!(err.to_string().contains("Invalid column type"));
 }
@@ -261,7 +259,7 @@ fn watermark_fails_on_non_numeric_value() {
 #[test]
 fn watermark_tracks_latest_per_account() {
     let sandbox = Sandbox::new("store-watermark").unwrap();
-    let store = Archive::open(&sandbox.database()).unwrap();
+    let store = Archive::open(&sandbox.database(), BUSY).unwrap();
     assert_eq!(store.watermark("dingtalk", "acct").unwrap(), None);
     assert_eq!(store.save_event(&envelope("k1", NOON)).unwrap(), 1);
     assert_eq!(store.save_event(&envelope("k2", NOON + 5)).unwrap(), 1);

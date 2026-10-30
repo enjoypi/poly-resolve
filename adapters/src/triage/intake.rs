@@ -38,10 +38,8 @@ pub(super) fn form(shift: &Shift<'_>) {
 pub(super) fn intake(shift: &Shift<'_>) {
     let now = now_ms();
     let messages = shift.ledger.unlined(&json!({
-        "account": shift.ingest.account(),
         "limit": shift.triage.intake(),
         "since_ms": now.saturating_sub(shift.triage.lookback_ms()),
-        "source": shift.ingest.source(),
     }));
     let (rules, rev) = current(shift);
     let stamp = Stamp {

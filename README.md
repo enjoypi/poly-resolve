@@ -33,23 +33,26 @@ YAML 文件，各项均必填（注明可选的除外），不允许其他字段
 | web_dir | 前端构建产物目录（如 `web/dist`）；目录或文件不存在时页面请求返回 404 |
 | messages.default / max | 查看消息接口每页默认条数与单页上限，至少 1 |
 | errors.<错误>.code | 该错误的响应体 code；<错误> 取 bad_request、conflict、not_found、storage、unknown_action、unprocessable，见“返回码” |
-| ingest.account | 账号标识，写入每条消息记录，区分不同登录员工 |
-| ingest.source | 来源标识，写入每条消息记录，如 dingtalk |
-| ingest.source_utc_offset_minutes | 钉钉返回的无时区时间所属时区相对 UTC 的分钟数，北京时间为 480 |
-| ingest.store_path | SQLite 文件路径，文件不存在则创建，所在目录须已存在；内含消息正文，须限制目录权限 |
-| ingest.initial_backfill_ms | 库内无记录时，首次补拉回溯的毫秒数 |
-| ingest.reconcile_overlap_ms | 补拉从库内最新消息时间再往前多回溯的毫秒数 |
-| ingest.backoff_initial_ms / backoff_max_ms | 钉钉工具中断后重启的等待毫秒数，逐次翻倍直到上限，至少 1 |
-| ingest.child_exit_timeout_ms | 停机时等待钉钉工具退出的最长毫秒数，超时强杀，至少 1 |
+| ingest.store_path | SQLite 文件路径，文件不存在则创建，所在目录须已存在；内含消息正文，须限制目录权限；启用 WAL，同目录另有 `-wal`、`-shm` 文件，备份用 `sqlite3 <库> ".backup <目标>"`，勿单独拷贝或删除主文件 |
+| ingest.busy_timeout_ms | 等待数据库写锁的最长毫秒数，至少 1；收集等锁超时则退避后重试，不退出 |
+| ingest.backoff_initial_ms / backoff_max_ms | 数据源中断后重启的等待毫秒数，逐次翻倍直到上限，至少 1 |
 | ingest.failure_exit_code | 存储失败时的退出码，1 至 255 |
-| ingest.manual_exit_code | 钉钉工具提示登录失效或需授权、须人工处理时的退出码，1 至 255 |
-| ingest.cipher_min_length | 判定密文的正文最短字符数，至少 1 |
-| ingest.heal_limit | 每次启动时最多重新解密多少条库里的密文消息，至少 1 |
-| ingest.lookup_batch | 一次向钉钉工具查询转发消息详情的消息数，1 至 50 |
-| ingest.dws.env / vars | 传给钉钉工具的环境变量：env 为字面量，应含 `DO_NOT_TRACK` 以关闭其遥测；vars 为 `${NAME}` 写法，运行时读同名环境变量（HOME、PATH 等）；子进程环境先清空再只放这两类 |
-| ingest.dws.listen / pull / decrypt / lookup | 实时监听、补拉、解密、查询转发详情所用命令：bin 为可执行文件，args 为参数，sandbox 见“子进程沙箱”；程序自动追加参数：pull 追加 `--start`、`--end`，decrypt 追加 `--text=<密文>`（标准输出须为含 `plaintext` 的 JSON），lookup 追加 `--msg-ids=<消息 ID,…>`（标准输出须为含 `messages[].forwarded[]` 的 JSON） |
-| ingest.dws.manual_exit_codes | 钉钉工具退出码落在此列表时视为须人工处理 |
-| ingest.dws.timeout_ms | 补拉、解密、查询转发详情单次执行的最长毫秒数，超时按失败处理，至少 1 |
+| ingest.manual_exit_code | 数据源提示登录失效或需授权、须人工处理时的退出码，1 至 255 |
+| ingest.sources | 数据源列表，至少 1 项；每项是单键映射，键为类型（目前只有 `dingtalk`），同类型的 account 不得重复；各数据源并行收集，任一须人工处理或存储失败时全部停止，服务以对应退出码退出 |
+| ingest.sources[].dingtalk.account | 账号标识，与类型一起写入每条消息记录 |
+| ingest.sources[].dingtalk.utc_offset_minutes | 钉钉返回的无时区时间所属时区相对 UTC 的分钟数，北京时间为 480 |
+| ingest.sources[].dingtalk.initial_backfill_ms | 库内无记录时，首次补拉回溯的毫秒数 |
+| ingest.sources[].dingtalk.reconcile_overlap_ms | 补拉从库内最新消息时间再往前多回溯的毫秒数 |
+| ingest.sources[].dingtalk.child_exit_timeout_ms | 停机时等待钉钉工具退出的最长毫秒数，超时强杀，至少 1 |
+| ingest.sources[].dingtalk.cipher_min_length | 判定密文的正文最短字符数，至少 1 |
+| ingest.sources[].dingtalk.heal_limit | 每次启动时最多重新解密多少条库里的密文消息，至少 1 |
+| ingest.sources[].dingtalk.lookup_batch | 一次向钉钉工具查询转发消息详情的消息数，1 至 50 |
+| ingest.sources[].dingtalk.self_sender_id / notify_conversation_id | 本人在钉钉的发送人 ID、通知所在会话 ID，写成 `${NAME}`；对应的消息不参与决策；triage 开启时缺失则 `serve` 以退出码 2 退出 |
+| ingest.sources[].dingtalk.dws.env / vars | 传给钉钉工具的环境变量：env 为字面量，应含 `DO_NOT_TRACK` 以关闭其遥测；vars 为 `${NAME}` 写法，运行时读同名环境变量（HOME、PATH 等）；子进程环境先清空再只放这两类 |
+| ingest.sources[].dingtalk.dws.listen / pull / decrypt / lookup | 实时监听、补拉、解密、查询转发详情所用命令：bin 为可执行文件，args 为参数，sandbox 见“子进程沙箱”；程序自动追加参数：pull 追加 `--start`、`--end`，decrypt 追加 `--text=<密文>`（标准输出须为含 `plaintext` 的 JSON），lookup 追加 `--msg-ids=<消息 ID,…>`（标准输出须为含 `messages[].forwarded[]` 的 JSON） |
+| ingest.sources[].dingtalk.dws.manual_exit_codes | 钉钉工具退出码落在此列表时视为须人工处理 |
+| ingest.sources[].dingtalk.dws.parallel | 补拉与启动自愈时同时解密的条数，至少 1；钉钉工具并发解密未经验证，保持 1 |
+| ingest.sources[].dingtalk.dws.timeout_ms | 补拉、解密、查询转发详情单次执行的最长毫秒数，超时按失败处理，至少 1 |
 | triage.mode | disabled 或 enabled；enabled 时 `serve` 启动即检查所需环境变量，缺失则以退出码 2 退出并列出变量名 |
 | triage.model | 决策接口的模型名 |
 | triage.questions | urgent：每条消息一问的优先级问题（`{line}` 换成消息别名）；topic：每个新会话段一问的话题归属问题（`{segment}` 换成段别名；`min_confidence` 低于它按新话题；`new_label` 是“新话题”选项的说明）；threshold：概率不低于它即高优先级，大于 1 则只打分不转交 |
@@ -62,7 +65,7 @@ YAML 文件，各项均必填（注明可选的除外），不允许其他字段
 | triage.decide / codex / notify / screen.exec | 外部命令，共同字段：bin、args、env（字面量环境变量）、vars（`${NAME}` 写法，运行时读同名环境变量传给子进程；args 里的 `${NAME}` 若在 vars 里声明则换成其值）、sandbox、timeout_ms；子进程环境先清空再只放 env 与 vars |
 | triage.codex.args | 须含 `--json`，不含 `--ephemeral` 与结尾的 `-` |
 | triage.notify.args | 须含 `--yes` 并以接收人参数名结尾；程序追加 `notify_target` 与 `--idempotency-key=<话题>@<批号>` |
-| triage.self_sender_id / notify_conversation_id / notify_target | 本人的发送人 ID、通知所在会话 ID、通知接收人，均写成 `${NAME}`；前两者对应的消息不参与决策 |
+| triage.notify_target | 通知接收人，写成 `${NAME}` |
 | triage.screen | 可选，见“本地模型筛查”：exec 外部命令；instructions 系统提示词；model 模型名；placeholder 遮盖用的占位符 |
 
 ## HTTP 接口
@@ -104,7 +107,7 @@ curl -H 'x-session-id: s1' -H 'x-user: alice' http://127.0.0.1:15801/api/health
 ./target/release/cli serve --config cli/config.yaml
 ```
 
-启动后 stderr 输出 `listening` 日志，含实际地址（log_level 为 info 或更详细时可见）。同一进程还会收集钉钉消息（须先 `dws auth login`），写入 `ingest.store_path`，页面与接口读取同一份库；收集遇到须人工处理或存储失败时，服务以对应退出码退出。
+启动后 stderr 输出 `listening` 日志，含实际地址（log_level 为 info 或更详细时可见）。同一进程还会并行收集 `ingest.sources` 里的全部数据源（钉钉须先 `dws auth login`），写入 `ingest.store_path`，页面与接口读取同一份库、展示全部来源；任一数据源须人工处理或存储失败时，先让其余数据源正常停止，再以对应退出码退出。消息分级（成批、决策）与转交（codex 分析、通知）各自独立运行，分析耗时不阻塞成批与决策。
 
 停机：Ctrl+C（SIGINT）或 SIGTERM。不再接受新连接，在途请求完成、钉钉工具正常退出后以退出码 0 退出；超过 shutdown_timeout_ms 仍未完成则以 shutdown_timeout_exit_code 强制退出，在途连接被重置。停机期间再次发信号无效。
 
@@ -234,4 +237,4 @@ sops exec-env secrets/prod.enc.yaml './target/release/cli serve --config cli/con
 | 服务地址绑定失败 | serve_exit_code | 错误写 stderr |
 | 停机等待超时 | shutdown_timeout_exit_code | 日志写 stderr |
 | 收集时存储失败 | ingest.failure_exit_code | 错误写 stderr 日志 |
-| 收集时钉钉工具须人工处理 | ingest.manual_exit_code | 错误写 stderr 日志 |
+| 收集时数据源须人工处理 | ingest.manual_exit_code | 错误写 stderr 日志 |

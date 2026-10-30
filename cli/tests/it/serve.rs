@@ -4,13 +4,14 @@ mod messages;
 mod reviews;
 
 use core::ops::{Deref, DerefMut};
+use std::fs;
 use std::io::{self, BufRead as _, BufReader, Read as _, Write as _};
 use std::net::{TcpListener, TcpStream};
 use std::process::{Child, Command, ExitCode, Stdio};
 
 use serde_json::{Value, from_str};
 
-use crate::support::{Stderr, await_log, config, live, run, sandbox, terminate};
+use crate::support::{EVENT, Stderr, await_log, config, live, run, sandbox, terminate};
 
 const IDENTITY: &str = "x-session-id: s1\r\nx-user: u1\r\n";
 const JSON: &str = "\r\ncontent-type: application/json\r\n";
@@ -156,9 +157,14 @@ fn serves_http_until_signal() {
 #[test]
 fn serves_with_triage_enabled() {
     let dir = sandbox("serve-triage").unwrap();
-    let yaml = live(&dir).replace("mode: disabled", "mode: enabled");
+    fs::write(format!("{dir}/listen.txt"), format!("{EVENT}\n")).unwrap();
+    let yaml = live(&dir)
+        .replace("mode: disabled", "mode: enabled")
+        .replace("lookback_ms: 1000\n", "lookback_ms: 1000000000000\n");
     let path = config("serve-triage.yaml", &yaml).unwrap();
-    let server = start(&path).unwrap();
+    let mut server = start(&path).unwrap();
+    await_log(&mut server.lines, "event stored").unwrap();
+    await_log(&mut server.lines, "line opened").unwrap();
     let sync = get(&server.addr, "/api/health").unwrap();
     assert!(sync.starts_with("HTTP/1.1 200"));
     assert!(stop(server).unwrap());
@@ -194,6 +200,23 @@ fn stop(mut server: Server) -> io::Result<bool> {
 }
 
 #[test]
+fn stops_everything_when_a_source_needs_manual_action() {
+    let dir = sandbox("serve-manual").unwrap();
+    let yaml = live(&dir)
+        .replace("mode: disabled", "mode: enabled")
+        .replace(
+            "            FAKE_DIR: ",
+            "            FAKE_LISTEN: exit\n            FAKE_CODE: \"2\"\n            FAKE_DIR: ",
+        );
+    let path = config("serve-manual.yaml", &yaml).unwrap();
+    let mut server = start(&path).unwrap();
+    await_log(&mut server.lines, "dws needs manual action").unwrap();
+    let status = server.child.wait().unwrap();
+    let manual: i32 = 17;
+    assert_eq!(status.code(), Some(manual));
+}
+
+#[test]
 fn times_out_with_configured_exit_code() {
     let dir = sandbox("serve-timeout").unwrap();
     let yaml = live(&dir).replace("shutdown_timeout_ms: 10000", "shutdown_timeout_ms: 50");
@@ -216,8 +239,8 @@ fn times_out_with_configured_exit_code() {
 fn waits_for_collector_after_server_stops() {
     let dir = sandbox("serve-slow-collector").unwrap();
     let yaml = live(&dir).replace(
-        "      FAKE_DIR: ",
-        "      FAKE_LISTEN: hang\n      FAKE_DIR: ",
+        "            FAKE_DIR: ",
+        "            FAKE_LISTEN: hang\n            FAKE_DIR: ",
     );
     let path = config("slow-collector.yaml", &yaml).unwrap();
     let server = start(&path).unwrap();

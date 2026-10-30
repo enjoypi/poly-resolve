@@ -19,6 +19,7 @@ lookup)
   ;;
 decrypt)
   echo "$@" > "$FAKE_DIR/decrypt-args.txt"
+  echo "$@" >> "$FAKE_DIR/decrypt-calls.txt"
   case "$FAKE_DECRYPT" in
     fail) echo '{"error":{"code":5,"message":"decrypt failed"}}'; exit 5 ;;
     junk) echo 'not json' ;;

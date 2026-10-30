@@ -3,7 +3,7 @@ use std::process::ExitCode;
 
 use cli::run;
 
-#[tokio::main(flavor = "current_thread")]
+#[tokio::main(flavor = "multi_thread")]
 async fn main() -> ExitCode {
     run(env::args_os().collect()).await
 }

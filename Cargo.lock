@@ -7,6 +7,7 @@ name = "adapters"
 version = "0.1.0"
 dependencies = [
  "domain",
+ "futures-util",
  "rusqlite",
  "serde",
  "serde_json",
@@ -188,6 +189,7 @@ dependencies = [
  "axum",
  "clap",
  "domain",
+ "futures-util",
  "rusqlite",
  "serde",
  "serde-saphyr",

@@ -32,6 +32,7 @@
 
 ## ingest
 
+- `ingest` feature 是钉钉格式；新数据源另建 feature，产出同样的 envelope
 - `parse_event`（钉钉实时事件一行）、`parse_page`（补拉一页）→ `IngestEnvelope`，请求共用 `IngestParseRequest`：account、source、body、received_at_ms（调用方给，保持纯函数）、utc_offset_minutes、cipher_min_length；`window` 把毫秒区间转成补拉用的 `YYYY-MM-DD HH:MM:SS`（按偏移）
 - 字段名按候选列表取首个有值的（`pick`），不用 serde alias：补拉消息可同时含 `messageId` 与 `openMessageId`，alias 会报重复字段
 - 时间 `create_time` 或 `createTime`：数字当 UTC 毫秒，字符串先试 RFC3339，再试无时区的 `%Y-%m-%d %H:%M:%S`（按偏移换算）；早于 1970 取 0
@@ -55,7 +56,7 @@
 ## triage
 
 - 九个路由，请求都带消息内容，均标 `Trace::Redacted`；`notice`、`screen` 为 `typed`，其余为 `fallible`；`notice` 按值收请求以满足 `needless_pass_by_value`，用解构消耗
-- `line`（`triage/line.rs`）：`{message{conversation_id,sender_id,sender_name,text}, rules, max_chars, unknown_sender, self_sender_id, notify_conversation_id, cipher_min_length}` → `{sender, text, skip}`；依次判本人发送（`own`）、通知会话（`notice`）、空正文（`empty`）、仍是密文（`sealed`）则只给 `skip`（此时不编译规则），否则发送人与正文过 `redact::Mask`，正文按 `max_chars` 截断
+- `line`（`triage/line.rs`）：`{message{conversation_id,sender_id,sender_name,text}, rules, max_chars, unknown_sender, self_sender_id, notify_conversation_id, cipher_min_length}` → `{sender, text, skip}`；后三项可为 null（数据源无此概念），为 null 即不做该项判定；依次判本人发送（`own`）、通知会话（`notice`）、空正文（`empty`）、仍是密文（`sealed`）则只给 `skip`（此时不编译规则），否则发送人与正文过 `redact::Mask`，正文按 `max_chars` 截断
 - `pack`（`triage/pack.rs`）：`{lines[{key,conversation_id,occurred_at_ms,sender,text,hints?}], attach[{conversation_id,last_ms,topic_id}], topics[{topic,label}], batch_id, gap_ms, label_chars, max_chars, model, new_label, questions{urgent,topic}, rules}` → `{body, layout}`
   - 行按会话、时间切段（相邻间隔 `<= gap_ms`），再按首行时间排序
   - 每行一个 `predicate`（`name` 为 `<urgent.name>_<行号>`）

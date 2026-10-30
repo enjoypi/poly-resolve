@@ -3,8 +3,9 @@ use domain::features::{Call, Context, Origin, Target, dispatch};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, from_str, json, to_string};
 
-use crate::config::Settings;
-use crate::dws::Kid;
+use super::SOURCE;
+use super::config::Settings;
+use super::dws::Kid;
 
 const FEATURE: &str = "ingest";
 const TRANSPORT: &str = "adapters";
@@ -60,8 +61,8 @@ impl<'bridge> Bridge<'bridge> {
             "body": body,
             "cipher_min_length": self.config.cipher_min_length(),
             "received_at_ms": received_at_ms,
-            "source": self.config.source(),
-            "utc_offset_minutes": self.config.source_utc_offset_minutes(),
+            "source": SOURCE,
+            "utc_offset_minutes": self.config.utc_offset_minutes(),
         })
         .to_string()
     }
@@ -78,7 +79,7 @@ impl<'bridge> Bridge<'bridge> {
         let request = json!({
             "from_ms": from_ms,
             "to_ms": to_ms,
-            "utc_offset_minutes": self.config.source_utc_offset_minutes(),
+            "utc_offset_minutes": self.config.utc_offset_minutes(),
         });
         let response = self.call("window", &request.to_string())?;
         Ok(from_str(&response).unwrap_or_default())
