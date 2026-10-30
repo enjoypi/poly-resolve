@@ -103,12 +103,12 @@ export class Board {
     this.lock(true);
     let done = false;
     try {
-      const body = {
+      const query = {
         limit: PAGE_LIMIT,
         ...(append && this.cursor ? { cursor: this.cursor } : {}),
         ...this.span,
       };
-      const { data, error } = await this.client.POST("/messages/list", { body });
+      const { data, error } = await this.client.GET("/api/messages", { params: { query } });
       this.status.error.textContent = data ? "" : (error?.code ?? "");
       if (data) {
         this.rows = merge(append ? this.rows : [], data.items);

@@ -1,13 +1,12 @@
 use core::error::Error;
 use std::fs;
 use std::path::Path;
-use std::process::{Command, ExitCode};
 
 use adapters::store::Archive;
-use serde_json::{Value, from_slice, from_str, json};
+use serde_json::{Value, from_str, json};
 
-use super::{post, start, stop};
-use crate::support::{EVENT, YAML, await_log, call, config, live, sandbox};
+use super::{get, start, stop};
+use crate::support::{EVENT, await_log, config, live, sandbox};
 
 const LIMIT: u32 = 2;
 
@@ -27,7 +26,7 @@ fn collects_events_while_serving() {
     let path = config("cli-messages-collect.yaml", &live(&dir)).unwrap();
     let mut server = start(&path).unwrap();
     await_log(&mut server.lines, "event stored").unwrap();
-    let response = post(&server.addr, ["/messages/list", ""], "{}").unwrap();
+    let response = get(&server.addr, "/api/messages").unwrap();
     assert!(response.starts_with("HTTP/1.1 200"));
     let reply = body(&response).unwrap();
     assert_eq!(keys(&reply), ["dingtalk:acct:m1"]);
@@ -63,30 +62,22 @@ fn keys(reply: &Value) -> Vec<&str> {
 }
 
 #[test]
-fn lists_messages_identically_on_both_channels() {
+fn lists_messages_page_by_page() {
     let path = seeded("cli-messages-list").unwrap();
-    let out = Command::new(env!("CARGO_BIN_EXE_cli"))
-        .args(["call", "messages", "list", "--json", r#"{"limit":2}"#])
-        .args(["--config", &path])
-        .output()
-        .unwrap();
-    assert!(out.status.success());
-    let cli_reply: Value = from_slice(&out.stdout).unwrap();
     let server = start(&path).unwrap();
-    let response = post(&server.addr, ["/messages/list", ""], r#"{"limit":2}"#).unwrap();
+    let response = get(&server.addr, &format!("/api/messages?limit={LIMIT}")).unwrap();
     assert!(response.starts_with("HTTP/1.1 200"));
-    let http_reply = body(&response).unwrap();
-    assert_eq!(cli_reply, http_reply);
-    assert_eq!(keys(&http_reply), ["dingtalk:acct:m3", "dingtalk:acct:m2"]);
-    let cursor = http_reply
-        .get("next_cursor")
-        .and_then(Value::as_str)
-        .unwrap();
-    let next = json!({"cursor": cursor, "limit": LIMIT}).to_string();
-    let page = body(&post(&server.addr, ["/messages/list", ""], &next).unwrap()).unwrap();
+    let reply = body(&response).unwrap();
+    assert_eq!(keys(&reply), ["dingtalk:acct:m3", "dingtalk:acct:m2"]);
+    let cursor = reply.get("next_cursor").and_then(Value::as_str).unwrap();
+    let next = format!(
+        "/api/messages?cursor={}&limit={LIMIT}",
+        cursor.replace(':', "%3A")
+    );
+    let page = body(&get(&server.addr, &next).unwrap()).unwrap();
     assert_eq!(keys(&page), ["dingtalk:acct:m1"]);
     assert_eq!(page.get("next_cursor"), Some(&Value::Null));
-    let bad = post(&server.addr, ["/messages/list", ""], r#"{"limit":0}"#).unwrap();
+    let bad = get(&server.addr, "/api/messages?limit=0").unwrap();
     assert!(bad.starts_with("HTTP/1.1 400"));
     assert!(stop(server).unwrap());
 }
@@ -95,11 +86,11 @@ fn lists_messages_identically_on_both_channels() {
 fn lists_messages_within_window() {
     let path = seeded("cli-messages-window").unwrap();
     let server = start(&path).unwrap();
-    let window = r#"{"from_ms":15,"to_ms":30}"#;
-    let reply = body(&post(&server.addr, ["/messages/list", ""], window).unwrap()).unwrap();
+    let window = "/api/messages?from_ms=15&to_ms=30";
+    let reply = body(&get(&server.addr, window).unwrap()).unwrap();
     assert_eq!(keys(&reply), ["dingtalk:acct:m2"]);
-    let inverted = r#"{"from_ms":30,"to_ms":15}"#;
-    let bad = post(&server.addr, ["/messages/list", ""], inverted).unwrap();
+    let inverted = "/api/messages?from_ms=30&to_ms=15";
+    let bad = get(&server.addr, inverted).unwrap();
     assert!(bad.starts_with("HTTP/1.1 400"));
     assert!(stop(server).unwrap());
 }
@@ -124,17 +115,10 @@ fn storage_failure_is_service_unavailable() {
     let mut server = start(&path).unwrap();
     await_log(&mut server.lines, "page rejected").unwrap();
     fs::remove_file(format!("{dir}/store.db")).unwrap();
-    let response = post(&server.addr, ["/messages/list", ""], "{}").unwrap();
+    let response = get(&server.addr, "/api/messages").unwrap();
     assert!(response.starts_with("HTTP/1.1 503"));
     assert_eq!(body(&response).unwrap(), json!({"code": "unavailable"}));
-    let health = post(&server.addr, ["/health/check", ""], "{}").unwrap();
+    let health = get(&server.addr, "/api/health").unwrap();
     assert!(health.starts_with("HTTP/1.1 200"));
     assert!(stop(server).unwrap());
-}
-
-#[tokio::test]
-async fn storage_failure_uses_configured_exit_code() {
-    let path = config("cli-messages-call.yaml", YAML).unwrap();
-    let code = call(&path, ["messages", "list"], "{}").await;
-    assert_eq!(code, ExitCode::from(15));
 }

@@ -2,27 +2,9 @@ use domain::AppError;
 use domain::review::Docket;
 use serde_json::{Error, Value, from_str, json};
 
-use crate::support::{Broken, Dock, Fixture, cli};
+use crate::support::{Broken, Dock, Fixture, local};
 
 type Reply = Result<Value, u16>;
-
-#[test]
-fn approve_rejects_unusable_requests() {
-    assert_eq!(rule("approve", r#"{"keys":["nope"]}"#).unwrap(), Err(400));
-    assert_eq!(rule("approve", "nope").unwrap(), Err(400));
-    assert_eq!(rule("reject", "nope").unwrap(), Err(400));
-}
-
-#[test]
-fn approve_settles_pending_items_only() {
-    let done = rule("approve", r#"{"keys":["k1","k3","k4"]}"#)
-        .unwrap()
-        .unwrap();
-    assert_eq!(
-        done.get("states"),
-        Some(&json!(["approved", "approved", "rejected"]))
-    );
-}
 
 fn dock() -> Dock {
     Dock::new(&[
@@ -45,13 +27,14 @@ fn keys(reply: &Value) -> Vec<&str> {
         })
 }
 
-fn list(request: &str, docket: &dyn Docket) -> Result<Reply, Error> {
-    reply(Fixture::new()?.dispatch_review(docket, &cli("review", "list", request)))
+fn list(query: &str, docket: &dyn Docket) -> Result<Reply, Error> {
+    let call = local("review", "list", "").with_params(query);
+    reply(Fixture::new()?.dispatch_review(docket, &call))
 }
 
 #[test]
 fn list_defaults_to_pending_and_returns_reasons() {
-    let reply = list("{}", &dock()).unwrap().unwrap();
+    let reply = list("", &dock()).unwrap().unwrap();
     assert_eq!(keys(&reply), ["k1", "k3"]);
     let reasons = reply.get("reasons").and_then(Value::as_array).unwrap();
     assert_eq!(reasons.len(), 2);
@@ -63,62 +46,22 @@ fn list_defaults_to_pending_and_returns_reasons() {
 
 #[test]
 fn list_filters_by_state_and_limit() {
-    let approved = list(r#"{"state":"approved"}"#, &dock()).unwrap().unwrap();
+    let approved = list("state=approved", &dock()).unwrap().unwrap();
     assert_eq!(keys(&approved), ["k2"]);
-    let one = list(r#"{"limit":1}"#, &dock()).unwrap().unwrap();
+    let one = list("limit=1", &dock()).unwrap().unwrap();
     assert_eq!(keys(&one), ["k1"]);
 }
 
 #[test]
 fn list_rejects_malformed_request() {
-    assert_eq!(list("nope", &dock()).unwrap(), Err(400));
-    assert_eq!(list(r#"{"limit":0}"#, &dock()).unwrap(), Err(400));
-    assert_eq!(list(r#"{"limit":4}"#, &dock()).unwrap(), Err(400));
+    assert_eq!(list("limit=x", &dock()).unwrap(), Err(400));
+    assert_eq!(list("limit=0", &dock()).unwrap(), Err(400));
+    assert_eq!(list("limit=4", &dock()).unwrap(), Err(400));
 }
 
 #[test]
 fn list_reports_storage_failure() {
-    assert_eq!(list("{}", &Broken).unwrap(), Err(503));
-}
-
-#[test]
-fn reject_drops_the_line_for_reasons_without_placeholder() {
-    let done = rule("reject", r#"{"key":"k1","reason":"noise"}"#)
-        .unwrap()
-        .unwrap();
-    assert_eq!(done.get("state"), Some(&json!("rejected")));
-    let stray = r#"{"key":"k1","leak":"secret-token-123","reason":"noise"}"#;
-    assert_eq!(rule("reject", stray).unwrap(), Err(400));
-}
-
-#[test]
-fn reject_learns_a_literal_rule_from_the_pasted_leak() {
-    let request = r#"{"key":"k1","leak":"  secret-token-123 ","reason":"leak"}"#;
-    let done = rule("reject", request).unwrap().unwrap();
-    assert_eq!(
-        done.get("state"),
-        Some(&json!(r"leaked:secret\-token\-123:[x]"))
-    );
-}
-
-#[test]
-fn reject_refuses_unusable_leaks() {
-    for request in [
-        r#"{"key":"k1","reason":"leak"}"#,
-        r#"{"key":"k1","leak":"  ","reason":"leak"}"#,
-        r#"{"key":"k1","leak":"absent-text","reason":"leak"}"#,
-        r#"{"key":"k1","leak":"se","reason":"leak"}"#,
-        r#"{"key":"nope","leak":"secret-token-123","reason":"leak"}"#,
-    ] {
-        assert_eq!(rule("reject", request).unwrap(), Err(400));
-    }
-}
-
-#[test]
-fn reject_requires_a_known_reason() {
-    let unknown = rule("reject", r#"{"key":"k1","reason":"other"}"#);
-    assert_eq!(unknown.unwrap(), Err(400));
-    assert_eq!(rule("reject", r#"{"key":"k1"}"#).unwrap(), Err(400));
+    assert_eq!(list("", &Broken).unwrap(), Err(503));
 }
 
 fn reply(result: Result<String, AppError>) -> Result<Reply, Error> {
@@ -128,23 +71,88 @@ fn reply(result: Result<String, AppError>) -> Result<Reply, Error> {
     }
 }
 
-fn rule(action: &str, request: &str) -> Result<Reply, Error> {
-    reply(Fixture::new()?.dispatch_review(&dock(), &cli("review", action, request)))
+fn update(key: &str, body: &str) -> Result<Reply, Error> {
+    update_on(&dock(), key, body)
 }
 
 #[test]
-fn settle_and_source_report_storage_failure() {
-    for (action, request) in [
-        ("approve", r#"{"keys":["k1"]}"#),
-        ("reject", r#"{"key":"k1","reason":"noise"}"#),
-        (
-            "reject",
-            r#"{"key":"k1","leak":"secret-token-123","reason":"leak"}"#,
-        ),
+fn update_approves_pending_and_repeats_idempotently() {
+    let approved = update("k1", r#"{"state":"approved"}"#).unwrap().unwrap();
+    assert_eq!(approved, json!({"state": "approved"}));
+    let again = update("k2", r#"{"state":"approved"}"#).unwrap().unwrap();
+    assert_eq!(again, json!({"state": "approved"}));
+}
+
+#[test]
+fn update_conflicts_with_a_different_settled_state() {
+    assert_eq!(update("k4", r#"{"state":"approved"}"#).unwrap(), Err(409));
+    let reject = r#"{"state":"rejected","reason":"noise"}"#;
+    assert_eq!(update("k2", reject).unwrap(), Err(409));
+}
+
+#[test]
+fn update_drops_the_line_for_reasons_without_placeholder() {
+    let done = update("k1", r#"{"state":"rejected","reason":"noise"}"#)
+        .unwrap()
+        .unwrap();
+    assert_eq!(done, json!({"state": "rejected"}));
+    let stray = r#"{"state":"rejected","leak":"secret-token-123","reason":"noise"}"#;
+    assert_eq!(update("k1", stray).unwrap(), Err(422));
+}
+
+#[test]
+fn update_learns_a_literal_rule_from_the_pasted_leak() {
+    let body = r#"{"state":"rejected","leak":"  secret-token-123 ","reason":"leak"}"#;
+    let done = update("k1", body).unwrap().unwrap();
+    assert_eq!(done, json!({"state": "leaked"}));
+    let wrong = Dock::new(&[("k1", "pending")]);
+    let pasted = r#"{"state":"rejected","leak":"secret-token","reason":"leak"}"#;
+    assert_eq!(update_on(&wrong, "k1", pasted).unwrap(), Err(409));
+}
+
+fn update_on(docket: &dyn Docket, key: &str, body: &str) -> Result<Reply, Error> {
+    let query = format!("key={key}");
+    let call = local("review", "update", body).with_params(&query);
+    reply(Fixture::new()?.dispatch_review(docket, &call))
+}
+
+#[test]
+fn update_refuses_unusable_leaks() {
+    for body in [
+        r#"{"state":"rejected","reason":"leak"}"#,
+        r#"{"state":"rejected","leak":"  ","reason":"leak"}"#,
+        r#"{"state":"rejected","leak":"absent-text","reason":"leak"}"#,
+        r#"{"state":"rejected","leak":"se","reason":"leak"}"#,
+        r#"{"state":"rejected","reason":"other"}"#,
     ] {
-        let result = Fixture::new()
-            .unwrap()
-            .dispatch_review(&Broken, &cli("review", action, request));
-        assert_eq!(result.unwrap_err().status(), 503);
+        assert_eq!(update("k1", body).unwrap(), Err(422));
+    }
+}
+
+#[test]
+fn update_rejects_malformed_requests() {
+    assert_eq!(update("k1", "nope").unwrap(), Err(400));
+    assert_eq!(update("k1", r#"{"state":"maybe"}"#).unwrap(), Err(400));
+    assert_eq!(update("k1", r#"{"state":"rejected"}"#).unwrap(), Err(400));
+    let call = local("review", "update", r#"{"state":"approved"}"#);
+    let missing = reply(Fixture::new().unwrap().dispatch_review(&dock(), &call));
+    assert_eq!(missing.unwrap(), Err(400));
+}
+
+#[test]
+fn update_reports_missing_items() {
+    assert_eq!(update("nope", r#"{"state":"approved"}"#).unwrap(), Err(404));
+    let leak = r#"{"state":"rejected","leak":"secret-token-123","reason":"leak"}"#;
+    assert_eq!(update("nope", leak).unwrap(), Err(404));
+}
+
+#[test]
+fn update_reports_storage_failure() {
+    for body in [
+        r#"{"state":"approved"}"#,
+        r#"{"state":"rejected","reason":"noise"}"#,
+        r#"{"state":"rejected","leak":"secret-token-123","reason":"leak"}"#,
+    ] {
+        assert_eq!(update_on(&Broken, "k1", body).unwrap(), Err(503));
     }
 }

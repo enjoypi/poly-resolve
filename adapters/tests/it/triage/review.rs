@@ -12,6 +12,29 @@ const ONE: u32 = 1;
 const SECRET: &str = "abc-secret-9";
 
 #[tokio::test]
+async fn empty_batches_do_not_spend_the_decision_quota() {
+    let sandbox = Sandbox::new("review-quota").unwrap();
+    let patch = json!({
+        "limits": {"max_decisions_per_hour": ONE},
+        "review": {"mode": "manual"},
+    });
+    seed(&sandbox, &[(KEY, "u1", "c1", "server down")]).unwrap();
+    start(&sandbox, &patch, QUICK).await.unwrap();
+    let rejected = rule(&sandbox, &Ruling::reject(KEY, "noise")).unwrap();
+    assert_eq!(rejected.as_deref(), Some("rejected"));
+    seed_from(&sandbox, &[(THIRD, "u1", "c1", "next")], LATER).unwrap();
+    start(&sandbox, &patch, QUICK).await.unwrap();
+    let approved = rule(&sandbox, &Ruling::approve(THIRD)).unwrap();
+    assert_eq!(approved.as_deref(), Some("approved"));
+    start(&sandbox, &patch, QUICK).await.unwrap();
+    assert_eq!(calls(&sandbox, "decide").unwrap(), 1);
+    assert_eq!(
+        table(&sandbox, BATCHES).unwrap(),
+        ["1|sent|0|", "2|sent|0|"]
+    );
+}
+
+#[tokio::test]
 async fn leaked_text_is_masked_again_and_reviewed_before_sending() {
     let sandbox = Sandbox::new("review-leak").unwrap();
     let text = format!("token {SECRET} here");

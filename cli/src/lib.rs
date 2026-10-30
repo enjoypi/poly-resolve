@@ -18,9 +18,7 @@ use std::process::ExitCode;
 
 use adapters::triage::{Setup, validate};
 use clap::Parser as _;
-use domain::features::{self, Call};
 use tokio::net::TcpListener;
-use tracing::dispatcher::with_default;
 
 use crate::args::Command;
 use crate::config::Settings;
@@ -28,32 +26,12 @@ use crate::signal::shutdown;
 
 const CONFIG_ERROR: u8 = 2;
 
-fn call(settings: &Settings, call: &Call<'_>) -> ExitCode {
-    let shelf = settings.ingest().shelf();
-    let context = settings.context(&shelf);
-    let result = with_default(settings.log(), || features::dispatch(&context, call));
-    let (code, body) = result.map_or_else(
-        |err| {
-            (
-                err.exit_code(settings.errors()),
-                err.body(settings.errors()),
-            )
-        },
-        |body| (0, body),
-    );
-    emit(code, &write_stdout(&body))
-}
-
 fn emit(code: u8, written: &io::Result<()>) -> ExitCode {
     ExitCode::from(code.max(u8::from(written.is_err())))
 }
 
 async fn execute(command: Command) -> ExitCode {
     match command {
-        Command::Call(invocation) => match config::load(invocation.config()) {
-            Ok(settings) => call(&settings, &invocation.call()),
-            Err(err) => fail(CONFIG_ERROR, &err),
-        },
         Command::Ingest { config } => match config::load(&config) {
             Ok(settings) => ingest(&settings).await,
             Err(err) => fail(CONFIG_ERROR, &err),

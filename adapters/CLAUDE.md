@@ -14,7 +14,7 @@
   - `settle`：一个事务里先写 `learned_rules`（`INSERT OR IGNORE`，仅当该行仍是 `pending`），再 `UPDATE … WHERE state = 'pending'`，最后读回当前状态
   - `Archive`：`INSERT OR IGNORE … json_each` 直接吃 domain 返回的 JSON（`save_event` 包成数组，`save_page` 取 `$.envelopes`）；水位取 `MAX(occurred_at_ms)`，不另建表；错误装箱
 - `bridge.rs`：持有 `&Context`，构造请求调 domain 的 `ingest` feature；`Page` 是 `parse_page` 结果的可改写副本（`envelopes_mut`、`render`），保存的是改写后的页面
-- `dws.rs`：`Dws`（`listen` 起监听子进程，stdin、stdout 管道，stderr 继承；`pull` 一次性执行并收 stdout；`decrypt` 一次性执行，追加 `--text=<密文>`；`lookup` 一次性执行，追加 `--msg-ids=<ID,…>`）、`Listener`（`next_line`、`stop`）；`plaintext(&Output)` 从解密命令的 JSON 取 `plaintext`，缺失或非 JSON 为 `None`
+- `dws.rs`：`Dws`（`listen` 起监听子进程，stdin、stdout 管道，stderr 继承；`pull` 一次性执行并收 stdout；`decrypt` 一次性执行，追加 `--text=<密文>`；`lookup` 一次性执行，追加 `--msg-ids=<ID,…>`；三个一次性命令共用 `output`，超过 `dws.timeout_ms` 返回 `TimedOut` 并经 `kill_on_drop` 杀掉子进程，调用方按失败处理）、`Listener`（`next_line`、`stop`）；`plaintext(&Output)` 从解密命令的 JSON 取 `plaintext`，缺失或非 JSON 为 `None`
 - `ingest.rs`：`run(settings, context, stop)` 返回退出码，单任务，不 spawn；`context` 由 cli 构造
 - `race.rs`：`race(stop, work)` 用 `poll_fn` 先 poll 停机信号再 poll 工作，代替被 clippy 禁的 `select!`；返回 `None` 即被停机打断
 - `seatbelt.rs`：`Sandbox`（`bin`、`canary`、`paths`、`probe`、`profile`、`vars`，`deny_unknown_fields`）
@@ -34,7 +34,7 @@
 - 补拉：`window` 取区间（库内水位减重叠，无记录则回溯 `initial_backfill_ms`）→ `pull` → `parse_page` → `save_page`；窗口被拒、拉取失败、页面无法解析只记 warn，不阻断监听
 - 密文：实时事件解析后，`Bridge::cipher` 带 `cipher_min_length` 调 domain `ingest.cipher` 判定；是密文则经 `Dws::decrypt` 解密，再用 domain `ingest.reveal` 换成明文入库；解密失败（含命令不存在、输出非 JSON、无 `plaintext`）按密文入库并记 warn；`INSERT OR IGNORE` 使补拉的明文不覆盖已入库的密文
 - 补拉页的每条 envelope 在 `absorb` 里经 `unseal` 走同一套判定与解密
-- 启动自愈：`drive` 在 `reconcile` 之后调 `heal`；`Archive::sealed` 用 `GLOB '*||[0-9]*||[0-9]*||[0-9]*'` 预筛库里最新的至多 `heal_limit` 条（是否密文仍由 domain 判定），逐条交给 `unsealed`，文本变了才经 `Archive::replace`（`WHERE text = 旧文本`，防并发覆盖）更新；解密失败保持原样
+- 启动自愈：`drive` 在 `reconcile` 之后调 `heal`；`Archive::sealed` 用 `GLOB '*||[0-9]*||[0-9]*||[0-9]*'` 预筛库里最新的至多 `heal_limit` 条（是否密文仍由 domain 判定），逐条交给 `unsealed`，文本变了才经 `Archive::replace`（`WHERE text = 旧文本`，防并发覆盖）更新；解密失败保持原样；`SCHEMA` 的触发器 `messages_unsealed` 在 `messages.text` 更新后删掉同键 `skipped/sealed` 的 `lines` 行，让 intake 在 `lookback_ms` 内重新分级
 - 转发消息：envelope 带 `lookup` 时，实时事件在 `unsealed` 后经 `assembled`、补拉在 `absorb` 里经 `assemble` 统一处理：收集 ID，按 `lookup_batch` 分批调 `Dws::lookup`，`dws::children` 取 `messages[].forwarded[]` 的 `{sender, text}`，再经 domain `ingest.assemble` 重组；查询失败、无子消息按原样入库
 - 解密或查询期间收到停机信号：该事件或整页不入库，补拉会补回
 - 退出：停机信号 → 0；`dws` 退出码落在 `manual_exit_codes` → `manual_exit_code`；存储错误 → `failure_exit_code`
@@ -48,8 +48,8 @@
 - `rerender`：把 `rules_rev` 落后的 `queued/pending/leaked/screening` 行经 domain `redact` 重新脱敏，`leaked` 行回到 `pending`
 - `form`：没有未结批（有行 `batch_id > 0` 且其批还不是 `sent/failed`）时，把最新的至多 `batch` 条 `queued` 行编入新批（批号＝最大批号 + 1）；未配 `triage.screen` 时状态按 `review.mode` 为 `pending`（审核人空）或 `approved`（审核人 `auto`），配了则为 `screening`
 - `screen`（可选）：取至多 `batch` 条 `screening` 行（`reason = 'deferred'` 的要等过 `retry_after_ms`），连同开放话题调 domain `triage.screen`，经 `exec` 发给本机模型，响应交 domain `triage.screened`，写回 `lines.text/flag/hints`；`manual` 转 `pending`，`auto` 时 `flag` 非空转 `rejected`（原因 `screen`）、其余转 `approved`；失败（非 0 退出、超时、无法解析）整批标 `deferred` 不放行
-- `seal`（`Ledger::sealable`）：批内无 `screening/pending/leaked` 行时，取已通过的行，加上开放话题（`last_at_ms` 在 `session_max_ms` 内，至多 `topics_max_open` 个）和各会话仍开放的话题（`attach`），调 domain `triage.pack` 得冻结的请求体与 `layout`，写 `batches`（`ready`）；没有已通过的行则直接写 `sent` 关批
-- `send`：按每小时已发批数（`max_decisions_per_hour`）取最早的 `ready` 批
+- `seal`（`Ledger::sealable`）：批内无 `screening/pending/leaked` 行时，取已通过的行，加上开放话题（`last_at_ms` 在 `session_max_ms` 内，至多 `topics_max_open` 个）和各会话仍开放的话题（`attach`），调 domain `triage.pack` 得冻结的请求体与 `layout`，写 `batches`（`ready`）；没有已通过的行则直接写 `sent`、`payload` 为空关批
+- `send`：按每小时已发批数（`max_decisions_per_hour`，只计 `payload` 非空的 `sent` 批）取最早的 `ready` 批
   - curl 的 URL 与 key 经 `vars` 注入 `TRIAGE_URL`、`TRIAGE_KEY`，用 `--variable %NAME` 与 `--expand-url`、`--expand-header` 取用，请求体走 stdin，argv 不含密钥；响应交 domain `triage.sort`
   - 失败（非 0 退出、超时、启动失败、响应无法解析）`attempts + 1`，`reason` 为 `exit:<码>`、`io:<种类>` 或 `bad_answer`，达 `max_attempts` 转 `failed`
   - 成功则 `Ledger::apply` 一个事务：写 `placements`；写 `topics`（`ON CONFLICT` 取概率最大值与最近时间）；对 `urgent` 话题开 `alerts`（键 `<话题>@<批号>`，同话题 `handoff_cooldown_ms` 内已有、或一小时内已达 `max_handoffs_per_hour` 则忽略）；批置 `sent`；崩溃发生在事务前则整批重发
@@ -58,7 +58,7 @@
   - codex 的 stdin 传提示词，stdout 是 `--json` 事件流，经 domain `triage.reply` 取会话 ID 与最终回复；退出非 0、输出无法解析、回复为空都算失败，空输出的 `reason` 为 `exit:0`
   - 成功转 `analyzed` 并把 `topics` 的 `thread_id`、`until_ms` 写回；失败 `attempts + 1` 并清空该话题的 `thread_id`
 - `deliver`：用 `triage.notice` 渲染，dws 发送（参数末尾追加 `notify_target` 与 `--idempotency-key=<话题>@<批号>`）→ `sent`；失败 `attempts + 1` 并更新 `updated_at_ms`，达 `max_attempts` 转 `failed`；阶段推进把 `attempts` 与 `updated_at_ms` 归零，故发送失败只重试发送
-- 审核：`lines.state` 即审核状态，裁决由 cli 经 domain `review` 路由调 `Shelf`；`rejected` 是终态，`leaked` 经 `rerender` 回到 `pending`；审核没有期限
+- 审核：`lines.state` 即审核状态，裁决由 cli 的 `PATCH /api/reviews/{key}` 经 domain `review.update` 调 `Shelf`；`rejected` 是终态，`leaked` 经 `rerender` 回到 `pending`；审核没有期限
 - `validate(setup)`：先检查 `batch ≤ 200`、`topics_max_open + batch ≤ 254`（决策接口 `questions ≤ 400`、`choices ≤ 255`），再用空文本调 domain `redact`，规则无效即 `Err`；cli 启动自检用它
 - 外发内容（决策请求体、codex 提示词）只能来自 domain 渲染后的结果，adapters 不做文本替换
 - 防自循环：domain 的 `line` 跳过本人发出的与通知会话的消息；通知以本人身份发出，补拉可能再收到，靠这两条切断
@@ -107,12 +107,13 @@
 - 每个测试用独立的 `Sandbox` 目录（`CARGO_TARGET_TMPDIR`）；同一测试二进制不可并行跑多份（沙箱目录同名）；以 `sleep` 当停机信号，时长取大值避免慢机误判
 - 含外部命令的用例（解密、查询）停机等待 `SHORT` 取 4 秒：负载高时 0.7、2.5 秒都不够
 - 监听输入每行须以换行结尾（`feed`），否则 `next_line` 要到 EOF 才返回最后一行
-- tracing 宏的字段表达式只在有 subscriber 时求值：经 `run_logged` 装 subscriber（含常驻 `ANCHOR`，原因见 domain/CLAUDE.md），否则字段里的表达式覆盖不到
+- tracing 宏的字段表达式只在有 subscriber 时求值：经 `run_logged` 装 subscriber（`tests/it/capture.rs` 的 `Capture::dispatch`，先确保常驻 `ANCHOR`，原因见 domain/CLAUDE.md），否则字段里的表达式覆盖不到
 - 假 dws `tests/it/fixtures/fake-dws.sh`，行为由配置 `dws.env` 控制：
   - `FAKE_LISTEN`（exit、hang，默认等 stdin 结束）、`FAKE_CODE`，输入取 `FAKE_DIR` 下的 `listen.txt`
   - `FAKE_PULL`（fail、slow，默认输出 `pull.json`），参数写入 `pull-args.txt`
   - `FAKE_LOOKUP`（fail、junk、slow，默认输出 `lookup.json`），参数逐行追加到 `lookup-args.txt`
   - `FAKE_DECRYPT`（fail、junk、slow，默认输出 `{"ok":true,"plaintext":"CLEARTEXT"}`），参数写入 `decrypt-args.txt`
+  - `slow` 睡 30 秒：support 的 `dws.timeout_ms` 取 60000，让“停机打断”用例仍由停机信号结束；超时用例在 `tests/it/ingest/timeout.rs` 把 `timeout_ms` 改成 200
 - 假 triage `tests/it/fixtures/fake-triage.sh`，第一个参数为角色，行为由 `env` 控制；参数、stdin、调用次数写入 `<角色>-args.txt`、`-stdin.txt`、`-calls.txt`：
   - decide：`FAKE_DECIDE`（fail、junk、slow）；默认按 stdin 里的题名作答，`urgent_<n>` 取 `FAKE_PS`（空格分隔的第 n 项）或 `FAKE_P`（默认 0.95），`topic_<n>` 取 `FAKE_TOPICS` 第 n 项（默认 `new`）与 `FAKE_CONFIDENCE`（默认 0.9）；`decide-env.txt` 记录注入的 `TRIAGE_URL|TRIAGE_KEY`
   - codex：`FAKE_CODEX`（fail、empty、junk、resume_fail、escape、slow）；默认输出 `thread.started`（会话 ID 取 `FAKE_THREAD`，默认 T1）与含 `ANALYSIS` 的 `agent_message` 两行 JSONL

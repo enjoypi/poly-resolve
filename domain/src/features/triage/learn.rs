@@ -8,6 +8,6 @@ pub(crate) fn rule(raw: &str, text: &str, min_chars: u32) -> Result<String, AppE
     if leak.chars().count() >= min && text.contains(leak) {
         Ok(escape(leak))
     } else {
-        Err(AppError::BadRequest)
+        Err(AppError::Unprocessable)
     }
 }

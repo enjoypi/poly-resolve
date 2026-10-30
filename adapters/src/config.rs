@@ -18,6 +18,7 @@ pub(crate) struct Dws {
     lookup: Process,
     manual_exit_codes: Vec<i32>,
     pull: Process,
+    timeout_ms: NonZeroU64,
     vars: BTreeMap<String, Var>,
 }
 
@@ -44,6 +45,10 @@ impl Dws {
 
     pub(crate) const fn pull(&self) -> &Process {
         &self.pull
+    }
+
+    pub(crate) const fn timeout_ms(&self) -> u64 {
+        self.timeout_ms.get()
     }
 
     pub(crate) fn vars(&self) -> impl Iterator<Item = (&str, String)> {

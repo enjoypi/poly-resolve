@@ -1,3 +1,4 @@
+mod capture;
 mod ingest;
 mod review;
 mod sandbox;

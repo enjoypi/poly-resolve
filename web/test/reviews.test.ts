@@ -43,9 +43,10 @@ function listing() {
 function stub(replies: Reply[]) {
   const calls: Call[] = [];
   const fetch = async (request: Request) => {
+    const url = new URL(request.url);
     calls.push({
-      body: await request.json(),
-      path: new URL(request.url).pathname,
+      body: request.method === "GET" ? Object.fromEntries(url.searchParams) : await request.json(),
+      path: decodeURIComponent(url.pathname),
       user: request.headers.get("x-user"),
     });
     const reply = replies[Math.min(calls.length, replies.length) - 1];
@@ -86,7 +87,7 @@ function pickReason(root: HTMLElement, value: string, index = 0) {
 
 test("渲染待审行：正文只作文本，批、会话、发送人、时间与原因下拉齐全", async () => {
   const { calls, root } = await open([{ body: listing() }]);
-  expect(calls.map((call) => call.path)).toEqual([route("review/list")]);
+  expect(calls.map((call) => call.path)).toEqual([route("/reviews")]);
   expect(cards(root)).toHaveLength(2);
   expect(root.querySelector(".count")?.textContent).toBe(TEXT.pending(2));
   const meta = root.querySelector(".meta")?.textContent ?? "";
@@ -101,11 +102,11 @@ test("渲染待审行：正文只作文本，批、会话、发送人、时间�
 });
 
 test("通过：不填审核人、不带审核人请求头，成功后卡片移除", async () => {
-  const { calls, root } = await open([{ body: listing() }, { body: { states: ["approved"] } }]);
+  const { calls, root } = await open([{ body: listing() }, { body: { state: "approved" } }]);
   expect(root.querySelector(".reviewer")).toBeNull();
   click(root, ".approve");
   await until(() => cards(root).length === 1);
-  expect(calls[1]).toEqual({ body: { keys: ["a"] }, path: route("review/approve"), user: null });
+  expect(calls[1]).toEqual({ body: { state: "approved" }, path: "/api/reviews/a", user: null });
   expect(root.querySelector(".count")?.textContent).toBe(TEXT.pending(1));
 });
 
@@ -119,11 +120,17 @@ test("通过：失败时保留卡片并显示错误码", async () => {
   expect(cards(root)).toHaveLength(2);
 });
 
-test("整批通过：一次提交全部键，只移除已通过的卡片", async () => {
-  const { calls, root } = await open([{ body: listing() }, { body: { states: ["approved", "rejected"] } }]);
+test("整批通过：逐条提交，遇到失败即停并保留其卡片", async () => {
+  const { calls, root } = await open([
+    { body: listing() },
+    { body: { state: "approved" } },
+    { body: { code: "clash" }, status: 409 },
+  ]);
   click(root, ".approve-all");
-  await until(() => cards(root).length === 1);
-  expect(calls[1]?.body).toEqual({ keys: ["a", "b"] });
+  await until(() => root.querySelector(".error")?.textContent === "clash");
+  expect(calls.slice(1).map((call) => call.path)).toEqual(["/api/reviews/a", "/api/reviews/b"]);
+  expect(calls[2]?.body).toEqual({ state: "approved" });
+  expect(cards(root)).toHaveLength(1);
   expect(cards(root)[0]?.querySelector(".payload")?.textContent).toContain("script");
 });
 
@@ -133,7 +140,7 @@ test("整批通过：失败显示错误码，网络失败显示 unreachable", as
   await until(() => failed.root.querySelector(".error")?.textContent === "unavailable");
   expect(cards(failed.root)).toHaveLength(2);
   const down = connect("http://localhost", async (request: Request) =>
-    request.url.endsWith("/list") ? Response.json(listing()) : Promise.reject(new Error("down")),
+    request.method === "GET" ? Response.json(listing()) : Promise.reject(new Error("down")),
   );
   const mixed = document.createElement("div");
   await renderReviews(down, mixed);
@@ -154,8 +161,8 @@ test("拒绝：选了不带占位符的原因即可点，请求不带原文", as
   reject.click();
   await until(() => cards(root).length === 1);
   expect(calls[1]).toEqual({
-    body: { key: "a", reason: "noise" },
-    path: route("review/reject"),
+    body: { reason: "noise", state: "rejected" },
+    path: "/api/reviews/a",
     user: null,
   });
   pick.value = "";
@@ -176,7 +183,7 @@ test("拒绝：漏脱敏原因须粘贴原文，提交后清空输入框", async
   expect(reject.disabled).toBe(false);
   reject.click();
   await until(() => root.querySelector(".error")?.textContent === "bad_request");
-  expect(calls[1]?.body).toEqual({ key: "a", leak: "  secret-abc ", reason: "leak" });
+  expect(calls[1]?.body).toEqual({ leak: "  secret-abc ", reason: "leak", state: "rejected" });
   expect(leak.value).toBe("");
   expect(cards(root)).toHaveLength(2);
   expect(reject.disabled).toBe(false);
@@ -184,7 +191,7 @@ test("拒绝：漏脱敏原因须粘贴原文，提交后清空输入框", async
 
 test("拒绝：网络失败显示 unreachable", async () => {
   const down = connect("http://localhost", async (request: Request) =>
-    request.url.endsWith("/list") ? Response.json(listing()) : Promise.reject(new Error("down")),
+    request.method === "GET" ? Response.json(listing()) : Promise.reject(new Error("down")),
   );
   const root = document.createElement("div");
   await renderReviews(down, root);
@@ -213,7 +220,7 @@ test("接口出错显示错误码，网络失败显示 unreachable", async () =>
   await renderReviews(client, broken);
   expect(broken.querySelector(".error")?.textContent).toBe(TEXT.unreachable);
   const down = connect("http://localhost", async (request: Request) =>
-    request.url.endsWith("/list") ? Response.json(listing()) : Promise.reject(new Error("down")),
+    request.method === "GET" ? Response.json(listing()) : Promise.reject(new Error("down")),
   );
   const mixed = document.createElement("div");
   await renderReviews(down, mixed);

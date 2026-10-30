@@ -1,11 +1,12 @@
 use core::error::Error;
 use std::fs;
-use std::process::Command;
 
-use serde_json::{Value, from_slice, json};
+use serde_json::{Value, from_str as parse, json};
 use serde_saphyr::from_str;
 
-const CONFIG: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/config.yaml");
+use crate::support::{Fixture, local};
+
+const CONFIG: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../cli/config.yaml");
 
 type Fallible<T> = Result<T, Box<dyn Error>>;
 
@@ -44,12 +45,8 @@ fn redact(text: &str) -> Fallible<String> {
         .pointer("/triage/redact/patterns")
         .ok_or("no redact patterns")?;
     let request = json!({"rules": rules, "text": text}).to_string();
-    let output = Command::new(env!("CARGO_BIN_EXE_cli"))
-        .args([
-            "call", "triage", "redact", "--config", CONFIG, "--json", &request,
-        ])
-        .output()?;
-    let reply: Value = from_slice(&output.stdout)?;
+    let body = Fixture::new()?.dispatch(&local("triage", "redact", &request));
+    let reply: Value = parse(&body.map_err(|err| format!("{err:?}"))?)?;
     Ok(reply
         .get("text")
         .and_then(Value::as_str)

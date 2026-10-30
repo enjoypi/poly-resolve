@@ -1,6 +1,6 @@
 # Poly Resolve
 
-通过命令行或 HTTP 调用业务功能。功能与规则见 [docs/requirements.md](docs/requirements.md)。
+通过 HTTP 接口与页面使用业务功能。功能与规则见 [docs/requirements.md](docs/requirements.md)。
 
 ## 前置条件
 
@@ -32,7 +32,7 @@ YAML 文件，各项均必填（注明可选的除外），不允许其他字段
 | shutdown_timeout_ms | 收到停机信号后等待在途请求完成的最长毫秒数，至少 1 |
 | web_dir | 前端构建产物目录（如 `web/dist`）；目录或文件不存在时页面请求返回 404 |
 | messages.default / max | 查看消息接口每页默认条数与单页上限，至少 1 |
-| errors.<错误>.code / exit_code | 该错误的响应体 code 与命令行退出码（1 至 255）；<错误> 取 bad_request、storage、unknown_action，见“返回码” |
+| errors.<错误>.code | 该错误的响应体 code；<错误> 取 bad_request、conflict、not_found、storage、unknown_action、unprocessable，见“返回码” |
 | ingest.account | 账号标识，写入每条消息记录，区分不同登录员工 |
 | ingest.source | 来源标识，写入每条消息记录，如 dingtalk |
 | ingest.source_utc_offset_minutes | 钉钉返回的无时区时间所属时区相对 UTC 的分钟数，北京时间为 480 |
@@ -49,6 +49,7 @@ YAML 文件，各项均必填（注明可选的除外），不允许其他字段
 | ingest.dws.env / vars | 传给钉钉工具的环境变量：env 为字面量，应含 `DO_NOT_TRACK` 以关闭其遥测；vars 为 `${NAME}` 写法，运行时读同名环境变量（HOME、PATH 等）；子进程环境先清空再只放这两类 |
 | ingest.dws.listen / pull / decrypt / lookup | 实时监听、补拉、解密、查询转发详情所用命令：bin 为可执行文件，args 为参数，sandbox 见“子进程沙箱”；程序自动追加参数：pull 追加 `--start`、`--end`，decrypt 追加 `--text=<密文>`（标准输出须为含 `plaintext` 的 JSON），lookup 追加 `--msg-ids=<消息 ID,…>`（标准输出须为含 `messages[].forwarded[]` 的 JSON） |
 | ingest.dws.manual_exit_codes | 钉钉工具退出码落在此列表时视为须人工处理 |
+| ingest.dws.timeout_ms | 补拉、解密、查询转发详情单次执行的最长毫秒数，超时按失败处理，至少 1 |
 | triage.mode | disabled 或 enabled；enabled 时 `serve` 启动即检查所需环境变量，缺失则以退出码 2 退出并列出变量名 |
 | triage.model | 决策接口的模型名 |
 | triage.questions | urgent：每条消息一问的优先级问题（`{line}` 换成消息别名）；topic：每个新会话段一问的话题归属问题（`{segment}` 换成段别名；`min_confidence` 低于它按新话题；`new_label` 是“新话题”选项的说明）；threshold：概率不低于它即高优先级，大于 1 则只打分不转交 |
@@ -64,49 +65,38 @@ YAML 文件，各项均必填（注明可选的除外），不允许其他字段
 | triage.self_sender_id / notify_conversation_id / notify_target | 本人的发送人 ID、通知所在会话 ID、通知接收人，均写成 `${NAME}`；前两者对应的消息不参与决策 |
 | triage.screen | 可选，见“本地模型筛查”：exec 外部命令；instructions 系统提示词；model 模型名；placeholder 遮盖用的占位符 |
 
-## 命令行调用
+## HTTP 接口
 
-```sh
-cli call <FEATURE> <ACTION> --config <CONFIG> --json <JSON> [--session-id <SESSION_ID>] [--user <USER>]
-```
+RESTful，路径挂在 `/api` 下，请求与响应体为 JSON（`content-type: application/json`）：
 
-| 参数 | 必填 | 说明 |
-|---|---|---|
-| FEATURE | 是 | 功能名，见“接口结构” |
-| ACTION | 是 | 动作名，见“接口结构” |
-| --config | 是 | 配置文件路径 |
-| --json | 是 | 请求内容（JSON） |
-| --session-id | 否 | 会话 ID，写入日志 |
-| --user | 否 | 用户标识，写入日志 |
-
-响应（含业务错误）以一行 JSON 写到 stdout：
-
-```sh
-./target/release/cli call health check --config cli/config.yaml --json '{}'
-# {"status":"ok"}
-```
-
-帮助：`cli --help`、`cli call --help`、`cli serve --help`。
-
-## HTTP 调用
-
-`POST /<feature>/<action>`，请求体为 JSON，响应头 `content-type: application/json`。
+| 方法与路径 | 用途 |
+|---|---|
+| `GET /api/health` | 健康检查 |
+| `GET /api/messages?cursor=&from_ms=&to_ms=&limit=` | 查看消息，参数均可选 |
+| `GET /api/reviews?state=&limit=` | 列出审核项，缺省列待审 |
+| `PATCH /api/reviews/{key}` | 裁决一项：`{"state":"approved"}` 或 `{"state":"rejected","reason":"…","leak":"…"}`，`key` 须 URL 编码 |
 
 | 请求头 | 说明 |
 |---|---|
+| Host | 须为服务实际地址（如 `127.0.0.1:15801`）或 `localhost:<端口>`，否则 403 |
 | x-session-id | 会话 ID，可选，写入日志 |
 | x-user | 用户标识，可选，写入日志 |
 
-部署要求：两个请求头由前置网关鉴权后写入，网关须剥离客户端自带的同名头。页面与全部接口都须置于网关认证之后。
+部署要求：
+- 两个身份请求头由前置网关鉴权后写入，网关须剥离客户端自带的同名头；页面与全部接口都须置于网关认证之后
+- 网关须把 Host 改写为上游地址（nginx 默认如此；Caddy 写 `header_up Host {upstream_hostport}`）
+- 不加 CORS；跨站页面无法发起 PATCH
 
 ```sh
-curl -H 'x-session-id: s1' -H 'x-user: alice' -d '{}' http://127.0.0.1:15801/health/check
+curl -H 'x-session-id: s1' -H 'x-user: alice' http://127.0.0.1:15801/api/health
 # {"status":"ok"}
 ```
 
+帮助：`cli --help`、`cli serve --help`。
+
 ## 接口结构
 
-请求与响应结构以生成的接口说明 `api/openapi.json`（OpenAPI 3.1）为准，也可用 `cli spec` 输出到 stdout。
+请求与响应结构以生成的接口说明 `api/openapi.json`（OpenAPI 3.1）为准，也可用 `cli spec` 输出到 stdout；前端经其生成的 `web/src/api.gen.ts` 调用。
 
 ## 启动服务
 
@@ -141,8 +131,6 @@ cd web && bun install --frozen-lockfile && bun run build && cd ..
 - 点选：点一行的会话或发送人，只看该会话或该发送人的消息，再点一次移除
 - 列：“列”菜单可显示默认隐藏的列
 - 正文：左侧“复制”按钮复制完整原文；点击一行（或键盘 Enter）打开详情；手机上表头收进“筛选”面板
-
-只读已有的库、不连钉钉时用 `cli call messages list --config cli/config.yaml --json '{}'`。
 
 ## 消息分级与转交
 
@@ -180,7 +168,7 @@ sops exec-env secrets/prod.enc.yaml './target/release/cli serve --config cli/con
 
 浏览器打开 `<服务地址>/#reviews`，逐条通过或拒绝，顶部“整批通过”一次通过当前列出的全部。拒绝须选原因；漏脱敏类原因还须粘贴漏掉的原文，系统据此学出规则并让该条重新脱敏后回到待审。一批不审完，不会外发，也不开下一批。`review.mode: auto` 时不经人工。
 
-接口：`POST /review/list`、`/review/approve`、`/review/reject`，命令行同样可用 `cli call review …`。试脱敏规则：`cli call triage redact --config cli/config.yaml --json '{"text":"…","rules":[…]}'`。
+接口：`GET /api/reviews`、`PATCH /api/reviews/{key}`；“整批通过”逐条发送。脱敏规则的样例在 `domain/tests/it/redact.rs`，改规则后跑测试验证。
 
 ### 本地模型筛查
 
@@ -217,25 +205,33 @@ sops exec-env secrets/prod.enc.yaml './target/release/cli serve --config cli/con
 
 ## 返回码
 
-业务错误响应体为 `{"code":"<code>"}`，code 与退出码取自配置，下表数值为 `cli/config.yaml` 的取值。
+业务错误响应体为 `{"code":"<code>"}`，code 取自配置，下表为 `cli/config.yaml` 的取值。
 
-| 情形 | HTTP | 退出码 | 输出 |
-|---|---|---|---|
-| 成功 | 200 | 0 | JSON |
-| 请求内容无效 | 400 | 3 | `{"code":"bad_request"}` |
-| 功能或动作不存在 | 404 | 4 | `{"code":"unknown_action"}` |
-| 消息库不存在或读取失败 | 503 | 10 | `{"code":"storage"}` |
-| `--help` | — | 0 | 帮助写 stdout |
-| 命令行参数错误 | — | 2 | 错误写 stderr |
-| 配置错误（文件不存在、YAML 无效、缺少或未知字段、取值无效） | — | 2 | stderr 输出 `路径: 原因` |
-| triage 开启而缺环境变量 | — | 2 | stderr 列出变量名 |
-| 启动时沙箱自检或 triage 配置校验失败 | — | sandbox_exit_code | 错误写 stderr |
-| 服务地址绑定失败 | — | serve_exit_code | 错误写 stderr |
-| 停机等待超时 | — | shutdown_timeout_exit_code | 日志写 stderr |
-| 收集时存储失败 | — | ingest.failure_exit_code | 错误写 stderr 日志 |
-| 收集时钉钉工具须人工处理 | — | ingest.manual_exit_code | 错误写 stderr 日志 |
-| 写 stdout 失败 | — | 至少 1 | — |
-| HTTP 路径不是 `/`、`/<文件>`、`/<feature>/<action>` | 404 | — | 空响应体 |
-| 页面文件不存在，或文件名含字母、数字、`.`、`_`、`-` 以外的字符，或以 `.` 开头 | 404 | — | 空响应体 |
-| 页面路径用 GET 以外的方法，或接口路径用 POST 以外的方法 | 405 | — | 空响应体 |
-| HTTP 请求体不是 UTF-8 | 400 | — | 纯文本 |
+| 情形 | HTTP | 输出 |
+|---|---|---|
+| 成功 | 200 | JSON |
+| 查询参数或请求体格式无效 | 400 | `{"code":"bad_request"}` |
+| Host 不是服务地址或 `localhost:<端口>` | 403 | 空响应体 |
+| 审核项不存在 | 404 | `{"code":"not_found"}` |
+| 路径不存在（含内部动作） | 404 | 空响应体 |
+| 方法不对 | 405 | 空响应体 |
+| 审核项已作不同裁决 | 409 | `{"code":"conflict"}` |
+| PATCH 请求体不是 `application/json` | 415 | 空响应体 |
+| 拒绝原因不在配置里、粘贴的原文过短或不在该条里、原因与是否粘贴不匹配 | 422 | `{"code":"unprocessable"}` |
+| 消息库不存在或读取失败 | 503 | `{"code":"storage"}` |
+| 页面文件不存在，或文件名含字母、数字、`.`、`_`、`-` 以外的字符，或以 `.` 开头 | 404 | 空响应体 |
+| HTTP 请求体不是 UTF-8 | 400 | 纯文本 |
+
+进程退出码：
+
+| 情形 | 退出码 | 输出 |
+|---|---|---|
+| 正常停机、`--help` | 0 | 帮助写 stdout |
+| 命令行参数错误 | 2 | 错误写 stderr |
+| 配置错误（文件不存在、YAML 无效、缺少或未知字段、取值无效） | 2 | stderr 输出 `路径: 原因` |
+| triage 开启而缺环境变量 | 2 | stderr 列出变量名 |
+| 启动时沙箱自检或 triage 配置校验失败 | sandbox_exit_code | 错误写 stderr |
+| 服务地址绑定失败 | serve_exit_code | 错误写 stderr |
+| 停机等待超时 | shutdown_timeout_exit_code | 日志写 stderr |
+| 收集时存储失败 | ingest.failure_exit_code | 错误写 stderr 日志 |
+| 收集时钉钉工具须人工处理 | ingest.manual_exit_code | 错误写 stderr 日志 |

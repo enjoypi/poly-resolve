@@ -1,5 +1,6 @@
 use adapters::store::{Archive, Scope, Shelf};
 use domain::inbox::{Mark, Query, Reader as _, Row, Window};
+use rusqlite::{Connection, Error};
 use serde_json::{Value, from_str, json, to_value};
 
 use crate::support::{
@@ -9,6 +10,9 @@ use crate::support::{
 const OTHER: &str = "INSERT INTO messages (key, source, account, conversation_id, sender_id, sender_name, text, occurred_at_ms, received_at_ms, raw) VALUES ('x1', 'dingtalk', 'other', 'c1', 'u1', 'bob', 'hi', 9, 9, '{}'), ('x2', 'slack', 'acct', 'c1', 'u1', 'bob', 'hi', 9, 9, '{}');";
 const PAGE: u32 = 10;
 const PRIORITY: f64 = 0.5;
+const REMAINING: &str =
+    "SELECT group_concat(key || '|' || reason, ',') FROM (SELECT * FROM lines ORDER BY key)";
+const SKIPPED: &str = "INSERT INTO lines (key, conversation_id, occurred_at_ms, sender, text, state, reason, reviewer, flag, hints, rules_rev, batch_id, created_at_ms, updated_at_ms) VALUES ('k1', 'c1', 1, '', '', 'skipped', 'sealed', '', '', '[]', 0, 0, 1, 1), ('k2', 'c1', 1, '', '', 'skipped', 'sealed', '', '', '[]', 0, 0, 1, 1), ('k3', 'c1', 1, '', '', 'skipped', 'own', '', '', '[]', 0, 0, 1, 1);";
 
 fn ids(rows: &[Row]) -> Vec<&str> {
     rows.iter().map(Row::key).collect()
@@ -35,6 +39,20 @@ fn open_fails_on_non_database_file() {
     sandbox.write("store.db", &"x".repeat(500)).unwrap();
     let err = Archive::open(&sandbox.database()).unwrap_err();
     assert!(err.to_string().contains("not a database"));
+}
+
+#[test]
+fn replace_reopens_only_lines_skipped_as_sealed() {
+    let sandbox = Sandbox::new("store-reopen").unwrap();
+    let store = Archive::open(&sandbox.database()).unwrap();
+    let stale = sealed_envelope("k1", NOON);
+    assert_eq!(store.save_event(&stale).unwrap(), 1);
+    sandbox.seed(SKIPPED).unwrap();
+    assert_eq!(store.replace(&stale, &envelope("k1", NOON)).unwrap(), 1);
+    let left: Result<String, Box<Error>> = Connection::open(sandbox.database())
+        .unwrap()
+        .query_row_and_then(REMAINING, [], |row| row.get(0).map_err(Box::new));
+    assert_eq!(left.unwrap(), "k2|sealed,k3|own");
 }
 
 #[test]

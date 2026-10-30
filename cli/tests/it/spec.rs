@@ -22,7 +22,7 @@ fn spec_declares_openapi_and_info() {
 }
 
 #[test]
-fn spec_declares_storage_failure_for_messages() {
+fn spec_declares_statuses_per_operation() {
     let document = document().unwrap();
     let statuses = |path: &str| -> Vec<String> {
         document
@@ -31,21 +31,34 @@ fn spec_declares_storage_failure_for_messages() {
             .map_or_default(|responses| responses.keys().cloned().collect())
     };
     assert_eq!(
-        statuses("/paths/~1messages~1list/post/responses"),
-        ["200", "400", "503"]
+        statuses("/paths/~1api~1messages/get/responses"),
+        ["200", "400", "403", "503"]
     );
     assert_eq!(
-        document.pointer("/paths/~1messages~1list/post/responses/503/description"),
+        statuses("/paths/~1api~1reviews~1{key}/patch/responses"),
+        ["200", "400", "403", "404", "409", "415", "422", "503"]
+    );
+    assert_eq!(
+        document.pointer("/paths/~1api~1messages/get/responses/503/description"),
         Some(&json!("storage unavailable"))
     );
+    let paths: Vec<&String> = document
+        .pointer("/paths")
+        .and_then(Value::as_object)
+        .map_or_default(|paths| paths.keys().collect());
     assert_eq!(
-        statuses("/paths/~1health~1check/post/responses"),
-        ["200", "400"]
+        paths,
+        [
+            "/api/health",
+            "/api/messages",
+            "/api/reviews",
+            "/api/reviews/{key}"
+        ]
     );
 }
 
 #[test]
-fn spec_describes_health_check_operation() {
+fn spec_describes_health_and_parameters() {
     let header = |name: &str| {
         json!({
             "description": "set by the gateway",
@@ -55,27 +68,27 @@ fn spec_describes_health_check_operation() {
             "schema": {"type": "string"}
         })
     };
-    let body = |schema: Value, description: &str| json!({"content": {"application/json": {"schema": schema}}, "description": description});
+    let document = document().unwrap();
     assert_eq!(
-        document().unwrap().pointer("/paths/~1health~1check/post"),
+        document.pointer("/paths/~1api~1health/get"),
         Some(&json!({
             "parameters": [header("x-session-id"), header("x-user")],
-            "requestBody": {
-                "content": {
-                    "application/json": {
-                        "schema": {"additionalProperties": true, "type": "object"}
-                    }
-                },
-                "required": true
-            },
             "responses": {
-                "200": body(
-                    json!({"$ref": "#/components/schemas/HealthCheckResponse"}),
-                    "success"
-                ),
-                "400": body(json!({"$ref": "#/components/schemas/ErrorBody"}), "bad request")
+                "200": {
+                    "content": {"application/json": {"schema": {"$ref": "#/components/schemas/HealthCheckResponse"}}},
+                    "description": "success"
+                },
+                "403": {"description": "host not allowed"}
             }
         }))
+    );
+    assert_eq!(
+        document.pointer("/paths/~1api~1reviews~1{key}/patch/parameters/2"),
+        Some(&json!({"in": "path", "name": "key", "required": true, "schema": {"type": "string"}}))
+    );
+    assert_eq!(
+        document.pointer("/paths/~1api~1reviews/get/parameters/3/in"),
+        Some(&json!("query"))
     );
 }
 

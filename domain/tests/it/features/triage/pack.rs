@@ -156,6 +156,21 @@ fn pack_labels_masks_and_aliases() {
 }
 
 #[test]
+fn pack_masks_open_topic_labels_with_current_rules() {
+    let lines = json!([entry(["k1", "c1", "hello"], NOON)]);
+    let topics = json!([{"label": "token abc1234", "topic": "t3-0"}]);
+    let asked = patched(
+        request(&lines, &json!([]), &topics),
+        "rules",
+        &json!([{"pattern": "abc[0-9]+", "placeholder": "[x]"}]),
+    );
+    let reply = call("pack", &asked.to_string()).unwrap().unwrap();
+    let body = body_of(&reply).to_string();
+    assert!(body.contains(r#"{"description":"token [x]","value":"t3-0"}"#));
+    assert!(!body.contains("abc1234"));
+}
+
+#[test]
 fn pack_narrows_the_options_to_the_hinted_topics() {
     let mut hinted = entry(["k1", "c1", "hello"], NOON);
     if let Some(map) = hinted.as_object_mut() {

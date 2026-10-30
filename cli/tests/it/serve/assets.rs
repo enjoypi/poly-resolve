@@ -1,7 +1,7 @@
 use std::fs;
 use std::io;
 
-use super::{get, post, start, stop};
+use super::{get, send, start, stop};
 use crate::support::{config, live, sandbox};
 
 const INDEX: &str = "<h1>home</h1>";
@@ -30,9 +30,9 @@ fn hides_unsafe_and_missing_paths() {
         assert!(!response.contains("secret"), "{target}: {response}");
         assert!(!response.contains("hidden"), "{target}: {response}");
     }
-    let method = get(&server.addr, "/health/check").unwrap();
+    let method = send(&server.addr, ["POST", "/api/health", ""], "{}").unwrap();
     assert!(method.starts_with("HTTP/1.1 405"));
-    let write = post(&server.addr, ["/app.js", ""], "").unwrap();
+    let write = send(&server.addr, ["POST", "/app.js", ""], "").unwrap();
     assert!(write.starts_with("HTTP/1.1 405"));
     assert!(stop(server).unwrap());
 }

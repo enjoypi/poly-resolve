@@ -2,11 +2,13 @@ use serde_json::{Error, Value, json};
 
 use super::{Reply, call, patched};
 
+const MANY: u64 = 5_000;
 const MINUTE: u64 = 60_000;
 const NONE: u64 = 0;
 const NOON: u64 = 1_783_483_235_000;
 const PROBABILITY: f64 = 0.9531;
 const ROOMY: u32 = 10_000;
+const TIGHT: u32 = 200;
 
 fn brief(rows: &Value, max_chars: u32, template: &str) -> Result<Reply, Error> {
     let request = patched(
@@ -38,6 +40,47 @@ fn brief_drops_oldest_but_keeps_the_newest() {
     let none = prompt_of(&brief(&rows, 0, "x{messages}x").unwrap().unwrap());
     let blank = json!([line("alice", "", "04:00:35")]).to_string();
     assert_eq!(none, Some(format!("x{blank}x")));
+}
+
+#[test]
+fn brief_fits_by_chars_at_the_exact_limit() {
+    let rows = json!([
+        {"occurred_at_ms": NOON - 2 * MINUTE, "sender": "bob", "text": "old"},
+        {"occurred_at_ms": NOON - MINUTE, "sender": "carol", "text": "\u{4e2d}\u{6587}"},
+        {"occurred_at_ms": NOON, "sender": "alice", "text": "now"},
+    ]);
+    let all = json!([
+        line("bob", "old", "03:58:35"),
+        line("carol", "\u{4e2d}\u{6587}", "03:59:35"),
+        line("alice", "now", "04:00:35"),
+    ])
+    .to_string();
+    let tail = json!([
+        line("carol", "\u{4e2d}\u{6587}", "03:59:35"),
+        line("alice", "now", "04:00:35"),
+    ])
+    .to_string();
+    let full = u32::try_from(all.chars().count()).unwrap();
+    let kept = prompt_of(&brief(&rows, full, "{messages}").unwrap().unwrap());
+    assert_eq!(kept, Some(all));
+    let short = prompt_of(&brief(&rows, full - 1, "{messages}").unwrap().unwrap());
+    assert_eq!(short, Some(tail.clone()));
+    let snug = u32::try_from(tail.chars().count()).unwrap();
+    let same = prompt_of(&brief(&rows, snug, "{messages}").unwrap().unwrap());
+    assert_eq!(same, Some(tail));
+}
+
+#[test]
+fn brief_handles_many_rows() {
+    let rows: Vec<Value> = (0..MANY)
+        .map(|index| json!({"occurred_at_ms": NOON + index, "sender": "s", "text": "x"}))
+        .collect();
+    let reply = brief(&Value::Array(rows), TIGHT, "{messages}")
+        .unwrap()
+        .unwrap();
+    let prompt = prompt_of(&reply).unwrap();
+    assert!(prompt.chars().count() <= usize::try_from(TIGHT).unwrap());
+    assert!(prompt.ends_with(r#""time_utc":"2026-07-08 04:00:39"}]"#));
 }
 
 #[test]

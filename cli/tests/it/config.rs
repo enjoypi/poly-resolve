@@ -1,56 +1,41 @@
 use std::process::ExitCode;
 
-use crate::support::{YAML, call, config, run};
+use crate::support::{YAML, config, load, run};
 
 #[tokio::test]
 async fn bad_addr_fails() {
     let path = config("bad-addr.yaml", &YAML.replace("127.0.0.1:0", "localhost:0")).unwrap();
-    assert_eq!(
-        call(&path, ["health", "check"], "{}").await,
-        ExitCode::from(2)
-    );
+    assert_eq!(load(&path).await, ExitCode::from(2));
 }
 
 #[tokio::test]
 async fn bad_level_fails() {
     let path = config("bad-level.yaml", &YAML.replace("debug", "loud")).unwrap();
-    assert_eq!(
-        call(&path, ["health", "check"], "{}").await,
-        ExitCode::from(2)
-    );
+    assert_eq!(load(&path).await, ExitCode::from(2));
 }
 
 #[tokio::test]
 async fn bad_yaml_fails() {
     let path = config("bad-yaml.yaml", "addr: [\n").unwrap();
-    assert_eq!(
-        call(&path, ["health", "check"], "{}").await,
-        ExitCode::from(2)
-    );
+    assert_eq!(load(&path).await, ExitCode::from(2));
 }
 
 #[tokio::test]
 async fn invalid_triage_variable_fails() {
     let yaml = YAML.replace("self_sender_id: \"${HOME}\"", "self_sender_id: plain");
     let path = config("invalid-triage-var.yaml", &yaml).unwrap();
-    assert_eq!(
-        call(&path, ["health", "check"], "{}").await,
-        ExitCode::from(2)
-    );
+    assert_eq!(load(&path).await, ExitCode::from(2));
 }
 
 #[tokio::test]
 async fn ipv6_loopback_addr_loads() {
     let path = config("ipv6.yaml", &YAML.replace("127.0.0.1:0", "[::1]:0")).unwrap();
-    assert_eq!(
-        call(&path, ["health", "check"], "{}").await,
-        ExitCode::SUCCESS
-    );
+    assert_eq!(load(&path).await, ExitCode::from(18));
 }
 
 #[tokio::test]
 async fn missing_file_fails() {
-    let code = call("/nonexistent/config.yaml", ["health", "check"], "{}").await;
+    let code = load("/nonexistent/config.yaml").await;
     assert_eq!(code, ExitCode::from(2));
 }
 
@@ -58,30 +43,21 @@ async fn missing_file_fails() {
 async fn missing_ingest_fails() {
     let yaml = YAML.split("ingest:").next().unwrap_or_default();
     let path = config("missing-ingest.yaml", yaml).unwrap();
-    assert_eq!(
-        call(&path, ["health", "check"], "{}").await,
-        ExitCode::from(2)
-    );
+    assert_eq!(load(&path).await, ExitCode::from(2));
 }
 
 #[tokio::test]
 async fn missing_messages_fails() {
     let yaml = YAML.replace("messages:\n  default: 2\n  max: 3\n", "");
     let path = config("missing-messages.yaml", &yaml).unwrap();
-    assert_eq!(
-        call(&path, ["health", "check"], "{}").await,
-        ExitCode::from(2)
-    );
+    assert_eq!(load(&path).await, ExitCode::from(2));
 }
 
 #[tokio::test]
 async fn missing_web_dir_fails() {
     let yaml = YAML.replace("web_dir: /nonexistent/web\n", "");
     let path = config("missing-web-dir.yaml", &yaml).unwrap();
-    assert_eq!(
-        call(&path, ["health", "check"], "{}").await,
-        ExitCode::from(2)
-    );
+    assert_eq!(load(&path).await, ExitCode::from(2));
 }
 
 #[tokio::test]
@@ -91,10 +67,7 @@ async fn non_loopback_addr_fails() {
         ("non-loopback-v6.yaml", "[::]:0"),
     ] {
         let path = config(name, &YAML.replace("127.0.0.1:0", addr)).unwrap();
-        assert_eq!(
-            call(&path, ["health", "check"], "{}").await,
-            ExitCode::from(2)
-        );
+        assert_eq!(load(&path).await, ExitCode::from(2));
     }
 }
 
@@ -118,69 +91,55 @@ async fn serve_with_missing_file_fails() {
 #[tokio::test]
 async fn unknown_field_fails() {
     let path = config("unknown-field.yaml", &format!("{YAML}extra: 1\n")).unwrap();
-    assert_eq!(
-        call(&path, ["health", "check"], "{}").await,
-        ExitCode::from(2)
-    );
+    assert_eq!(load(&path).await, ExitCode::from(2));
 }
 
 #[tokio::test]
 async fn unknown_ingest_field_fails() {
     let yaml = YAML.replace("  source: dingtalk\n", "  source: dingtalk\n  extra: 1\n");
     let path = config("unknown-ingest-field.yaml", &yaml).unwrap();
-    assert_eq!(
-        call(&path, ["health", "check"], "{}").await,
-        ExitCode::from(2)
-    );
+    assert_eq!(load(&path).await, ExitCode::from(2));
 }
 
 #[tokio::test]
 async fn unknown_sandbox_field_fails() {
     let yaml = YAML.replace("probe: [noop]", "probe: [noop], extra: 1");
     let path = config("unknown-sandbox-field.yaml", &yaml).unwrap();
-    assert_eq!(
-        call(&path, ["health", "check"], "{}").await,
-        ExitCode::from(2)
-    );
+    assert_eq!(load(&path).await, ExitCode::from(2));
 }
 
 #[tokio::test]
 async fn zero_default_limit_fails() {
     let yaml = YAML.replace("default: 2", "default: 0");
     let path = config("zero-limit.yaml", &yaml).unwrap();
-    assert_eq!(
-        call(&path, ["health", "check"], "{}").await,
-        ExitCode::from(2)
-    );
+    assert_eq!(load(&path).await, ExitCode::from(2));
+}
+
+#[tokio::test]
+async fn zero_dws_timeout_fails() {
+    let yaml = YAML.replace("timeout_ms: 30000", "timeout_ms: 0");
+    let path = config("zero-dws-timeout.yaml", &yaml).unwrap();
+    assert_eq!(load(&path).await, ExitCode::from(2));
 }
 
 #[tokio::test]
 async fn zero_exit_code_fails() {
     let path = config("zero-exit.yaml", &YAML.replace('9', "0")).unwrap();
-    assert_eq!(
-        call(&path, ["health", "check"], "{}").await,
-        ExitCode::from(2)
-    );
+    assert_eq!(load(&path).await, ExitCode::from(2));
 }
 
 #[tokio::test]
 async fn zero_ingest_failure_exit_code_fails() {
     let yaml = YAML.replace("failure_exit_code: 16", "failure_exit_code: 0");
     let path = config("zero-ingest-exit.yaml", &yaml).unwrap();
-    assert_eq!(
-        call(&path, ["health", "check"], "{}").await,
-        ExitCode::from(2)
-    );
+    assert_eq!(load(&path).await, ExitCode::from(2));
 }
 
 #[tokio::test]
 async fn zero_sandbox_exit_code_fails() {
     let yaml = YAML.replace("sandbox_exit_code: 18", "sandbox_exit_code: 0");
     let path = config("zero-sandbox-exit.yaml", &yaml).unwrap();
-    assert_eq!(
-        call(&path, ["health", "check"], "{}").await,
-        ExitCode::from(2)
-    );
+    assert_eq!(load(&path).await, ExitCode::from(2));
 }
 
 #[tokio::test]
@@ -190,18 +149,12 @@ async fn zero_shutdown_timeout_exit_code_fails() {
         "shutdown_timeout_exit_code: 0",
     );
     let path = config("zero-timeout-exit.yaml", &yaml).unwrap();
-    assert_eq!(
-        call(&path, ["health", "check"], "{}").await,
-        ExitCode::from(2)
-    );
+    assert_eq!(load(&path).await, ExitCode::from(2));
 }
 
 #[tokio::test]
 async fn zero_shutdown_timeout_fails() {
     let yaml = YAML.replace("shutdown_timeout_ms: 10000", "shutdown_timeout_ms: 0");
     let path = config("zero-timeout.yaml", &yaml).unwrap();
-    assert_eq!(
-        call(&path, ["health", "check"], "{}").await,
-        ExitCode::from(2)
-    );
+    assert_eq!(load(&path).await, ExitCode::from(2));
 }

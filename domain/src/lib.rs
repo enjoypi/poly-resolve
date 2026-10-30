@@ -4,8 +4,6 @@ pub mod features;
 pub mod inbox;
 pub mod review;
 
-use core::num::NonZeroU8;
-
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::to_string;
@@ -14,8 +12,11 @@ use serde_json::to_string;
 #[non_exhaustive]
 pub enum AppError {
     BadRequest,
+    Conflict,
+    NotFound,
     Storage,
     UnknownAction,
+    Unprocessable,
 }
 
 impl AppError {
@@ -25,16 +26,14 @@ impl AppError {
         to_string(&Body { code }).unwrap_or_default()
     }
 
-    #[must_use = "退出码需返回给进程"]
-    pub const fn exit_code(self, errors: &Errors) -> u8 {
-        self.spec(errors).exit_code.get()
-    }
-
     const fn spec(self, errors: &Errors) -> &ErrorSpec {
         match self {
             Self::BadRequest => &errors.bad_request,
+            Self::Conflict => &errors.conflict,
+            Self::NotFound => &errors.not_found,
             Self::Storage => &errors.storage,
             Self::UnknownAction => &errors.unknown_action,
+            Self::Unprocessable => &errors.unprocessable,
         }
     }
 
@@ -42,8 +41,10 @@ impl AppError {
     pub const fn status(self) -> u16 {
         match self {
             Self::BadRequest => 400,
+            Self::Conflict => 409,
+            Self::NotFound | Self::UnknownAction => 404,
             Self::Storage => 503,
-            Self::UnknownAction => 404,
+            Self::Unprocessable => 422,
         }
     }
 
@@ -51,8 +52,11 @@ impl AppError {
     pub const fn summary(self) -> &'static str {
         match self {
             Self::BadRequest => "bad request",
+            Self::Conflict => "already settled differently",
+            Self::NotFound => "not found",
             Self::Storage => "storage unavailable",
             Self::UnknownAction => "unknown action",
+            Self::Unprocessable => "violates review rules",
         }
     }
 }
@@ -67,13 +71,15 @@ struct Body<'code> {
 #[serde(deny_unknown_fields)]
 struct ErrorSpec {
     code: String,
-    exit_code: NonZeroU8,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Errors {
     bad_request: ErrorSpec,
+    conflict: ErrorSpec,
+    not_found: ErrorSpec,
     storage: ErrorSpec,
     unknown_action: ErrorSpec,
+    unprocessable: ErrorSpec,
 }

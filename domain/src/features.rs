@@ -10,19 +10,20 @@ use std::time::Instant;
 use schemars::{JsonSchema, Schema, SchemaGenerator};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
-use serde_json::{Map, Value, from_str, to_string};
+use serde_json::{from_str, to_string};
+use serde_urlencoded::from_str as from_query;
 
 use crate::inbox::{Paging, Reader};
 use crate::review::{Docket, Reason};
 use crate::{AppError, Errors};
 
-static ROUTES: [Route; 20] = [
+static ROUTES: [Route; 19] = [
     Route {
         action: "check",
-        call: |call, _context| typed(call.request, health::check),
+        call: |_call, _context| Ok(to_string(&health::check()).unwrap_or_default()),
         failures: &[],
         feature: "health",
-        schema: schemas::<Map<String, Value>, health::Response>,
+        http: Http::Bound("get", "/api/health", bare::<health::Response>),
         trace: Trace::Full,
     },
     Route {
@@ -30,7 +31,7 @@ static ROUTES: [Route; 20] = [
         call: |call, _context| typed(call.request, ingest::assemble),
         failures: &[],
         feature: "ingest",
-        schema: schemas::<ingest::AssembleRequest, ingest::Envelope>,
+        http: Http::Hidden,
         trace: Trace::Redacted,
     },
     Route {
@@ -38,7 +39,7 @@ static ROUTES: [Route; 20] = [
         call: |call, _context| typed(call.request, ingest::cipher),
         failures: &[],
         feature: "ingest",
-        schema: schemas::<ingest::CipherRequest, ingest::CipherResponse>,
+        http: Http::Hidden,
         trace: Trace::Redacted,
     },
     Route {
@@ -46,7 +47,7 @@ static ROUTES: [Route; 20] = [
         call: |call, _context| fallible(call.request, ingest::parse_event),
         failures: &[],
         feature: "ingest",
-        schema: schemas::<ingest::ParseRequest, ingest::Envelope>,
+        http: Http::Hidden,
         trace: Trace::Redacted,
     },
     Route {
@@ -54,7 +55,7 @@ static ROUTES: [Route; 20] = [
         call: |call, _context| fallible(call.request, ingest::parse_page),
         failures: &[],
         feature: "ingest",
-        schema: schemas::<ingest::ParseRequest, ingest::PageResponse>,
+        http: Http::Hidden,
         trace: Trace::Redacted,
     },
     Route {
@@ -62,7 +63,7 @@ static ROUTES: [Route; 20] = [
         call: |call, _context| typed(call.request, ingest::reveal),
         failures: &[],
         feature: "ingest",
-        schema: schemas::<ingest::RevealRequest, ingest::Envelope>,
+        http: Http::Hidden,
         trace: Trace::Redacted,
     },
     Route {
@@ -70,39 +71,49 @@ static ROUTES: [Route; 20] = [
         call: |call, _context| fallible(call.request, ingest::window),
         failures: &[],
         feature: "ingest",
-        schema: schemas::<ingest::WindowRequest, ingest::WindowResponse>,
+        http: Http::Hidden,
         trace: Trace::Full,
     },
     Route {
         action: "list",
-        call: |call, context| queried(call.request, context, messages::list),
-        failures: &[AppError::Storage],
+        call: |call, context| listed(call.params, context, messages::list),
+        failures: &[AppError::BadRequest, AppError::Storage],
         feature: "messages",
-        schema: schemas::<messages::ListRequest, messages::ListResponse>,
-        trace: Trace::Redacted,
-    },
-    Route {
-        action: "approve",
-        call: |call, context| queried(call.request, context, review::approve),
-        failures: &[AppError::Storage],
-        feature: "review",
-        schema: schemas::<review::ApproveRequest, review::ApproveResponse>,
+        http: Http::Bound(
+            "get",
+            "/api/messages",
+            asked::<messages::ListRequest, messages::ListResponse>,
+        ),
         trace: Trace::Redacted,
     },
     Route {
         action: "list",
-        call: |call, context| queried(call.request, context, review::list),
-        failures: &[AppError::Storage],
+        call: |call, context| listed(call.params, context, review::list),
+        failures: &[AppError::BadRequest, AppError::Storage],
         feature: "review",
-        schema: schemas::<review::ListRequest, review::ListResponse>,
+        http: Http::Bound(
+            "get",
+            "/api/reviews",
+            asked::<review::ListRequest, review::ListResponse>,
+        ),
         trace: Trace::Redacted,
     },
     Route {
-        action: "reject",
-        call: |call, context| queried(call.request, context, review::reject),
-        failures: &[AppError::Storage],
+        action: "update",
+        call: |call, context| keyed(call, context, review::update),
+        failures: &[
+            AppError::BadRequest,
+            AppError::NotFound,
+            AppError::Conflict,
+            AppError::Unprocessable,
+            AppError::Storage,
+        ],
         feature: "review",
-        schema: schemas::<review::RejectRequest, review::RulingResponse>,
+        http: Http::Bound(
+            "patch",
+            "/api/reviews/{key}",
+            changed::<review::Key, review::Update, review::RulingResponse>,
+        ),
         trace: Trace::Redacted,
     },
     Route {
@@ -110,7 +121,7 @@ static ROUTES: [Route; 20] = [
         call: |call, _context| fallible(call.request, triage::prompt::brief),
         failures: &[],
         feature: "triage",
-        schema: schemas::<triage::prompt::BriefRequest, triage::prompt::BriefResponse>,
+        http: Http::Hidden,
         trace: Trace::Redacted,
     },
     Route {
@@ -118,7 +129,7 @@ static ROUTES: [Route; 20] = [
         call: |call, _context| fallible(call.request, triage::line::line),
         failures: &[],
         feature: "triage",
-        schema: schemas::<triage::line::LineRequest, triage::line::LineResponse>,
+        http: Http::Hidden,
         trace: Trace::Redacted,
     },
     Route {
@@ -126,7 +137,7 @@ static ROUTES: [Route; 20] = [
         call: |call, _context| typed(call.request, triage::prompt::notice),
         failures: &[],
         feature: "triage",
-        schema: schemas::<triage::prompt::NoticeRequest, triage::prompt::NoticeResponse>,
+        http: Http::Hidden,
         trace: Trace::Redacted,
     },
     Route {
@@ -134,7 +145,7 @@ static ROUTES: [Route; 20] = [
         call: |call, _context| fallible(call.request, triage::pack::pack),
         failures: &[],
         feature: "triage",
-        schema: schemas::<triage::pack::PackRequest, triage::pack::PackResponse>,
+        http: Http::Hidden,
         trace: Trace::Redacted,
     },
     Route {
@@ -142,7 +153,7 @@ static ROUTES: [Route; 20] = [
         call: |call, _context| fallible(call.request, triage::redact::redact),
         failures: &[],
         feature: "triage",
-        schema: schemas::<triage::redact::RedactRequest, triage::redact::RedactResponse>,
+        http: Http::Hidden,
         trace: Trace::Redacted,
     },
     Route {
@@ -150,7 +161,7 @@ static ROUTES: [Route; 20] = [
         call: |call, _context| fallible(call.request, triage::reply::reply),
         failures: &[],
         feature: "triage",
-        schema: schemas::<triage::reply::ReplyRequest, triage::reply::ReplyResponse>,
+        http: Http::Hidden,
         trace: Trace::Redacted,
     },
     Route {
@@ -158,7 +169,7 @@ static ROUTES: [Route; 20] = [
         call: |call, _context| typed(call.request, triage::screen::screen),
         failures: &[],
         feature: "triage",
-        schema: schemas::<triage::screen::ScreenRequest, triage::screen::ScreenResponse>,
+        http: Http::Hidden,
         trace: Trace::Redacted,
     },
     Route {
@@ -166,7 +177,7 @@ static ROUTES: [Route; 20] = [
         call: |call, _context| fallible(call.request, triage::screened::screened),
         failures: &[],
         feature: "triage",
-        schema: schemas::<triage::screened::ScreenedRequest, triage::screened::ScreenedResponse>,
+        http: Http::Hidden,
         trace: Trace::Redacted,
     },
     Route {
@@ -174,14 +185,17 @@ static ROUTES: [Route; 20] = [
         call: |call, _context| fallible(call.request, triage::sort::sort),
         failures: &[],
         feature: "triage",
-        schema: schemas::<triage::sort::SortRequest, triage::sort::SortResponse>,
+        http: Http::Hidden,
         trace: Trace::Redacted,
     },
 ];
 
+type Binding = (&'static str, &'static str, Describer);
+
 #[derive(Clone, Copy, Debug)]
 pub struct Call<'call> {
     origin: Origin<'call>,
+    params: &'call str,
     request: &'call str,
     target: Target<'call>,
 }
@@ -191,9 +205,15 @@ impl<'call> Call<'call> {
     pub const fn new(origin: Origin<'call>, target: Target<'call>, request: &'call str) -> Self {
         Self {
             origin,
+            params: "",
             request,
             target,
         }
+    }
+
+    #[must_use = "调用需交给 dispatch"]
+    pub const fn with_params(self, params: &'call str) -> Self {
+        Self { params, ..self }
     }
 }
 
@@ -239,11 +259,28 @@ impl<'ctx> Context<'ctx> {
     }
 }
 
-type Describer = fn(&mut SchemaGenerator) -> (Schema, Schema);
+type Describer = fn(&mut SchemaGenerator) -> Shapes;
 
 type Fallible<Req, Resp> = fn(&Req) -> Result<Resp, AppError>;
 
 type Handler = fn(&Call<'_>, &Context<'_>) -> Result<String, AppError>;
+
+#[derive(Clone, Copy)]
+enum Http {
+    Bound(&'static str, &'static str, Describer),
+    Hidden,
+}
+
+impl Http {
+    const fn binding(self) -> Option<Binding> {
+        match self {
+            Self::Bound(method, path, describe) => Some((method, path, describe)),
+            Self::Hidden => None,
+        }
+    }
+}
+
+type Keyed<Params, Req, Resp> = fn(&Params, Req, &Context<'_>) -> Result<Resp, AppError>;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Origin<'call> {
@@ -287,7 +324,7 @@ struct Route {
     call: Handler,
     failures: &'static [AppError],
     feature: &'static str,
-    schema: Describer,
+    http: Http,
     trace: Trace,
 }
 
@@ -312,6 +349,8 @@ impl<'rules> Rules<'rules> {
         }
     }
 }
+
+type Shapes = (Option<Schema>, Option<Schema>, Schema);
 
 #[derive(Clone, Copy, Debug)]
 pub struct Target<'call> {
@@ -341,6 +380,38 @@ impl Trace {
     }
 }
 
+fn asked<Params, Resp>(generator: &mut SchemaGenerator) -> Shapes
+where
+    Params: JsonSchema,
+    Resp: JsonSchema,
+{
+    (
+        Some(generator.subschema_for::<Params>()),
+        None,
+        generator.subschema_for::<Resp>(),
+    )
+}
+
+fn bare<Resp>(generator: &mut SchemaGenerator) -> Shapes
+where
+    Resp: JsonSchema,
+{
+    (None, None, generator.subschema_for::<Resp>())
+}
+
+fn changed<Params, Req, Resp>(generator: &mut SchemaGenerator) -> Shapes
+where
+    Params: JsonSchema,
+    Req: JsonSchema,
+    Resp: JsonSchema,
+{
+    (
+        Some(generator.subschema_for::<Params>()),
+        Some(generator.subschema_for::<Req>()),
+        generator.subschema_for::<Resp>(),
+    )
+}
+
 fn decode<Req>(request: &str) -> Result<Req, AppError>
 where
     Req: DeserializeOwned,
@@ -363,6 +434,7 @@ pub fn dispatch(context: &Context<'_>, call: &Call<'_>) -> Result<String, AppErr
         user = call.origin.user.unwrap_or_default(),
         feature = call.target.feature,
         action = call.target.action,
+        params = trace.view(call.params),
         request = trace.view(call.request),
         response = trace.view(&result.clone().unwrap_or_else(|err| err.body(errors))),
         ok = result.is_ok(),
@@ -380,34 +452,44 @@ where
     Ok(to_string(&resp).unwrap_or_default())
 }
 
-fn queried<Req, Resp>(
-    request: &str,
+fn keyed<Params, Req, Resp>(
+    call: &Call<'_>,
     context: &Context<'_>,
-    handler: Queried<Req, Resp>,
+    handler: Keyed<Params, Req, Resp>,
 ) -> Result<String, AppError>
 where
+    Params: DeserializeOwned,
     Req: DeserializeOwned,
     Resp: Serialize,
 {
-    let resp = handler(&decode(request)?, context)?;
+    let resp = handler(&params(call.params)?, decode(call.request)?, context)?;
     Ok(to_string(&resp).unwrap_or_default())
+}
+
+fn listed<Params, Resp>(
+    query: &str,
+    context: &Context<'_>,
+    handler: Queried<Params, Resp>,
+) -> Result<String, AppError>
+where
+    Params: DeserializeOwned,
+    Resp: Serialize,
+{
+    let resp = handler(&params(query)?, context)?;
+    Ok(to_string(&resp).unwrap_or_default())
+}
+
+fn params<Params>(query: &str) -> Result<Params, AppError>
+where
+    Params: DeserializeOwned,
+{
+    from_query(query).map_err(|_err| AppError::BadRequest)
 }
 
 fn route(target: Target<'_>) -> Option<&'static Route> {
     ROUTES
         .iter()
         .find(|hit| hit.feature == target.feature && hit.action == target.action)
-}
-
-fn schemas<Req, Resp>(generator: &mut SchemaGenerator) -> (Schema, Schema)
-where
-    Req: JsonSchema,
-    Resp: JsonSchema,
-{
-    (
-        generator.subschema_for::<Req>(),
-        generator.subschema_for::<Resp>(),
-    )
 }
 
 fn typed<Req, Resp>(request: &str, handler: fn(Req) -> Resp) -> Result<String, AppError>
