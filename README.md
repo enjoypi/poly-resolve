@@ -147,7 +147,7 @@ cd web && bun install --frozen-lockfile && bun run build && cd ..
 | 变量 | 含义 |
 |---|---|
 | DECISIONS_URL | 决策接口的完整地址 |
-| OPENAI_API_KEY | 决策接口的 API key |
+| DECISIONS_API_KEY | 决策接口的 API key |
 | CODEX_API_KEY | codex 专用的 API key |
 | CODEX_BASE_URL | codex 模型接口的完整地址（如 `https://<主机>/v1`，Responses 协议，端口须为 443）；展开进 codex 参数，`ps` 里本机可见 |
 | SELF_SENDER_ID | 本人的发送人 ID（消息里的 `sender_id`） |

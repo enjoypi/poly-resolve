@@ -119,7 +119,7 @@ triage:
     timeout_ms: 35000
     vars:
       PATH: "${PATH}"
-      TRIAGE_KEY: "${OPENAI_API_KEY}"
+      TRIAGE_KEY: "${DECISIONS_API_KEY}"
       TRIAGE_URL: "${DECISIONS_URL}"
   limits:
     batch: 20
