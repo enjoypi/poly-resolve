@@ -29,6 +29,8 @@ triage:
       - --skip-git-repo-check
       - --ignore-rules
       - --ignore-user-config
+      - -m
+      - gpt-6-luna
       - -s
       - read-only
       - -c
