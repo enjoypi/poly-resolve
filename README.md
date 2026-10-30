@@ -56,17 +56,18 @@ YAML 文件，各项均必填（注明可选的除外），不允许其他字段
 | triage.mode | disabled 或 enabled；enabled 时 `serve` 启动即检查所需环境变量，缺失则以退出码 2 退出并列出变量名 |
 | triage.model | 决策接口的模型名 |
 | triage.questions | urgent：每条消息一问的优先级问题（`{line}` 换成消息别名）；topic：每个新会话段一问的话题归属问题（`{segment}` 换成段别名；`min_confidence` 低于它按新话题；`new_label` 是“新话题”选项的说明）；threshold：概率不低于它即高优先级，大于 1 则只打分不转交 |
-| triage.limits | batch 每批最多消息条数，至多 200；intake 每轮最多入库的新消息条数；poll_ms 轮询间隔；lookback_ms 只处理多久以内的消息；max_attempts / retry_after_ms 失败重试次数与间隔；max_decisions_per_hour 每小时决策请求数；max_handoffs_per_hour 每小时转交次数；handoff_cooldown_ms 同一话题两次转交的最短间隔 |
+| triage.limits | batch 每批最多消息条数，至多 200；intake 每轮最多入库的新消息条数；parallel 每轮最多并行分析或通知的不同话题数；poll_ms 轮询间隔；lookback_ms 首次启用时只处理多久以内的消息；max_attempts / retry_after_ms 失败重试次数与间隔；max_decisions_per_hour 每小时决策请求数；max_handoffs_per_hour 每小时转交次数；handoff_cooldown_ms 同一话题两次转交的最短间隔 |
 | triage.sizes | session_gap_ms 同一会话内相邻消息间隔超过它即另起一段；context_max_chars 单条消息与提示词转写的字数上限；label_chars 话题标签的字数；topics_max_open 一次最多列出多少个开放话题供归并，与 batch 之和至多 254；session_max_ms 话题空闲多久后关闭、codex 会话最长沿用多久；result_max_chars 分析结果字数上限 |
 | triage.redact | patterns 是按序执行的脱敏规则（pattern 为正则，placeholder 为替换文本，可含 `${1}`）；unknown_sender 是没有发送人名时的写法；任一正则无效则 `serve` 以 sandbox_exit_code 退出 |
 | triage.review | mode 为 manual（逐条确认后才外发）或 auto（自动通过）；learn_min_chars 粘贴的漏脱敏原文至少多长；reasons 拒绝原因（code 与 label；带 placeholder 的是漏脱敏类，拒绝时须粘贴漏掉的原文；不带的拒绝即排除） |
 | triage.session | prompt 第一次发话题转写的提示词模板；followup 同一话题后续只发新增消息的模板（`{messages}` 处填入消息）；fresh 新会话追加在 codex 参数后的参数；resume 续写追加的参数（`{thread}` 换成会话 ID） |
 | triage.notice | 发给本人的通知模板（`{probability}`、`{topic}`、`{analysis}`） |
-| triage.decide / codex / notify / screen.exec | 外部命令，共同字段：bin、args、env（字面量环境变量）、vars（`${NAME}` 写法，运行时读同名环境变量传给子进程；args 里的 `${NAME}` 若在 vars 里声明则换成其值）、sandbox、timeout_ms；子进程环境先清空再只放 env 与 vars |
+| triage.decide | 决策 HTTP 接口：url 为 `${NAME}` 形式的环境变量，外部地址须用 HTTPS，本机测试可用回环 HTTP；key 为可选的 `${NAME}` 环境变量；timeout_ms 为请求超时毫秒数 |
+| triage.codex / notify | 外部命令，共同字段：bin、args、env（字面量环境变量）、vars（`${NAME}` 写法，运行时读同名环境变量传给子进程；args 里的 `${NAME}` 若在 vars 里声明则换成其值）、sandbox、timeout_ms；子进程环境先清空再只放 env 与 vars |
 | triage.codex.args | 须含 `--json`，用 `-m` 指定模型；不含 `--ephemeral` 与结尾的 `-` |
 | triage.notify.args | 须含 `--yes` 并以接收人参数名结尾；程序追加 `notify_target` 与 `--idempotency-key=<话题>@<批号>` |
 | triage.notify_target | 通知接收人，写成 `${NAME}` |
-| triage.screen | 可选，见“本地模型筛查”：exec 外部命令；instructions 系统提示词；model 模型名；placeholder 遮盖用的占位符 |
+| triage.screen | 可选，见“本地模型筛查”：http 为 HTTP 接口配置（url 仅允许带显式端口的回环 HTTP，key 可选，timeout_ms 为请求超时）；instructions 系统提示词；model 模型名；placeholder 遮盖用的占位符 |
 
 ## HTTP 接口
 
@@ -142,7 +143,7 @@ cd web && bun install --frozen-lockfile && bun run build && cd ..
 ### 准备
 
 1. 取得员工授权与企业管理员同意：脱敏后的消息内容会发往决策接口与 codex。
-2. 用 sops 保存变量：在项目根执行 `sops secrets/dev.enc.yaml`（开发用）或 `sops secrets/prod.enc.yaml`（release 用），写入扁平 YAML。加密规则取自上级目录的 `.sops.yaml`，私钥在 `~/.config/sops/age/keys.txt`。
+2. 用 sops 保存变量：执行 `sops ~/.config/poly-resolve/dev.enc.yaml`（开发用）或 `sops secrets/prod.enc.yaml`（release 用），写入扁平 YAML。加密规则取自上级目录的 `.sops.yaml`，私钥在 `~/.config/sops/age/keys.txt`。
 
 | 变量 | 含义 |
 |---|---|
@@ -150,6 +151,7 @@ cd web && bun install --frozen-lockfile && bun run build && cd ..
 | DECISIONS_API_KEY | 决策接口的 API key |
 | CODEX_API_KEY | codex 专用的 API key |
 | CODEX_BASE_URL | codex 模型接口的完整地址（如 `https://<主机>/v1`，Responses 协议，端口须为 443）；展开进 codex 参数，`ps` 里本机可见 |
+| SCREEN_URL | 可选本地模型接口的完整地址，仅允许带显式端口的回环 HTTP；启用 `triage.screen` 时必填 |
 | SELF_SENDER_ID | 本人的发送人 ID（消息里的 `sender_id`） |
 | NOTIFY_CONVERSATION_ID | 通知所在会话的 ID（消息里的 `conversation_id`） |
 | NOTIFY_TARGET | 通知接收人的 openDingTalkId（本人） |
@@ -175,7 +177,7 @@ sops exec-env secrets/prod.enc.yaml './target/release/cli serve --config cli/con
 
 ### 本地模型筛查
 
-可选，不配 `triage.screen` 即不启用。本机自行下载模型权重并启动 `llama-server`，`exec` 用 curl 调其 OpenAI 兼容接口：`exec.bin: curl`，`exec.args` 带 `-q -sS --fail-with-body --max-time 30 -H "Content-Type: application/json" --data-binary @- http://localhost:8080/v1/chat/completions`，沙箱的 `profile` 指向 `cli/sandbox/screen.sb`。模型不可达或返回无法解析时，该批一直重试、不外发。
+可选，不配 `triage.screen` 即不启用。本机自行下载模型权重并启动 `llama-server`，把 `SCREEN_URL` 设为 `http://localhost:<端口>/v1/chat/completions`，并在 `triage.screen.http` 配置 `url: "${SCREEN_URL}"` 与 `timeout_ms`。客户端直接发送 OpenAI 兼容请求，不启动 curl。模型不可达或返回无法解析时，该批一直重试、不外发。
 
 ### 关闭与停转交
 
@@ -185,7 +187,7 @@ sops exec-env secrets/prod.enc.yaml './target/release/cli serve --config cli/con
 
 ## 子进程沙箱
 
-钉钉工具 `dws`、决策用 `curl`、`codex`、本地模型筛查的 `curl` 都经 `/usr/bin/sandbox-exec` 启动，策略为 `deny default`，只放行各自必需的文件、网络端口与系统服务；没有关闭沙箱的配置。策略文件在 `cli/sandbox/`（`dws.sb`、`curl.sb`、`codex.sb`、`screen.sb`），由各命令的 `sandbox` 引用：
+钉钉工具 `dws` 与 `codex` 经 `/usr/bin/sandbox-exec` 启动，策略为 `deny default`，只放行各自必需的文件、网络端口与系统服务；没有关闭沙箱的配置。策略文件在 `cli/sandbox/`（`dws.sb`、`codex.sb`），由各命令的 `sandbox` 引用。决策与本地模型使用进程内 HTTP 客户端，不启动 curl；决策地址须为 HTTPS 或回环 HTTP，本地模型只允许回环 HTTP 与显式端口，客户端禁用代理和重定向。
 
 | 字段 | 说明 |
 |---|---|

@@ -1,10 +1,13 @@
+use std::time::Instant;
+
 use serde_json::{Value, json, to_string};
 
 use super::config::Screen;
 use super::desk::Screened;
+use super::trace::{Outcome, external};
 use super::{Shift, retry_before, text};
+use crate::http::Call;
 use crate::ingest::now_ms;
-use crate::pipe::Job;
 
 const APPROVED: &str = "approved";
 const AUTO: &str = "auto";
@@ -77,23 +80,48 @@ pub(super) async fn screen(shift: &mut Shift<'_>) -> Option<()> {
         return Some(());
     }
     let prepared = request(shift, setup, &lines);
-    let done = shift
-        .exec(Job::new(setup.exec(), &[], &prepared.body))
-        .await?;
+    let url = match setup.http().local_url() {
+        Ok(url) => url,
+        Err(_err) => {
+            let keys: Vec<&str> = lines.iter().map(|line| text(line, "key")).collect();
+            let deferred = shift
+                .ledger
+                .defer(&json!({"at_ms": now_ms(), "keys": keys}));
+            tracing::warn!(deferred, "screening failed");
+            return Some(());
+        }
+    };
+    let key = setup.http().key();
+    let call = Call::new(&url, &prepared.body, setup.http().timeout_ms()).with_key(key.as_deref());
+    let started = Instant::now();
+    let Some(done) = shift.post(&call).await else {
+        let elapsed = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
+        external(
+            "screen",
+            prepared.body.len(),
+            &Outcome::new(0, "stopped".to_owned(), elapsed),
+        );
+        return None;
+    };
+    let elapsed = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
+    let outcome = done.as_ref().map_or_else(
+        |reason| Outcome::new(0, reason.clone(), elapsed),
+        |reply| {
+            Outcome::new(reply.body().len(), "success".to_owned(), elapsed)
+                .code(Some(reply.status()))
+        },
+    );
+    external("screen", prepared.body.len(), &outcome);
     let now = now_ms();
-    let found = done
-        .as_ref()
-        .ok()
-        .filter(|output| output.status.success())
-        .and_then(|output| {
-            shift.desk.screened(&json!({
-                "lines": prepared.candidates,
-                "min_chars": triage.learn_min_chars(),
-                "placeholder": setup.placeholder(),
-                "response": String::from_utf8_lossy(&output.stdout),
-                "topics": prepared.topics,
-            }))
-        });
+    let found = done.ok().and_then(|reply| {
+        shift.desk.screened(&json!({
+            "lines": prepared.candidates,
+            "min_chars": triage.learn_min_chars(),
+            "placeholder": setup.placeholder(),
+            "response": reply.body(),
+            "topics": prepared.topics,
+        }))
+    });
     if let Some(verdicts) = found {
         apply(shift, &verdicts, now);
     } else {

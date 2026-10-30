@@ -18,12 +18,6 @@ async fn check_passes_for_valid_sandboxes() {
     sandbox.triage(&json!({})).unwrap().check().await.unwrap();
     let screening = sandbox.triage(&sandbox.screen("")).unwrap();
     screening.check().await.unwrap();
-    let mut broken = sandbox.screen("");
-    if let Some(bin) = broken.pointer_mut("/screen/exec/bin") {
-        *bin = json!("/nonexistent/triage");
-    }
-    let err = sandbox.triage(&broken).unwrap().check().await.unwrap_err();
-    assert_eq!(err, "/nonexistent/triage: probe failed: exit status: 71");
 }
 
 #[tokio::test]
@@ -45,7 +39,7 @@ async fn check_rejects_failing_probe() {
         let err = sandbox.config(&patch).unwrap().check().await.unwrap_err();
         assert_eq!(err, "/nonexistent/dws: probe failed: exit status: 71");
     }
-    for role in ["codex", "decide", "notify"] {
+    for role in ["codex", "notify"] {
         let patch = json!({role: {"bin": "/nonexistent/triage"}});
         let err = sandbox.triage(&patch).unwrap().check().await.unwrap_err();
         assert_eq!(err, "/nonexistent/triage: probe failed: exit status: 71");
@@ -64,7 +58,7 @@ async fn check_reports_sandbox_that_cannot_start() {
             format!("{}: sandbox did not start: entity not found", bin())
         );
     }
-    for role in ["codex", "decide", "notify"] {
+    for role in ["codex", "notify"] {
         let patch = json!({role: broken});
         let err = sandbox.triage(&patch).unwrap().check().await.unwrap_err();
         assert!(err.contains("sandbox did not start"), "{role}: {err}");

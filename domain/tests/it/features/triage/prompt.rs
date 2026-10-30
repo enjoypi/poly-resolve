@@ -126,6 +126,25 @@ fn brief_rejects_malformed_request() {
 }
 
 #[test]
+fn brief_resumes_same_timestamp_rows_by_key() {
+    let rows = json!([
+        {"key": "a", "occurred_at_ms": NOON, "sender": "alice", "text": "old"},
+        {"key": "b", "occurred_at_ms": NOON, "sender": "bob", "text": "new"},
+        {"key": "c", "occurred_at_ms": NOON + 1, "sender": "carol", "text": "last"},
+    ]);
+    let point = json!({"until": NOON, "until_key": "a"});
+    let request = brief_body(&rows, "ctx:{messages}", &point);
+    let reply = call("brief", &request.to_string()).unwrap().unwrap();
+    let expected = json!([
+        line("bob", "new", "04:00:35"),
+        line("carol", "last", "04:00:35"),
+    ])
+    .to_string();
+    assert_eq!(prompt_of(&reply), Some(format!("follow:{expected}")));
+    assert_eq!(reply.get("until_key"), Some(&json!("c")));
+}
+
+#[test]
 fn brief_resumes_with_only_new_lines() {
     let point = json!({"until": NOON - MINUTE});
     let request = brief_body(&rows(), "ctx:{messages}!", &point);

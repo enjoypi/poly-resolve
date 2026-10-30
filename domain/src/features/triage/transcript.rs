@@ -8,12 +8,18 @@ use crate::features::ingest::clock;
 #[derive(Deserialize, JsonSchema)]
 #[schemars(rename = "TriageRow")]
 pub(crate) struct Row {
+    #[serde(default)]
+    key: String,
     occurred_at_ms: u64,
     sender: String,
     text: String,
 }
 
 impl Row {
+    pub(super) fn key(&self) -> &str {
+        &self.key
+    }
+
     pub(super) const fn occurred_at_ms(&self) -> u64 {
         self.occurred_at_ms
     }

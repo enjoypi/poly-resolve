@@ -12,7 +12,9 @@ doctest = false
 [dependencies]
 domain.workspace = true
 futures-util.workspace = true
+http.workspace = true
 rusqlite.workspace = true
+security-framework.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

@@ -59,7 +59,7 @@ export const PRESETS: Preset[] = [
 
 export const REVIEW_HASH = "#reviews";
 
-export const REVIEW_LIMIT = 50;
+export const REVIEW_LIMIT = 200;
 
 
 export const TEXT = {

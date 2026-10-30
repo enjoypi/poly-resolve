@@ -1,6 +1,9 @@
 use serde_json::json;
 
-use super::rig::{ALERTS, KEY, NOTHING, QUICK, SECOND, SHORT, calls, logged, one, seed, table};
+use super::rig::{
+    ALERTS, BATCHES, KEY, NOTHING, PLACEMENTS, QUICK, SECOND, SHORT, calls, logged, one, seed,
+    table,
+};
 use crate::support::Sandbox;
 
 const ONE: u32 = 1;
@@ -36,8 +39,11 @@ async fn analysis_is_not_rerun_when_its_result_cannot_be_stored() {
         .unwrap();
     let logs = logged(&sandbox, &json!({}), SHORT).await.unwrap();
     assert!(logs.contains("ledger write failed"));
-    assert_eq!(calls(&sandbox, "codex").unwrap(), TWICE);
-    assert_eq!(table(&sandbox, ALERTS).unwrap(), ["t1-0@1|pending|2||"]);
+    assert_eq!(calls(&sandbox, "codex").unwrap(), 1);
+    assert_eq!(
+        table(&sandbox, ALERTS).unwrap(),
+        ["t1-0@1|pending|1|ANALYSIS|"]
+    );
 }
 
 #[tokio::test]
@@ -50,6 +56,20 @@ async fn analysis_waits_when_the_claim_cannot_be_stored() {
     drop(logged(&sandbox, &json!({}), QUICK).await.unwrap());
     assert_eq!(calls(&sandbox, "codex").unwrap(), 0);
     assert_eq!(table(&sandbox, ALERTS).unwrap(), ["t1-0@1|pending|0||"]);
+}
+
+#[tokio::test]
+async fn decision_answer_store_failure_does_not_apply() {
+    let sandbox = Sandbox::new("triage-claim-answer").unwrap();
+    seed(&sandbox, &one()).unwrap();
+    sandbox
+        .seed("CREATE TRIGGER refuse BEFORE INSERT ON answers BEGIN SELECT RAISE(ABORT, 'refused'); END;")
+        .unwrap();
+    let logs = logged(&sandbox, &json!({}), QUICK).await.unwrap();
+    assert!(logs.contains("decision answer store failed"));
+    assert_eq!(table(&sandbox, PLACEMENTS).unwrap(), NOTHING);
+    assert_eq!(table(&sandbox, ALERTS).unwrap(), NOTHING);
+    assert_eq!(table(&sandbox, BATCHES).unwrap(), ["1|ready|2|"]);
 }
 
 #[tokio::test]

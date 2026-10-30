@@ -6,3 +6,5 @@ node_modules
 .debug/
 web/dist
 /issues.yaml
+/secrets/*
+!/secrets/*.enc.yaml

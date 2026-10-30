@@ -27,9 +27,9 @@
 - 代码文件（含测试）不超过 512 行，函数不超过 64 行，超限即拆分
 - 不写注释或 docstring，见到即删；lint 要求的 reason 字符串（如 `#[must_use = "…"]`）不算注释；本条优先于插件的注释约定，`shortcut:` 等标记注释也不写
 - 新配置文件用 yaml；默认值、数值常量、业务字符串常量从配置读取
-- secret 只经环境变量加载，不设默认值，写法 `db_password: "${DB_PASSWORD}"`；值存于 sops 加密的 `secrets/dev.enc.yaml`（开发、`/serve`）与 `secrets/prod.enc.yaml`（release），扁平 YAML，键即变量名，运行时 `sops exec-env secrets/<环境>.enc.yaml '<命令>'` 注入；AI 不运行 `sops -d`、不读取明文、不生成或提交这两个文件
+- secret 只经环境变量加载，不设默认值，写法 `db_password: "${DB_PASSWORD}"`；值存于 sops 加密的 `~/.config/poly-resolve/dev.enc.yaml`（开发、`/serve`）与 `secrets/prod.enc.yaml`（release），扁平 YAML，键即变量名，运行时 `sops exec-env <上述文件> '<命令>'` 注入；AI 不运行 `sops -d`、不读取明文、不生成或提交这两个文件
 - 存储与日志时间用 UTC；面向人展示时标注时区（如 2026-07-17 09:20:09 UTC+8）并支持 TZ 环境变量
-- 输出 debug 级结构化日志供 AI 分析，不含 secret
+- 输出 debug 级结构化日志（session、feature、user、action、request、response 等）供 AI 分析，日志中禁止 secret
 
 ## 测试与覆盖率
 
@@ -58,7 +58,7 @@
 - clippy.toml 的 `msrv` 取当前 stable 版本，stable 升级后同步；`incompatible_msrv` 借它拦住 stable 编不过的新 API
 - `.cargo/config.toml`（cargo 只认 toml）固定 `MACOSX_DEPLOYMENT_TARGET = "11.0"`（rustc 默认值）：内置 C 库（如 rusqlite bundled）默认按本机 SDK 编译，链接时报 linker-info，被 deny 成错误
 - release 只用 stable：`cargo +stable test --release --locked && cargo +stable build --release --locked`
-- 开服（`/serve`）默认用 debug 版，与覆盖率共用中间产物：BUILD_CMD `bun scripts/build.ts`，BIN `target/llvm-cov-target/debug/cli`（带插桩，起服命令前加 `LLVM_PROFILE_FILE=.debug/serve-%p.profraw`），ARGS `serve --config cli/config.yaml`，READY_PATTERN `listening`，BUSINESS_GREP `"level":"(WARN|ERROR)"`，SMOKE_CMD `curl -fsS -m 3 http://<addr>/api/health`（`<addr>` 取 `cli/config.yaml`），日志与 PID 放 `.debug/`；监控只推异常不推 LOG，Monitor 的 command 为 `tail -n0 -F <PID_FILE>.events | grep --line-buffered -v '^LOG '`（WARN、ERROR 经 BUSINESS_GREP 记为 ISSUE，照常推送）；启用 `triage` 时 up.ts 外包 `sops exec-env secrets/dev.enc.yaml '<原命令>'`，未启用无需包装；启用前须存在 `.debug/codex-home`、`.debug/codex-work`（沙箱参数里的目录必须已存在）；用户明确要求时才用 release
+- 开服（`/serve`）默认用 debug 版，与覆盖率共用中间产物：BUILD_CMD `bun scripts/build.ts`，BIN `target/llvm-cov-target/debug/cli`（带插桩，起服命令前加 `LLVM_PROFILE_FILE=.debug/serve-%p.profraw`），ARGS `serve --config cli/config.yaml`，READY_PATTERN `listening`，BUSINESS_GREP `"level":"(WARN|ERROR)"`，SMOKE_CMD `curl -fsS -m 3 http://<addr>/api/health`（`<addr>` 取 `cli/config.yaml`），日志与 PID 放 `.debug/`；监控只推异常不推 LOG，Monitor 的 command 为 `tail -n0 -F <PID_FILE>.events | grep --line-buffered -v '^LOG '`（WARN、ERROR 经 BUSINESS_GREP 记为 ISSUE，照常推送）；启用 `triage` 时 up.ts 外包 `sops exec-env ~/.config/poly-resolve/dev.enc.yaml '<原命令>'`，未启用无需包装；启用前须存在 `.debug/codex-home`、`.debug/codex-work`（沙箱参数里的目录必须已存在）；用户明确要求时才用 release
 - lib 设 `test = false`、`bench = false`、`doctest = false`；bin 设 `test = false`、`bench = false`；保证 RA 默认 `--all-targets` 检查通过
 - crate 依赖单向：`cli`（传输层）→ `adapters`（I/O：子进程、存储）→ `domain`（业务）；业务代码只写在 domain，domain 不依赖 tokio
 - 每个 crate 只有一个集成测试二进制 `tests/it/main.rs`，其余为其子模块，按被测模块或功能命名

@@ -23,9 +23,10 @@
 - `seatbelt.rs`：`Sandbox`（`bin`、`canary`、`paths`、`probe`、`profile`、`vars`，`deny_unknown_fields`）
   - `command(program)` 拼 `bin -f <真实路径 profile> -D 名=值 … -- program`；`paths` 与 `profile` 用 `canonicalize(..).unwrap_or_default()`，路径不存在即得空值，`sandbox-exec` 以 65 拒绝，不新增分支；`vars` 取环境变量，缺失为空
   - `check(probe, name)` 同时跑 `canary`（须非 0）与 `probe`（须 0），错误是字符串；`Dws::check`、triage 的 `check` 用 `join_all` 并发，报错按声明顺序取第一个
-  - 钉钉源 `dws` 的 4 个 `Process`、triage 的 `decide`、`codex`、`notify` 及可选的 `screen.exec` 各带一份 `sandbox`，命令一律经 `command` 起，不得绕过；`Dws::check`、`triage::config::Settings::check` 供 cli 启动自检
+  - 钉钉源 `dws` 的 4 个 `Process`、triage 的 `codex` 与 `notify` 各带一份 `sandbox`，命令一律经 `command` 起，不得绕过；`Dws::check`、`triage::config::Settings::check` 供 cli 启动自检。决策与本地模型使用进程内 HTTP，不经 Seatbelt
 - `triage.rs`：`Setup`、`Lane`、`run`、`validate`
-- `triage/config.rs`：`Settings`、`Exec`、`Var`
+- `triage/config.rs`：`Settings`、`Exec`、`Var`；`triage/endpoint.rs`：HTTP 地址、可选密钥、超时与本机／外部地址校验
+- `http.rs`：异步 HTTP/1.1 JSON POST；直连 TCP，HTTPS 用 Security Framework 非阻塞 `SslStream` 与 tokio 就绪事件；不读代理、不跟随重定向；支持 Content-Length、chunked 与连接关闭响应；错误不携带 URL、密钥或正文
 - `triage/desk.rs`：调 domain `triage` feature；`Desk::rules` 为库里学到的规则在前、配置的在后
 - `triage/intake.rs`：入库、成批、重新脱敏；`triage/screen.rs`：本地模型筛查；`triage/batch.rs`：封批、发送、落结果；`triage/alert.rs`：分析、通知；三者是以 `&Shift` 为参数的自由函数（`multiple_inherent_impl` 禁止给 `Shift` 再写 impl）
 - `ledger.rs`：`lines`、`batches`、`answers`、`topics`、`placements`、`alerts`、`learned_rules` 的读写；参数打成一个 JSON 对象经 `json_extract(?1, …)` 取值（绕开参数个数限制），读返回 `json_group_array`，失败只记 warn 并返回空或 0；`Ledger::apply` 是唯一的多语句事务（`BEGIN IMMEDIATE` … `COMMIT`，任一步失败则 `ROLLBACK`）
@@ -47,26 +48,26 @@
 
 ## 分级与转交
 
-- `triage::run(setup, lane, stop)` 返回 `()`，永不使 serve 退出；`mode: disabled` 立即返回；每条 lane 各开一个账本连接，打开失败记 error 后返回
-- `Lane::Batches` 每轮：`intake` → `rerender` → `form` → `screen` → `seal` → `send` → 睡 `poll_ms`；`Lane::Alerts` 每轮：逐条 `analyze` → 逐条 `deliver` → 睡 `poll_ms`；两条 lane 并行，分析不阻塞成批；每个状态只有一个 lane 消费，不需认领中间态；`exec` 经 `race` 打断，被打断返回 `None` 逐层 `?` 退出
-- 先记账再调用：外部调用前 `claim_*` 把 `attempts + 1`、`updated_at_ms` 置当前（`WHERE state = 起点 AND attempts < max_attempts`），影响 0 行不调用；被停机打断则 `release_*` 退回；失败只写 `reason` 并在 `attempts ≥ max_attempts` 时转 `failed`；`next_*` 跳过已用尽次数的
-- `intake`：`Ledger::unlined` 取 `lookback_ms` 内还没有 `lines` 行的消息，从新到旧，每轮至多 `intake` 条；逐条调 domain `triage.line`（规则无效则记 warn、该条留待下一轮），写 `lines`（`INSERT OR IGNORE`，`queued` 或带原因 `skipped`，`rules_rev` 记当时最大的规则 id）
+- `triage::run(setup, lane, stop)` 返回 `()`，永不使 serve 退出；每条 lane 各开一个账本连接，打开失败记 error 后返回。`mode: disabled` 只记录开关状态；首次启用把 `now - lookback_ms` 固化到 `triage_state`，重启不前移，明确禁用后再启用才重新锚定
+- `Lane::Batches` 每轮：`intake` → `rerender` → `form` → `screen` → `seal` → `send` → 睡 `poll_ms`；`Lane::Alerts` 每轮：激活等待项 → 并行分析与通知 → 睡 `poll_ms`；两条 lane 并行，独立话题的外部调用用 `join_all` 并行，SQLite 读写与 claim 在调用前后串行；每个状态只有一个 lane 消费，不需认领中间态；`exec` 与 HTTP 经 `race` 打断，被打断返回 `None` 逐层 `?` 退出
+- 先记账再调用：外部调用前 `claim_*` 把状态尝试与 `calls` 流水写在同一事务（`attempts + 1`、`updated_at_ms` 置当前，`WHERE state = 起点 AND attempts < max_attempts`），影响 0 行不调用；被停机打断则 `release_*` 删除流水并退回尝试。失败请求保留流水，`requests_since` 按 `calls` 计实际请求；失败只写 `reason` 并在 `attempts ≥ max_attempts` 时转 `failed`；`next_*` 跳过已用尽次数的
+- `intake`：`Ledger::unlined` 取 `triage_state.since_ms` 起还没有 `lines` 行的消息，从新到旧，每轮至多 `intake` 条；逐条调 domain `triage.line`（规则无效则记 warn、该条留待下一轮），写 `lines`（`INSERT OR IGNORE`，`queued` 或带原因 `skipped`，`rules_rev` 记当时最大的规则 id）
 - `rerender`：把 `rules_rev` 落后的 `queued/pending/leaked/screening` 行经 domain `redact` 重新脱敏，`leaked` 行回到 `pending`
 - `form`：没有未结批（有行 `batch_id > 0` 且其批还不是 `sent/failed`）时，把最新的至多 `batch` 条 `queued` 行编入新批（批号＝最大批号 + 1）；未配 `triage.screen` 时状态按 `review.mode` 为 `pending`（审核人空）或 `approved`（审核人 `auto`），配了则为 `screening`
-- `screen`（可选）：取至多 `batch` 条 `screening` 行（`reason = 'deferred'` 的要等过 `retry_after_ms`），连同开放话题调 domain `triage.screen`，经 `exec` 发给本机模型，响应交 domain `triage.screened`，写回 `lines.text/flag/hints`；`manual` 转 `pending`，`auto` 时 `flag` 非空转 `rejected`（原因 `screen`）、其余转 `approved`；失败（非 0 退出、超时、无法解析）整批标 `deferred` 不放行
+- `screen`（可选）：取至多 `batch` 条 `screening` 行（`reason = 'deferred'` 的要等过 `retry_after_ms`），连同开放话题调 domain `triage.screen`，经 HTTP 发给本机模型，响应交 domain `triage.screened`，写回 `lines.text/flag/hints`；`manual` 转 `pending`，`auto` 时 `flag` 非空转 `rejected`（原因 `screen`）、其余转 `approved`；失败（连接、状态、超时、无法解析）整批标 `deferred` 不放行
 - `seal`（`Ledger::sealable`）：批内无 `screening/pending/leaked` 行时，取已通过的行，加上开放话题（`last_at_ms` 在 `session_max_ms` 内，至多 `topics_max_open` 个）和各会话仍开放的话题（`attach`），调 domain `triage.pack` 得冻结的请求体与 `layout`，写 `batches`（`ready`）；没有已通过的行则直接写 `sent`、`payload` 为空关批
-- `send`：按每小时已发批数（`max_decisions_per_hour`，只计 `payload` 非空的 `sent` 批）取最早的 `ready` 批
-  - curl 的 URL 与 key 经 `vars` 注入 `TRIAGE_URL`、`TRIAGE_KEY`，用 `--variable %NAME` 与 `--expand-url`、`--expand-header` 取用，请求体走 stdin，argv 不含密钥；响应交 domain `triage.sort`
-  - 失败（非 0 退出、超时、启动失败、响应无法解析）`reason` 为 `exit:<码>`、`io:<种类>` 或 `bad_answer`，达 `max_attempts` 转 `failed`
-  - 成功先把应答写进 `answers`，再 `Ledger::apply` 一个事务；`next_batch` 带出已存的应答，有则直接重放、不再外发，故 `apply` 失败不会重复调用决策接口
-  - `apply` 事务：写 `placements`；写 `topics`（`ON CONFLICT` 取概率最大值与最近时间）；对 `urgent` 话题开 `alerts`（键 `<话题>@<批号>`，同话题 `handoff_cooldown_ms` 内已有、或一小时内已达 `max_handoffs_per_hour` 则忽略）；批置 `sent` 且 `attempts` 归零；崩溃发生在存应答前则整批重发
-- `analyze`：取一条 `pending` 的 `alerts`，话题的已通过行（`Ledger::topic_lines`）交 domain `triage.brief`
-  - 话题有 `thread_id` 且 `thread_at_ms` 在 `session_max_ms` 内则续写：`followup` 模板、只含 `until_ms` 之后的行、命令追加 `session.resume`；否则新建：`prompt` 模板、追加 `session.fresh`
+- `send`：按 `calls` 中实际决策请求数（`max_decisions_per_hour`）取最早的 `ready` 批；限额只阻止新请求，已存应答仍可重放
+  - URL 与 key 经 HTTP 配置从环境变量读取，请求体走 JSON POST，argv 不含密钥；响应交 domain `triage.sort`
+  - 失败（连接、HTTP 状态、超时、响应无法解析）`reason` 为 `connect`、`http:<码>`、`timeout`、`io` 或 `bad_answer`，达 `max_attempts` 转 `failed`
+  - 成功先把应答写进 `answers`，写不进就不调用 `apply`；再经 `Ledger::apply` 一个事务写结果；`next_batch` 带出已存的应答，有则直接重放、不再外发，故 `apply` 失败不会重复调用决策接口
+  - `apply` 事务：写 `placements`；写 `topics`（`ON CONFLICT` 取概率最大值与最近时间）；对 `urgent` 话题开 `alerts`（键 `<话题>@<批号>`，初始 `waiting`，同话题等待项合并）；批置 `sent` 且 `attempts` 归零；崩溃发生在存应答前则整批重发
+- `analyze`：取当前可转交的 `pending` 项（按 `calls` 检查小时额度与同话题冷却），话题的已通过行（`Ledger::topic_lines`）交 domain `triage.brief`
+  - 话题 ID 与 Codex 会话 ID 相同。首次返回 `thread_id` 时，事务内迁移临时话题 ID 并级联 `placements/alerts/calls`；`thread_at_ms` 在 `session_max_ms` 内则续写：`followup` 模板、只含 `(until_ms, until_key)` 之后的行、命令追加 `session.resume`；否则新建：`prompt` 模板、追加 `session.fresh`
   - codex 的 stdin 传提示词，stdout 是 `--json` 事件流，经 domain `triage.reply` 取会话 ID 与最终回复；退出非 0、输出无法解析、回复为空都算失败，空输出的 `reason` 为 `exit:0`
-  - 成功转 `analyzed` 并把 `topics` 的 `thread_id`、`until_ms` 写回；失败 `attempts + 1` 并清空该话题的 `thread_id`
+  - 成功先把分析、会话 ID 与游标写库，再推进 `analyzed`；推进失败下轮重放已存分析，不重跑 Codex。失败 `attempts + 1` 并把 `thread_at_ms` 归零，让下次新建会话
 - `deliver`：用 `triage.notice` 渲染，dws 发送（参数末尾追加 `notify_target` 与 `--idempotency-key=<话题>@<批号>`）→ `sent`；失败达 `max_attempts` 转 `failed`；阶段推进（`ADVANCE_ALERT … WHERE state = from`）把 `attempts` 与 `updated_at_ms` 归零，故发送失败只重试发送
 - 审核：`lines.state` 即审核状态，裁决由 cli 的 `PATCH /api/reviews/{key}` 经 domain `review.update` 调 `Shelf`；`rejected` 是终态，`leaked` 经 `rerender` 回到 `pending`；审核没有期限
-- `validate(setup)`：先检查 `batch ≤ 200`、`topics_max_open + batch ≤ 254`（决策接口 `questions ≤ 400`、`choices ≤ 255`），再用空文本调 domain `redact`，规则无效即 `Err`；cli 启动自检用它
+- `validate(setup)`：先检查 `batch ≤ 200`、`topics_max_open + batch ≤ 254`（决策接口 `questions ≤ 400`、`choices ≤ 255`），再校验决策与本地模型 URL，最后用空文本调 domain `redact`，规则无效即 `Err`；cli 启动自检用它
 - 外发内容（决策请求体、codex 提示词）只能来自 domain 渲染后的结果，adapters 不做文本替换
 - 防自循环：domain 的 `line` 跳过本人发出的与通知会话的消息；本人与通知会话按消息的 `source:account` 取对应数据源的 `Profile`，取不到（无此概念的源）则不判定；通知以本人身份发出，补拉可能再收到，靠这两条切断
 - 停机：在途子进程被打断并 kill，状态不改，下次启动续做（至少一次，发送靠幂等键去重）
@@ -74,7 +75,7 @@
   - `lines` 按 `state, reason` 计数，本人、通知会话、空正文、密文均为 `skipped`
   - `batches` 由 `ready` 变 `sent`；`failed` 的批不自动重试；`answers` 存决策应答
   - 已通过的行都有 `placements`
-  - `alerts` 由 `pending` → `analyzed` → `sent`
+  - `alerts` 由 `waiting` → `pending` → `analyzed` → `sent`；冷却或限额时停在 `pending`，不丢消息
   - 日志关键词：`batch formed`、`batch sealed`、`batch decided`、`alert analyzed`、`alert sent`，WARN `decision failed`、`alert analysis failed`、`alert step failed`
 
 ## 新增数据源
@@ -89,7 +90,7 @@
 - 单写者（一个线程独占写连接、各任务经 channel 提交）暂不做；日志频繁出现 `store busy`，或某源要求 `synchronous = FULL` 且写入达每秒数百条时再评估
 - 需确认语义的数据源（消息队列 ack、邮件已读标记）只在 `save_*` 返回 Ok 后确认，`Halt::Busy` 不确认；写库与确认之间不可被停机打断
 - 不清账本表：清 `lines` 会重新外发；清 `alerts` 会让幂等键 `<话题>@<批号>` 复用，通知被 dws 当作重复吞掉；`learned_rules` 始终保留
-- 日志只记行数、数量、标识、状态、次数、长度、退出码，不含消息正文、提示词、分析、响应与规则
+- 日志只记行数、数量、标识、状态、次数、长度、退出码，不含消息正文、提示词、分析、响应与规则。`triage/trace.rs` 统一外部调用的 `transport/session_id/user/feature/action/params/request/response/ok/elapsed_us/attempt/code/status`；request、response 只记 `redacted:<字节数>`，HTTP 错误不输出 URL 或原始错误文本
 - 子进程环境一律 `env_clear` 后只放配置的 env 与 vars；命令用 `PATH` 找程序时 `vars` 须含 `PATH`；dws 的 env 应含 `DO_NOT_TRACK=1` 关闭遥测
 - `triage::config::Settings` 的字段不得超过 16 个：`derive(Debug)` 会生成 `&[&dyn Debug; N]`，N 为 17 时超过 256 字节触发 `large_stack_arrays`；新增配置并入 `session`、`review`、`redact` 等子结构
 - 停机先丢子进程 stdin（dws 视 EOF 为优雅退出并取消订阅），超过 `child_exit_timeout_ms` 才 kill；kill -9 会泄漏服务端订阅（再启报已存在、重复投递）
@@ -129,11 +130,10 @@
   - `FAKE_LOOKUP`（fail、junk、slow，默认输出 `lookup.json`），参数逐行追加到 `lookup-args.txt`
   - `FAKE_DECRYPT`（fail、junk、slow，默认输出 `{"ok":true,"plaintext":"CLEARTEXT"}`），参数写入 `decrypt-args.txt` 并逐行追加到 `decrypt-calls.txt`（并发解密用例按行数断言）
   - `slow` 睡 30 秒：support 的 `dws.timeout_ms` 取 60000，让“停机打断”用例仍由停机信号结束；超时用例在 `tests/it/ingest/timeout.rs` 把 `timeout_ms` 改成 200
-- 假 triage `tests/it/fixtures/fake-triage.sh`，第一个参数为角色，行为由 `env` 控制；参数、stdin、调用次数写入 `<角色>-args.txt`、`-stdin.txt`、`-calls.txt`：
-  - decide：`FAKE_DECIDE`（fail、junk、slow）；默认按 stdin 里的题名作答，`urgent_<n>` 取 `FAKE_PS`（空格分隔的第 n 项）或 `FAKE_P`（默认 0.95），`topic_<n>` 取 `FAKE_TOPICS` 第 n 项（默认 `new`）与 `FAKE_CONFIDENCE`（默认 0.9）；`decide-env.txt` 记录注入的 `TRIAGE_URL|TRIAGE_KEY`
+- 假 triage `tests/it/fixtures/fake-triage.sh` 只跑 codex 与 send，第一个参数为角色，行为由 `env` 控制；参数、stdin、调用次数写入 `<角色>-args.txt`、`-stdin.txt`、`-calls.txt`：
   - codex：`FAKE_CODEX`（fail、empty、junk、resume_fail、escape、slow）；默认输出 `thread.started`（会话 ID 取 `FAKE_THREAD`，默认 T1）与含 `ANALYSIS` 的 `agent_message` 两行 JSONL
-  - screen：`FAKE_SCREEN`（fail、junk、slow），默认输出判断结果
   - send：`FAKE_SEND`（fail、slow）
+- 决策与本地模型用 `tests/it/triage/stub.rs` 的本机动态端口 HTTP stub；每个 `Sandbox` 独立端口。请求写入 `<角色>-calls.txt`（JSONL：方法、路径、头）与 `<角色>-body.txt`；行为由目录内 `decide-stub.json`、`screen-stub.json` 的 `mode`（fail、junk、slow）与概率、话题、置信度字段控制，`screen.json` 可整包覆盖响应。补丁顶层 `stub.decide`、`stub.screen` 由 `rig::behave` 写成这些文件，不进生产配置
 - 存储故障注入：
   - 预建缺列的表（`BAD_SCHEMA`，在 `heal` 的查询处失败）
   - 对已建表加触发器 `REFUSE_INSERT`、`REFUSE_UPDATE`（写失败而查询正常）

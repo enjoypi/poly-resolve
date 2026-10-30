@@ -37,10 +37,16 @@ pub(super) fn form(shift: &Shift<'_>) {
 
 pub(super) fn intake(shift: &Shift<'_>) {
     let now = now_ms();
-    let messages = shift.ledger.unlined(&json!({
-        "limit": shift.triage.intake(),
+    let since = shift.ledger.intake_since(&json!({
+        "enabled": true,
         "since_ms": now.saturating_sub(shift.triage.lookback_ms()),
     }));
+    let messages = since.map_or_default(|since_ms| {
+        shift.ledger.unlined(&json!({
+            "limit": shift.triage.intake(),
+            "since_ms": since_ms,
+        }))
+    });
     let (rules, rev) = current(shift);
     let stamp = Stamp {
         at_ms: now,

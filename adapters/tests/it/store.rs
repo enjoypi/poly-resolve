@@ -19,6 +19,23 @@ fn ids(rows: &[Row]) -> Vec<&str> {
 }
 
 #[test]
+fn open_adds_cursor_key_to_existing_topics() {
+    let sandbox = Sandbox::new("store-cursor-migration").unwrap();
+    sandbox
+        .seed("CREATE TABLE topics (id TEXT PRIMARY KEY NOT NULL, label TEXT NOT NULL, probability REAL, thread_id TEXT NOT NULL, until_ms INTEGER NOT NULL, thread_at_ms INTEGER NOT NULL, created_at_ms INTEGER NOT NULL, last_at_ms INTEGER NOT NULL) WITHOUT ROWID;")
+        .unwrap();
+    drop(Archive::open(&sandbox.database(), BUSY).unwrap());
+    let count: Result<i64, Box<Error>> = Connection::open(sandbox.database())
+        .unwrap()
+        .query_row_and_then(
+            "SELECT COUNT(*) FROM pragma_table_info('topics') WHERE name = 'until_key'",
+            [],
+            |row| row.get(0).map_err(Box::new),
+        );
+    assert_eq!(count.unwrap(), 1);
+}
+
+#[test]
 fn open_enables_write_ahead_log() {
     let sandbox = Sandbox::new("store-wal").unwrap();
     drop(Archive::open(&sandbox.database(), BUSY).unwrap());

@@ -1,8 +1,8 @@
 use serde_json::{Value, json};
 
 use super::rig::{
-    ALERTS, BATCHES, KEY, LINES, NOTHING, PLACEMENTS, QUICK, SECOND, THIRD, calls, decided,
-    input_of, logged, questions_of, seed, start, table, two,
+    ALERTS, BATCHES, KEY, LATER, LINES, NOTHING, PLACEMENTS, QUICK, SECOND, THIRD, calls, decided,
+    input_of, logged, one, questions_of, seed, seed_from, start, table, two,
 };
 use crate::support::Sandbox;
 
@@ -33,14 +33,15 @@ async fn every_message_joins_one_batch() {
         questions_of(&body),
         ["urgent_1", "urgent_2", "urgent_3", "topic_2"]
     );
-    assert_eq!(
-        table(&sandbox, PLACEMENTS).unwrap(),
-        [
-            format!("{KEY}|t1-0|0.95"),
-            format!("{SECOND}|t1-1|0.95"),
-            format!("{THIRD}|t1-0|0.95"),
-        ]
-    );
+    let placed = table(&sandbox, PLACEMENTS).unwrap();
+    assert_eq!(placed.len(), 3);
+    let topic = |index: usize| {
+        let row = placed.get(index)?;
+        row.split('|').nth(1)
+    };
+    assert_eq!(topic(0), topic(2));
+    assert_ne!(topic(0), topic(1));
+    assert!(placed.iter().all(|row| row.ends_with("|0.95")));
 }
 
 #[tokio::test]
@@ -52,6 +53,38 @@ async fn invalid_rules_fail_closed() {
     assert!(logs.contains("line unavailable"));
     assert_eq!(table(&sandbox, LINES).unwrap(), NOTHING);
     assert_eq!(calls(&sandbox, "decide").unwrap(), 0);
+}
+
+#[tokio::test]
+async fn lookback_continues_backlog_after_restart() {
+    let sandbox = Sandbox::new("batch-lookback-restart").unwrap();
+    seed(&sandbox, &one()).unwrap();
+    let patch = json!({"limits": {"lookback_ms": SHORT_LOOKBACK}});
+    start(&sandbox, &json!({}), QUICK).await.unwrap();
+    seed_from(&sandbox, &[(SECOND, "u1", "c1", "still down")], LATER).unwrap();
+    start(&sandbox, &patch, QUICK).await.unwrap();
+    assert_eq!(calls(&sandbox, "decide").unwrap(), 2);
+    assert_eq!(
+        table(&sandbox, LINES).unwrap(),
+        [
+            format!("{KEY}|approved||1"),
+            format!("{SECOND}|approved||2")
+        ]
+    );
+}
+
+#[tokio::test]
+async fn lookback_reanchors_after_disable() {
+    let sandbox = Sandbox::new("batch-lookback-disable").unwrap();
+    seed(&sandbox, &one()).unwrap();
+    let patch = json!({"limits": {"lookback_ms": SHORT_LOOKBACK}});
+    start(&sandbox, &json!({}), QUICK).await.unwrap();
+    seed_from(&sandbox, &[(SECOND, "u1", "c1", "still down")], LATER).unwrap();
+    start(&sandbox, &json!({"mode": "disabled"}), QUICK)
+        .await
+        .unwrap();
+    start(&sandbox, &patch, QUICK).await.unwrap();
+    assert_eq!(calls(&sandbox, "decide").unwrap(), 1);
 }
 
 #[tokio::test]
@@ -91,9 +124,9 @@ async fn newest_messages_are_batched_first() {
     assert_eq!(
         table(&sandbox, PLACEMENTS).unwrap(),
         [
-            format!("{KEY}|t1-0|0.95"),
-            format!("{SECOND}|t1-0|0.95"),
-            format!("{THIRD}|t1-0|0.95"),
+            format!("{KEY}|T1|0.95"),
+            format!("{SECOND}|T1|0.95"),
+            format!("{THIRD}|T1|0.95"),
         ]
     );
 }
@@ -113,11 +146,11 @@ async fn payload_masks_secrets_and_the_log_stays_clean() {
 async fn priorities_are_scored_per_line() {
     let sandbox = Sandbox::new("batch-priorities").unwrap();
     seed(&sandbox, &two()).unwrap();
-    let patch = json!({"decide": {"env": {"FAKE_PS": "0.1 0.9"}}});
+    let patch = json!({"stub": {"decide": {"ps": "0.1 0.9"}}});
     start(&sandbox, &patch, QUICK).await.unwrap();
     assert_eq!(
         table(&sandbox, PLACEMENTS).unwrap(),
-        [format!("{KEY}|t1-0|0.1"), format!("{SECOND}|t1-0|0.9")]
+        [format!("{KEY}|T1|0.1"), format!("{SECOND}|T1|0.9")]
     );
     assert_eq!(
         table(&sandbox, ALERTS).unwrap(),

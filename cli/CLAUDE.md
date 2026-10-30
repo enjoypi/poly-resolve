@@ -11,7 +11,7 @@
 - `addr` 为 `SocketAddr`，`config::load` 拒绝非回环 IP（IPv4、IPv6 均支持）
 - `Var`：`triage` 段里 `"${NAME}"` 写法的值，整串须为 `${NAME}`；加载时只校验写法、不读环境，用时才读（不存值，`Debug` 只显示名字）
 - `missing()`：`serve` 在 `triage.mode: enabled` 且 `triage.missing()` 与 `ingest.missing()`（各数据源的本人、通知会话）合起来有变量读不到（含空值）时以退出码 2 退出并列出变量名；`ingest` 与未启用时不检查；测试不能 `set_var`（`unsafe_code` forbid），用 `${HOME}`、`${PATH}`、`${CARGO_PKG_NAME}` 表示已设，一个不存在的名字表示缺失
-- `verify`：`serve` 与 `ingest` 在读完配置、检查完 `missing()` 后、绑定端口前调用：`ingest.check()`（各数据源并发）；`triage.mode` 为 `enabled` 时再 `triage.check()` 与 `adapters::triage::validate`；任一失败以 `sandbox_exit_code` 退出并把原因写 stderr（`fail`）
+- `verify`：`serve` 与 `ingest` 在读完配置、检查完 `missing()` 后、绑定端口前调用：`ingest.check()`（各数据源并发）；`triage.mode` 为 `enabled` 时再 `triage.check()`（Codex 与通知子进程）与 `adapters::triage::validate`（含决策和本地模型 URL 校验）；任一失败以 `sandbox_exit_code` 退出并把原因写 stderr（`fail`）
 - `Settings::context(&reader)` 构造 `domain::features::Context`：`Rules` 取 `messages` 分页、`triage.review.reasons` 与 `triage.review.learn_min_chars`，`Ports` 把同一个 `adapters::store::Shelf` 既作 `Reader` 又作 `Docket`；HTTP 处理与 `ingest` 各用 `settings.ingest().shelf()`
 
 ## 退出码
