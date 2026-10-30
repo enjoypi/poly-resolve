@@ -39,7 +39,10 @@
 - 一次编译完成 clippy、test、cov：`env` 设 `RUSTC_WORKSPACE_WRAPPER=clippy-driver`，工作区 crate 编译时顺带 lint，lint 违规即编译失败；不要拆成 clippy 与 cov 两次编译
 - `args` 含 `--no-cfg-coverage --no-cfg-coverage-nightly`，插桩代码与 release 一致
 - 保留 `CARGO_INCREMENTAL=0`（开增量不更快）
-- stamp 哈希须覆盖所有影响编译或 lint 的输入：工具链与 cargo-llvm-cov 版本、`Cargo.toml`、`Cargo.lock`、`cargo metadata`；cwd 各级祖先目录、各成员目录、`CLIPPY_CONF_DIR` 下的 `.cargo/config(.toml)`、`clippy.toml`、`.clippy.toml`、`rust-toolchain(.toml)`，以及 `$CARGO_HOME/config(.toml)`；名字匹配 `RUSTFLAGS$`、`RUSTC_WRAPPER`、`CLIPPY_CONF_DIR`、`CARGO_PROFILE_*` 的环境变量（用白名单，前缀匹配会被 `CARGO_TERM_COLOR` 等无关变量搅得 stamp 抖动）；`clippy.toml` 改动不触发重编，不进 stamp 就不会重新 lint；不用 `cargo config get`（需 `-Z`）
+- stamp 哈希须覆盖所有影响编译或 lint 的输入，不用 `cargo config get`（需 `-Z`）：
+  - 工具链与 cargo-llvm-cov 版本、`Cargo.toml`、`Cargo.lock`、`cargo metadata`
+  - cwd 各级祖先目录、各成员目录、`CLIPPY_CONF_DIR` 下的 `.cargo/config(.toml)`、`clippy.toml`、`.clippy.toml`、`rust-toolchain(.toml)`，以及 `$CARGO_HOME/config(.toml)`；`clippy.toml` 改动不触发重编，不进 stamp 就不会重新 lint
+  - 名字匹配 `RUSTFLAGS$`、`RUSTC_WRAPPER`、`CLIPPY_CONF_DIR`、`CARGO_PROFILE_*` 的环境变量；用白名单，前缀匹配会被 `CARGO_TERM_COLOR` 等无关变量搅得 stamp 抖动
 - stamp 未变只删 profraw；变了用 `cargo llvm-cov clean` 全清，因为改名 crate 与同名 crate 的旧哈希产物都会混入报告
 
 ## build.ts
