@@ -1,7 +1,9 @@
+mod proxy;
+
 use core::time::Duration;
 use std::io::{self, Read, Write};
 use std::net::{Shutdown, TcpListener};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::sync::mpsc::{Receiver, channel};
 use std::thread::{JoinHandle, sleep, spawn};
 
@@ -11,6 +13,7 @@ use security_framework::certificate::SecCertificate;
 
 const BODY: &str = r#"{"input":"hello"}"#;
 const CLIENT_TIMEOUT_MS: u64 = 100;
+const FLOOD: usize = 0x80_0000;
 const LAG: Duration = Duration::from_secs(1);
 const OK_BODY: &str =
     "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 11\r\n\r\n{\"ok\":true}";
@@ -58,7 +61,9 @@ async fn chunked_and_close_delimited_responses_decode() {
         .unwrap();
     assert_eq!(reply.body(), r#"{"ok":true}"#);
     chunked.finish();
-    let close = serve(|_| "HTTP/1.1 200 OK\r\n\r\n{\"ok\":true}".to_owned()).unwrap();
+    let close =
+        serve(|_| "HTTP/1.1 200 OK\r\nTransfer-Encoding: identity\r\n\r\n{\"ok\":true}".to_owned())
+            .unwrap();
     let close_reply = Client::new()
         .post(&Call::new(&close.url, BODY, TIMEOUT_MS))
         .await
@@ -157,6 +162,24 @@ async fn https_rejects_untrusted_certificate() {
 }
 
 #[tokio::test]
+async fn malformed_framing_maps_to_io() {
+    for response in [
+        "HTTP/1.1 200 OK\r\nContent-Length: abc\r\n\r\n",
+        "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nab",
+        "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nabXY",
+        "junk",
+    ] {
+        let stub = serve(move |_| response.to_owned()).unwrap();
+        let error = Client::new()
+            .post(&Call::new(&stub.url, BODY, TIMEOUT_MS))
+            .await
+            .unwrap_err();
+        assert_eq!(error, "io", "{response}");
+        stub.finish();
+    }
+}
+
+#[tokio::test]
 async fn non_2xx_maps_to_http_status() {
     let stub = serve(|_| "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n".to_owned()).unwrap();
     let error = Client::default()
@@ -248,6 +271,29 @@ async fn request_without_key_omits_authorization() {
     stub.finish();
 }
 
+#[tokio::test]
+async fn reset_while_receiving_maps_to_io() {
+    let stub = serve_reset().unwrap();
+    let error = Client::new()
+        .post(&Call::new(&stub.url, BODY, TIMEOUT_MS))
+        .await
+        .unwrap_err();
+    assert_eq!(error, "io");
+    stub.finish();
+}
+
+#[tokio::test]
+async fn reset_while_sending_maps_to_io() {
+    let stub = serve_reset().unwrap();
+    let flood = "x".repeat(FLOOD);
+    let error = Client::new()
+        .post(&Call::new(&stub.url, &flood, TIMEOUT_MS))
+        .await
+        .unwrap_err();
+    assert_eq!(error, "io");
+    stub.finish();
+}
+
 fn serve(answer: impl Fn(&Seen) -> String + Send + 'static) -> io::Result<Stub> {
     let listener = TcpListener::bind("127.0.0.1:0")?;
     let address = listener.local_addr()?;
@@ -286,6 +332,29 @@ fn serve(answer: impl Fn(&Seen) -> String + Send + 'static) -> io::Result<Stub> 
     })
 }
 
+fn serve_reset() -> io::Result<Stub> {
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let address = listener.local_addr()?;
+    let url = format!("http://{address}{PATH}")
+        .parse::<Uri>()
+        .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err))?;
+    let (_sender, seen) = channel();
+    let worker = spawn(move || {
+        for mut stream in listener.incoming().take(1).flatten() {
+            let mut first = [u8::default(); 1];
+            let _read = stream.read(&mut first);
+            sleep(Duration::from_millis(50));
+            drop(stream);
+        }
+    });
+    Ok(Stub {
+        pid: None,
+        seen,
+        url,
+        worker,
+    })
+}
+
 fn serve_tls() -> io::Result<Stub> {
     let listener = TcpListener::bind("127.0.0.1:0")?;
     let address = listener.local_addr()?;
@@ -307,15 +376,23 @@ fn serve_tls() -> io::Result<Stub> {
             "DER",
             "-key",
             concat!(env!("CARGO_MANIFEST_DIR"), "/tests/it/fixtures/tls/key.pem"),
-            "-www",
+            "-quiet",
             "-naccept",
             "1",
             "-tls1_2",
         ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
         .spawn()?;
     let pid = child.id();
+    let mut input = child
+        .stdin
+        .take()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::BrokenPipe, "stdin"))?;
+    input.write_all(OK_BODY.as_bytes())?;
     let worker = spawn(move || {
         let _status = child.wait();
+        drop(input);
     });
     let (_sender, seen) = channel();
     sleep(Duration::from_millis(50));
@@ -338,7 +415,7 @@ async fn timeout_maps_to_timeout() {
         .post(&Call::new(&stub.url, BODY, CLIENT_TIMEOUT_MS))
         .await
         .unwrap_err();
-    assert_eq!(error, "timeout");
+    assert_eq!(error, "timeout:read");
     stub.finish();
 }
 
@@ -354,4 +431,14 @@ async fn truncated_response_maps_to_io() {
     let seen = stub.seen.recv_timeout(RECV_TIMEOUT).unwrap();
     assert_eq!(seen.body, BODY);
     stub.finish();
+}
+
+#[tokio::test]
+async fn url_without_host_maps_to_connect() {
+    let url = PATH.parse::<Uri>().unwrap();
+    let error = Client::new()
+        .post(&Call::new(&url, BODY, TIMEOUT_MS))
+        .await
+        .unwrap_err();
+    assert_eq!(error, "connect");
 }

@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use adapters::config::Settings;
 use adapters::ingest::{Site, run};
 use adapters::triage::config::Settings as Triage;
-use adapters::triage::{Lane, Setup, run as run_triage, validate};
+use adapters::triage::{Lane, Setup, reach, run as run_triage, validate};
 use domain::Errors;
 use domain::features::{Context, Ports, Rules};
 use domain::inbox::Paging;
@@ -439,6 +439,10 @@ pub(crate) fn texts(database: &Path) -> Fallible<Vec<String>> {
         texts.push(row.get(0)?);
     }
     Ok(texts)
+}
+
+pub(crate) async fn triage_reach(triage: &Triage) -> Result<(), String> {
+    reach(triage).await
 }
 
 pub(crate) fn triage_validate(ingest: &Settings, triage: &Triage) -> Fallible<Result<(), String>> {

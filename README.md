@@ -62,7 +62,8 @@ YAML 文件，各项均必填（注明可选的除外），不允许其他字段
 | triage.review | mode 为 manual（逐条确认后才外发）或 auto（自动通过）；learn_min_chars 粘贴的漏脱敏原文至少多长；reasons 拒绝原因（code 与 label；带 placeholder 的是漏脱敏类，拒绝时须粘贴漏掉的原文；不带的拒绝即排除） |
 | triage.session | prompt 第一次发话题转写的提示词模板；followup 同一话题后续只发新增消息的模板（`{messages}` 处填入消息）；fresh 新会话追加在 codex 参数后的参数；resume 续写追加的参数（`{thread}` 换成会话 ID） |
 | triage.notice | 发给本人的通知模板（`{probability}`、`{topic}`、`{analysis}`） |
-| triage.decide | 决策 HTTP 接口：url 为 `${NAME}` 形式的环境变量，外部地址须用 HTTPS，本机测试可用回环 HTTP；key 为可选的 `${NAME}` 环境变量；timeout_ms 为请求超时毫秒数 |
+| triage.decide | 决策 HTTP 接口：url 为 `${NAME}` 形式的环境变量，外部地址须用 HTTPS，本机测试可用回环 HTTP；key 为可选的 `${NAME}` 环境变量；proxy 为可选的 `${NAME}` 环境变量，值形如 `http://127.0.0.1:<端口>`（仅本机 HTTP 代理，无认证、无结尾 `/`，只用于 HTTPS 地址）；timeout_ms 为请求超时毫秒数 |
+| triage.codex.endpoint | 可选，启动冒烟用的 codex 模型接口：url、proxy、timeout_ms 写法同 triage.decide；只建连接与 TLS 握手，不发请求 |
 | triage.codex / notify | 外部命令，共同字段：bin、args、env（字面量环境变量）、vars（`${NAME}` 写法，运行时读同名环境变量传给子进程；args 里的 `${NAME}` 若在 vars 里声明则换成其值）、sandbox、timeout_ms；子进程环境先清空再只放 env 与 vars |
 | triage.codex.args | 须含 `--json`，用 `-m` 指定模型；不含 `--ephemeral` 与结尾的 `-` |
 | triage.notify.args | 须含 `--yes` 并以接收人参数名结尾；程序追加 `notify_target` 与 `--idempotency-key=<话题>@<批号>` |
@@ -151,6 +152,7 @@ cd web && bun install --frozen-lockfile && bun run build && cd ..
 | DECISIONS_API_KEY | 决策接口的 API key |
 | CODEX_API_KEY | codex 专用的 API key |
 | CODEX_BASE_URL | codex 模型接口的完整地址（如 `https://<主机>/v1`，Responses 协议，端口须为 443）；展开进 codex 参数，`ps` 里本机可见 |
+| DECISIONS_PROXY | 可选，决策接口所走的本机 HTTP 代理，配 `triage.decide.proxy` 时必填 |
 | SCREEN_URL | 可选本地模型接口的完整地址，仅允许带显式端口的回环 HTTP；启用 `triage.screen` 时必填 |
 | SELF_SENDER_ID | 本人的发送人 ID（消息里的 `sender_id`） |
 | NOTIFY_CONVERSATION_ID | 通知所在会话的 ID（消息里的 `conversation_id`） |
@@ -187,22 +189,24 @@ sops exec-env secrets/prod.enc.yaml './target/release/cli serve --config cli/con
 
 ## 子进程沙箱
 
-钉钉工具 `dws` 与 `codex` 经 `/usr/bin/sandbox-exec` 启动，策略为 `deny default`，只放行各自必需的文件、网络端口与系统服务；没有关闭沙箱的配置。策略文件在 `cli/sandbox/`（`dws.sb`、`codex.sb`），由各命令的 `sandbox` 引用。决策与本地模型使用进程内 HTTP 客户端，不启动 curl；决策地址须为 HTTPS 或回环 HTTP，本地模型只允许回环 HTTP 与显式端口，客户端禁用代理和重定向。
+钉钉工具 `dws` 与 `codex` 经 `/usr/bin/sandbox-exec` 启动，策略为 `deny default`，只放行各自必需的文件、网络端口与系统服务；没有关闭沙箱的配置。策略文件在 `cli/sandbox/`（`dws.sb`、`codex.sb`），由各命令的 `sandbox` 引用。决策与本地模型使用进程内 HTTP 客户端，不启动 curl；决策地址须为 HTTPS 或回环 HTTP，本地模型只允许回环 HTTP 与显式端口且不走代理；客户端不跟随重定向，不读环境中的代理变量，只用 `triage.decide.proxy`。
+
+外部命令走代理：在该命令的 `vars` 加 `HTTPS_PROXY: "${NAME}"`、`https_proxy: "${NAME}"`，并在其 `sandbox.vars` 加 `PROXY: "${NAME}"`（三处同一变量）。策略见到 `PROXY` 时只放行 `localhost:<该端口>`，不再直连 443；值须形如 `http://127.0.0.1:<端口>`。notify 与 dws 采集命令要走不同代理时，不要共用 `*dws_sandbox` 锚点。
 
 | 字段 | 说明 |
 |---|---|
 | bin | 沙箱程序，`/usr/bin/sandbox-exec` |
 | profile | 策略文件，相对路径按启动目录 |
 | paths | 路径参数（名到路径），先转成真实路径传给策略；路径不存在则沙箱拒绝启动 |
-| vars | `${NAME}` 写法的环境变量作参数（如 `HOME`）；只放路径类的值，参数在 `ps` 里可见，不放 secret |
+| vars | `${NAME}` 写法的环境变量作参数（如 `HOME`、`PROXY`）；只放路径与代理地址类的值，参数在 `ps` 里可见，不放 secret |
 | probe | 自检时试跑的参数，如 `[--help]` |
 | canary | 自检时策略必须禁止执行的程序，如 `/usr/bin/true` |
 
-启动自检：`serve`、`ingest` 启动时，对每个会运行的命令先试跑 `canary`（须被拒）与 `bin` 加 `probe`（须退出 0），任一失败即以 `sandbox_exit_code` 退出，并在 stderr 写明哪条命令、什么原因。自检只证明能启动、禁令生效，不证明 Keychain、DNS、TLS 的放行规则齐全。
+启动自检：`serve`、`ingest` 启动时，对每个会运行的命令先试跑 `canary`（须被拒）与 `bin` 加 `probe`（须退出 0），任一失败即以 `sandbox_exit_code` 退出，并在 stderr 写明哪条命令、什么原因。自检只证明能启动、禁令生效，不证明 Keychain、DNS、TLS 的放行规则齐全。`triage.mode` 为 enabled 时还对决策接口与 `triage.codex.endpoint` 做连通冒烟：经各自代理建立连接并完成 TLS 握手，不发请求、不计费；失败以 `sandbox_exit_code` 退出，stderr 为 `triage.decide: unreachable <阶段>` 或 `triage.codex.endpoint: unreachable <阶段>`，不含地址。
 
 排错：
 
-- 沙箱退出 65：路径无法解析（目录或策略文件不存在）；退出 71：命令不存在。都按命令失败处理，不会不加沙箱运行；升级 dws、codex、curl 后真实路径变化，自检同样会失败
+- 沙箱退出 65：路径无法解析（目录或策略文件不存在），或 `PROXY` 不是 `http://<主机>:<端口>`；退出 71：命令不存在。都按命令失败处理，不会不加沙箱运行；升级 dws、codex、curl 后真实路径变化，自检同样会失败
 - codex 启动即退出 71：把 codex 参数里的 `-s read-only` 改为 `-s danger-full-access`，由外层沙箱把关
 - 规则不全时命令失败。另开终端看拒绝记录：`log stream --style compact --predicate 'sender == "Sandbox"'`，按 `deny(1) <操作> <对象>` 逐条补进对应 `.sb`，再复测：`/usr/bin/sandbox-exec -f cli/sandbox/dws.sb -D HOME=$HOME -- dws --help`
 - `dws auth login` 在沙箱外执行

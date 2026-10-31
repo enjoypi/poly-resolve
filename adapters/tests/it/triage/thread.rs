@@ -5,6 +5,8 @@ use super::rig::{
 };
 use crate::support::{Fallible, Sandbox};
 
+const BRIEF: u64 = 50;
+
 #[tokio::test]
 async fn aged_threads_start_fresh() {
     let sandbox = Sandbox::new("thread-aged").unwrap();
@@ -29,6 +31,31 @@ async fn codex_args_expand_declared_variables() {
         sandbox.read("codex-args.txt").unwrap(),
         format!("codex url={} ${{UNDECLARED}} -\n", home().unwrap())
     );
+}
+
+#[tokio::test]
+async fn codex_that_cannot_start_or_finish_fails() {
+    for (name, patch, reason) in [
+        (
+            "thread-spawn",
+            json!({"codex": {"sandbox": {"bin": "/nonexistent/sandbox-exec"}}}),
+            "io:NotFound",
+        ),
+        (
+            "thread-timeout",
+            json!({"codex": {"env": {"FAKE_CODEX": "slow"}, "timeout_ms": BRIEF}}),
+            "io:TimedOut",
+        ),
+    ] {
+        let sandbox = Sandbox::new(name).unwrap();
+        seed(&sandbox, &one()).unwrap();
+        start(&sandbox, &patch, QUICK).await.unwrap();
+        assert_eq!(
+            table(&sandbox, ALERTS).unwrap(),
+            [format!("t1-0@1|failed|2||{reason}")],
+            "{name}"
+        );
+    }
 }
 
 #[tokio::test]

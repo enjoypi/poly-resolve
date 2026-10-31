@@ -5,19 +5,19 @@ use std::net::TcpStream as StdStream;
 
 use http::Uri;
 use security_framework::certificate::SecCertificate;
-use security_framework::secure_transport::{
-    ClientBuilder, ClientHandshakeError, MidHandshakeClientBuilder, SslStream,
-};
-use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+use security_framework::secure_transport::{ClientBuilder, ClientHandshakeError, SslStream};
 use tokio::net::TcpStream;
 use tokio::time::{sleep, timeout};
 
-const ATTEMPTS: u32 = 2;
+const PROXY_HEAD_MAX: usize = 0x2000;
+
+type Attempt = Result<SslStream<StdStream>, ClientHandshakeError<StdStream>>;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Call<'call> {
     body: &'call str,
     key: Option<&'call str>,
+    proxy: Option<&'call Uri>,
     timeout_ms: u64,
     url: &'call Uri,
 }
@@ -28,6 +28,7 @@ impl<'call> Call<'call> {
         Self {
             body,
             key: None,
+            proxy: None,
             timeout_ms,
             url,
         }
@@ -37,45 +38,10 @@ impl<'call> Call<'call> {
     pub const fn with_key(self, key: Option<&'call str>) -> Self {
         Self { key, ..self }
     }
-}
 
-struct Channel {
-    plain: Option<TcpStream>,
-    tls: Option<SslStream<Socket>>,
-}
-
-impl Channel {
-    const fn plain(stream: TcpStream) -> Self {
-        Self {
-            plain: Some(stream),
-            tls: None,
-        }
-    }
-
-    async fn read(&mut self, buffer: &mut [u8]) -> Result<usize, String> {
-        if let Some(stream) = self.plain.as_mut() {
-            stream.read(buffer).await.map_err(|_err| "io".to_owned())
-        } else {
-            read_tls(self.tls.as_mut().ok_or_else(|| "io".to_owned())?, buffer).await
-        }
-    }
-
-    const fn tls(stream: SslStream<Socket>) -> Self {
-        Self {
-            plain: None,
-            tls: Some(stream),
-        }
-    }
-
-    async fn write_all(&mut self, bytes: &[u8]) -> Result<(), String> {
-        if let Some(stream) = self.plain.as_mut() {
-            stream
-                .write_all(bytes)
-                .await
-                .map_err(|_err| "io".to_owned())
-        } else {
-            write_tls(self.tls.as_mut().ok_or_else(|| "io".to_owned())?, bytes).await
-        }
+    #[must_use = "调用需交给 Client"]
+    pub const fn with_proxy(self, proxy: Option<&'call Uri>) -> Self {
+        Self { proxy, ..self }
     }
 }
 
@@ -86,55 +52,48 @@ pub struct Client {
 }
 
 impl Client {
-    async fn connect(&self, url: &Uri) -> Result<Channel, String> {
+    async fn connect(
+        &self,
+        call: &Call<'_>,
+        stage: &mut &'static str,
+    ) -> Result<Box<dyn Duplex>, String> {
+        let url = call.url;
         let host = url.host().ok_or_else(|| "connect".to_owned())?;
-        let port = url.port().map_or_else(
-            || {
-                if url.scheme_str() == Some("https") {
-                    443
-                } else {
-                    80
-                }
-            },
-            |port| port.as_u16(),
-        );
-        let tcp = TcpStream::connect((host, port))
-            .await
-            .map_err(|_err| "connect".to_owned())?;
-        if url.scheme_str() == Some("https") {
-            let mut builder = ClientBuilder::new();
-            if !self.anchors.is_empty() {
-                let _insecure = builder.danger_accept_invalid_certs(true);
+        let secure = url.scheme_str() == Some("https");
+        let port = url.port_u16().unwrap_or(if secure { 443 } else { 80 });
+        let tcp = match call.proxy {
+            Some(proxy) => {
+                *stage = "proxy";
+                tunnel(proxy, &format!("{host}:{port}")).await?
             }
-            let socket = Socket::new(tcp)?;
-            let _debug = std::fs::write(
-                std::env::temp_dir().join("client-builder.txt"),
-                format!("{builder:?}"),
-            );
-            let tls = match builder.handshake(host, socket) {
-                Ok(tls) => tls,
-                Err(ClientHandshakeError::Interrupted(tls)) => handshake(tls).await?,
-                Err(ClientHandshakeError::Failure(_err)) => return Err("tls".to_owned()),
-            };
-            let mut stream = tls;
-            stream.get_mut().set_nonblocking()?;
-            Ok(Channel::tls(stream))
+            None => dial(host, port)
+                .await
+                .map_err(|_err| "connect".to_owned())?,
+        };
+        if secure {
+            *stage = "tls";
+            let mut builder = ClientBuilder::new();
+            let _anchored = builder.anchor_certificates(&self.anchors);
+            Ok(Box::new(handshake(builder.handshake(host, tcp)).await?))
         } else {
-            Ok(Channel::plain(tcp))
+            Ok(Box::new(tcp))
         }
     }
 
-    async fn exchange(&self, call: &Call<'_>) -> Result<Reply, String> {
-        let mut stream = self.connect(call.url).await?;
-        stream.write_all(request(call).as_bytes()).await?;
+    async fn exchange(&self, call: &Call<'_>, stage: &mut &'static str) -> Result<Reply, String> {
+        let mut stream = self.connect(call, stage).await?;
+        *stage = "send";
+        send(stream.as_mut(), request(call).as_bytes()).await?;
+        *stage = "read";
         let mut bytes = Vec::new();
         loop {
             let mut buffer = vec![u8::default(); 0x2000];
-            let size = stream.read(&mut buffer).await?;
+            let size = receive(stream.as_mut(), &mut buffer).await?;
             if size == 0 {
                 return reply(&bytes);
             }
-            bytes.extend_from_slice(buffer.get(..size).ok_or_else(|| "io".to_owned())?);
+            buffer.truncate(size);
+            bytes.extend_from_slice(&buffer);
             if let Some(end) = complete(&bytes) {
                 bytes.truncate(end);
                 return reply(&bytes);
@@ -150,9 +109,25 @@ impl Client {
     }
 
     pub async fn post(&self, call: &Call<'_>) -> Result<Reply, String> {
-        timeout(Duration::from_millis(call.timeout_ms), self.exchange(call))
-            .await
-            .map_err(|_err| "timeout".to_owned())?
+        let mut stage = "connect";
+        let outcome = timeout(
+            Duration::from_millis(call.timeout_ms),
+            self.exchange(call, &mut stage),
+        )
+        .await;
+        outcome.unwrap_or_else(|_elapsed| Err(format!("timeout:{stage}")))
+    }
+
+    pub async fn probe(&self, call: &Call<'_>) -> Result<(), String> {
+        let mut stage = "connect";
+        let outcome = timeout(
+            Duration::from_millis(call.timeout_ms),
+            self.connect(call, &mut stage),
+        )
+        .await;
+        outcome
+            .unwrap_or_else(|_elapsed| Err(format!("timeout:{stage}")))
+            .map(drop)
     }
 
     #[must_use = "测试根证书需显式提供"]
@@ -162,6 +137,8 @@ impl Client {
         }
     }
 }
+
+trait Duplex: Read + Send + Write {}
 
 #[derive(Clone, Copy)]
 enum Framing {
@@ -195,39 +172,7 @@ impl Reply {
     }
 }
 
-struct Socket(StdStream);
-
-impl Socket {
-    fn new(stream: TcpStream) -> Result<Self, String> {
-        Ok(Self(stream.into_std().map_err(|_err| "tls".to_owned())?))
-    }
-
-    async fn ready(&self) {
-        sleep(Duration::from_millis(1)).await;
-    }
-
-    fn set_nonblocking(&self) -> Result<(), String> {
-        self.0
-            .set_nonblocking(true)
-            .map_err(|_err| "tls".to_owned())
-    }
-}
-
-impl Read for Socket {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        self.0.read(buf)
-    }
-}
-
-impl Write for Socket {
-    fn flush(&mut self) -> io::Result<()> {
-        self.0.flush()
-    }
-
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.0.write(buf)
-    }
-}
+impl<T: Read + Send + Write> Duplex for T {}
 
 fn chunked(mut bytes: &[u8]) -> Result<Vec<u8>, String> {
     let mut output = Vec::new();
@@ -242,22 +187,21 @@ fn chunked(mut bytes: &[u8]) -> Result<Vec<u8>, String> {
         if size == 0 {
             return Ok(output);
         }
-        let end = size.saturating_add(2);
-        if rest.len() < end || rest.get(size..end) != Some(b"\r\n") {
-            return Err("io".to_owned());
-        }
-        output.extend_from_slice(rest.get(..size).ok_or_else(|| "io".to_owned())?);
-        bytes = rest.get(end..).ok_or_else(|| "io".to_owned())?;
+        let (chunk, tail) = rest.split_at_checked(size).ok_or_else(|| "io".to_owned())?;
+        bytes = tail.strip_prefix(b"\r\n").ok_or_else(|| "io".to_owned())?;
+        output.extend_from_slice(chunk);
     }
 }
 
 fn complete(bytes: &[u8]) -> Option<usize> {
     let (raw, body) = split(bytes, b"\r\n\r\n")?;
-    let head = parse_head(raw).ok()?;
+    let Ok(head) = parse_head(raw) else {
+        return Some(bytes.len());
+    };
     let start = bytes.len().saturating_sub(body.len());
     match head.framing {
         Framing::Chunked => chunked(body).ok().map(|_| bytes.len()),
-        Framing::Close => Some(bytes.len()),
+        Framing::Close => None,
         Framing::Length(size) => {
             let end = start.saturating_add(size);
             (body.len() >= size).then_some(end)
@@ -265,20 +209,23 @@ fn complete(bytes: &[u8]) -> Option<usize> {
     }
 }
 
-async fn handshake(
-    mut stream: MidHandshakeClientBuilder<Socket>,
-) -> Result<SslStream<Socket>, String> {
-    for _ in 0..ATTEMPTS {
-        match stream.handshake() {
-            Ok(done) => return Ok(done),
-            Err(ClientHandshakeError::Interrupted(next)) => {
-                stream = next;
-                stream.get_mut().ready().await;
+async fn dial(host: &str, port: u16) -> io::Result<StdStream> {
+    TcpStream::connect((host, port))
+        .await
+        .and_then(TcpStream::into_std)
+}
+
+async fn handshake(mut attempt: Attempt) -> Result<SslStream<StdStream>, String> {
+    loop {
+        match attempt {
+            Ok(tls) => return Ok(tls),
+            Err(ClientHandshakeError::Interrupted(pending)) => {
+                ready().await;
+                attempt = pending.handshake();
             }
             Err(ClientHandshakeError::Failure(_err)) => return Err("tls".to_owned()),
         }
     }
-    Err("tls".to_owned())
 }
 
 fn line(bytes: &[u8]) -> Option<Parts<'_>> {
@@ -312,13 +259,15 @@ fn parse_head(bytes: &[u8]) -> Result<Head, String> {
     Ok(Head { framing, status })
 }
 
-async fn read_tls(stream: &mut SslStream<Socket>, buffer: &mut [u8]) -> Result<usize, String> {
+async fn ready() {
+    sleep(Duration::from_millis(1)).await;
+}
+
+async fn receive(stream: &mut dyn Duplex, buffer: &mut [u8]) -> Result<usize, String> {
     loop {
         match stream.read(buffer) {
             Ok(size) => return Ok(size),
-            Err(err) if err.kind() == ErrorKind::WouldBlock => {
-                stream.get_mut().ready().await;
-            }
+            Err(err) if err.kind() == ErrorKind::WouldBlock => ready().await,
             Err(_err) => return Err("io".to_owned()),
         }
     }
@@ -361,28 +310,51 @@ fn request(call: &Call<'_>) -> String {
     )
 }
 
-fn split<'bytes>(bytes: &'bytes [u8], needle: &[u8]) -> Option<Parts<'bytes>> {
-    let position = bytes
-        .windows(needle.len())
-        .position(|window| window == needle)?;
-    Some((
-        bytes.get(..position)?,
-        bytes.get(position.saturating_add(needle.len())..)?,
-    ))
-}
-
-async fn write_tls(stream: &mut SslStream<Socket>, mut bytes: &[u8]) -> Result<(), String> {
+async fn send(stream: &mut dyn Duplex, mut bytes: &[u8]) -> Result<(), String> {
     while !bytes.is_empty() {
         match stream.write(bytes) {
-            Ok(0) => return Err("io".to_owned()),
-            Ok(size) => {
-                bytes = bytes.get(size..).ok_or_else(|| "io".to_owned())?;
-            }
-            Err(err) if err.kind() == ErrorKind::WouldBlock => {
-                stream.get_mut().ready().await;
-            }
+            Ok(size) => bytes = bytes.get(size..).unwrap_or_default(),
+            Err(err) if err.kind() == ErrorKind::WouldBlock => ready().await,
             Err(_err) => return Err("io".to_owned()),
         }
     }
     Ok(())
+}
+
+fn split<'bytes>(bytes: &'bytes [u8], needle: &[u8]) -> Option<Parts<'bytes>> {
+    let position = bytes
+        .windows(needle.len())
+        .position(|window| window == needle)?;
+    let (head, tail) = bytes.split_at_checked(position).unwrap_or_default();
+    Some((head, tail.get(needle.len()..).unwrap_or_default()))
+}
+
+async fn status(stream: &mut dyn Duplex) -> Result<u16, String> {
+    let mut bytes = Vec::new();
+    while !bytes.ends_with(b"\r\n\r\n") {
+        let mut byte = [u8::default(); 1];
+        let size = receive(stream, &mut byte).await?;
+        if size == 0 || bytes.len() >= PROXY_HEAD_MAX {
+            return Err("io".to_owned());
+        }
+        bytes.extend_from_slice(&byte);
+    }
+    parse_head(&bytes).map(|head| head.status)
+}
+
+async fn tunnel(proxy: &Uri, authority: &str) -> Result<StdStream, String> {
+    let mut tcp = dial(
+        proxy.host().unwrap_or_default(),
+        proxy.port_u16().unwrap_or_default(),
+    )
+    .await
+    .map_err(|_err| "proxy_connect".to_owned())?;
+    let opening = format!("CONNECT {authority} HTTP/1.1\r\nhost: {authority}\r\n\r\n");
+    let sent = send(&mut tcp, opening.as_bytes()).await;
+    let code = sent.and(status(&mut tcp).await)?;
+    if (200..300).contains(&code) {
+        Ok(tcp)
+    } else {
+        Err(format!("proxy:{code}"))
+    }
 }

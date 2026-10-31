@@ -26,6 +26,7 @@ enum Approval {
 pub struct Exec {
     args: Vec<String>,
     bin: String,
+    endpoint: Option<Http>,
     env: BTreeMap<String, String>,
     sandbox: Sandbox,
     timeout_ms: NonZeroU64,
@@ -46,6 +47,10 @@ impl Exec {
 
     pub(crate) fn bin(&self) -> &str {
         &self.bin
+    }
+
+    pub(crate) const fn endpoint(&self) -> Option<&Http> {
+        self.endpoint.as_ref()
     }
 
     pub(crate) const fn env(&self) -> &BTreeMap<String, String> {
@@ -277,6 +282,7 @@ impl Settings {
     pub fn missing(&self) -> Vec<&str> {
         once(&self.notify_target)
             .chain(self.codex.vars.values())
+            .chain(self.codex.endpoint.iter().flat_map(Http::vars))
             .chain(self.decide.vars())
             .chain(self.notify.vars.values())
             .chain(self.codex.sandbox.vars())

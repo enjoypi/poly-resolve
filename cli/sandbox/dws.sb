@@ -41,9 +41,16 @@
   (global-name "com.apple.dnssd.service")
   (global-name "com.apple.SystemConfiguration.configd"))
 (allow system-socket)
-(allow network-outbound
-  (remote tcp "*:443")
-  (literal "/private/var/run/mDNSResponder"))
+(define (port url at)
+  (cond ((< at 0) "")
+        ((char=? (string-ref url at) #\:) (substring url (+ at 1) (string-length url)))
+        (else (port url (- at 1)))))
+(if (param "PROXY")
+  (allow network-outbound
+    (remote tcp (string-append "localhost:" (port (param "PROXY") (- (string-length (param "PROXY")) 1)))))
+  (allow network-outbound
+    (remote tcp "*:443")
+    (literal "/private/var/run/mDNSResponder")))
 (allow network-bind network-inbound network-outbound
   (regex #"^/private/tmp/dws-event-[0-9]+/"))
 (deny file-read* file-write*

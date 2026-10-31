@@ -10,6 +10,7 @@ use super::config::Var;
 #[serde(deny_unknown_fields)]
 pub(crate) struct Http {
     key: Option<Var>,
+    proxy: Option<Var>,
     timeout_ms: NonZeroU64,
     url: Location,
 }
@@ -21,6 +22,9 @@ impl Http {
 
     pub(crate) fn local_url(&self) -> Result<Uri, String> {
         let url = self.parsed()?;
+        if self.proxy.is_some() {
+            return Err("local model must not use proxy".to_owned());
+        }
         if url.scheme_str() == Some("http") && url.port().is_some() && loopback(&url) {
             Ok(url)
         } else {
@@ -47,12 +51,22 @@ impl Http {
         }
     }
 
+    pub(crate) fn proxy(&self) -> Result<Option<Uri>, String> {
+        self.proxy
+            .as_ref()
+            .map(|var| proxied(&var.value().unwrap_or_default()))
+            .transpose()
+    }
+
     pub(crate) const fn timeout_ms(&self) -> u64 {
         self.timeout_ms.get()
     }
 
     pub(crate) fn url(&self) -> Result<Uri, String> {
         let url = self.parsed()?;
+        if self.proxy()?.is_some() && url.scheme_str() != Some("https") {
+            return Err("proxy requires https url".to_owned());
+        }
         if url.scheme_str() == Some("https") && self.url.var().is_none() {
             return Err("external url must use ${NAME}".to_owned());
         }
@@ -65,7 +79,11 @@ impl Http {
     }
 
     pub(crate) fn vars(&self) -> impl Iterator<Item = &Var> {
-        self.url.var().into_iter().chain(self.key.iter())
+        self.url
+            .var()
+            .into_iter()
+            .chain(self.key.iter())
+            .chain(self.proxy.iter())
     }
 }
 
@@ -107,4 +125,18 @@ fn loopback(url: &Uri) -> bool {
                 .parse::<IpAddr>()
                 .is_ok_and(|address| address.is_loopback())
     })
+}
+
+fn proxied(text: &str) -> Result<Uri, String> {
+    text.parse::<Uri>()
+        .ok()
+        .filter(|url| {
+            loopback(url)
+                && format!(
+                    "http://{}:{}",
+                    url.host().unwrap_or_default(),
+                    url.port_u16().unwrap_or_default()
+                ) == text
+        })
+        .ok_or_else(|| "proxy must be http://<loopback>:<port>".to_owned())
 }

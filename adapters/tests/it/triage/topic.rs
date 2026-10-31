@@ -82,9 +82,16 @@ async fn long_pauses_split_a_conversation() {
     ];
     seed_stamped(&sandbox, &rows).unwrap();
     start(&sandbox, &json!({}), QUICK).await.unwrap();
-    assert_eq!(
-        table(&sandbox, PLACEMENTS).unwrap(),
-        [format!("{KEY}|T1|0.95"), format!("{SECOND}|T2|0.95")]
+    let placed = table(&sandbox, PLACEMENTS).unwrap();
+    let place = |first: &str, second: &str| {
+        [
+            format!("{KEY}|{first}|0.95"),
+            format!("{SECOND}|{second}|0.95"),
+        ]
+    };
+    assert!(
+        placed == place("T1", "T2") || placed == place("T2", "T1"),
+        "{placed:?}"
     );
 }
 

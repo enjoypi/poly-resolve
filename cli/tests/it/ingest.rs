@@ -2,10 +2,35 @@ use std::fs;
 use std::io::{BufRead as _, BufReader};
 use std::process::{Command, ExitCode, Stdio};
 
-use crate::support::{EVENT, TRIAGE, await_log, config, live, run, sandbox, terminate};
+use crate::support::{EVENT, TRIAGE, await_log, config, decisions, live, run, sandbox, terminate};
 
 fn absent(dir: &str) -> String {
     live(dir).replace("fixtures/fake.sb", "fixtures/absent.sb")
+}
+
+#[test]
+fn ingest_checks_external_decision_url_from_variable() {
+    let dir = sandbox("cli-ingest-external").unwrap();
+    let yaml = live(&dir)
+        .replace("mode: disabled", "mode: enabled")
+        .replace(
+            &format!("url: \"http://{}/decisions\"", decisions()),
+            "url: \"${POLY_RESOLVE_DECISIONS_URL}\"",
+        )
+        .replace("pattern: \"[0-9]{11,}\"", "pattern: \"(\"");
+    let path = config("cli-ingest-external.yaml", &yaml).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_cli"))
+        .args(["ingest", "--config", &path])
+        .env(
+            "POLY_RESOLVE_DECISIONS_URL",
+            "https://127.0.0.1:1/decisions",
+        )
+        .output()
+        .unwrap();
+    let sandbox_failed: i32 = 18;
+    assert_eq!(output.status.code(), Some(sandbox_failed));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("invalid pattern"), "{stderr}");
 }
 
 #[tokio::test]

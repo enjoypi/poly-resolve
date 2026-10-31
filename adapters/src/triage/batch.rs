@@ -75,7 +75,10 @@ async fn request(shift: &mut Shift<'_>, batch: &Value) -> Option<Option<Result<S
         Err(err) => return Some(Some(Err(err))),
     };
     let key = setup.key();
-    let call = Call::new(&url, text(batch, "payload"), setup.timeout_ms()).with_key(key.as_deref());
+    let proxy = setup.proxy().ok().flatten();
+    let call = Call::new(&url, text(batch, "payload"), setup.timeout_ms())
+        .with_key(key.as_deref())
+        .with_proxy(proxy.as_ref());
     let claim = json!({"at_ms": now_ms(), "id": number(batch, "id"), "max_attempts": triage.max_attempts()});
     if shift.ledger.claim_batch(&claim) == 0 {
         return Some(None);

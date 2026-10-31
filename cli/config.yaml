@@ -70,6 +70,10 @@ triage:
       - -C
       - .debug/codex-work
     bin: codex
+    endpoint:
+      proxy: "${CODEX_PROXY}"
+      timeout_ms: 10000
+      url: "${CODEX_BASE_URL}"
     env:
       CODEX_HOME: .debug/codex-home
     sandbox:
@@ -84,13 +88,17 @@ triage:
       profile: cli/sandbox/codex.sb
       vars:
         HOME: "${HOME}"
+        PROXY: "${CODEX_PROXY}"
     timeout_ms: 300000
     vars:
       CODEX_API_KEY: "${CODEX_API_KEY}"
       CODEX_BASE_URL: "${CODEX_BASE_URL}"
+      HTTPS_PROXY: "${CODEX_PROXY}"
       PATH: "${PATH}"
+      https_proxy: "${CODEX_PROXY}"
   decide:
     key: "${DECISIONS_API_KEY}"
+    proxy: "${DECISIONS_PROXY}"
     timeout_ms: 35000
     url: "${DECISIONS_URL}"
   limits:

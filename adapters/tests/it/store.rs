@@ -71,6 +71,26 @@ fn open_fails_on_non_database_file() {
 }
 
 #[test]
+fn open_fails_when_topics_cannot_be_inspected() {
+    let sandbox = Sandbox::new("store-topics-broken").unwrap();
+    sandbox
+        .seed("CREATE TABLE gone (id TEXT); CREATE VIEW topics AS SELECT id FROM gone; DROP TABLE gone;")
+        .unwrap();
+    let err = Archive::open(&sandbox.database(), BUSY).unwrap_err();
+    assert!(err.to_string().contains("no such table"), "{err}");
+}
+
+#[test]
+fn open_fails_when_topics_cannot_gain_cursor_key() {
+    let sandbox = Sandbox::new("store-topics-view").unwrap();
+    sandbox
+        .seed("CREATE VIEW topics AS SELECT 1 AS id;")
+        .unwrap();
+    let err = Archive::open(&sandbox.database(), BUSY).unwrap_err();
+    assert!(err.to_string().contains("view"), "{err}");
+}
+
+#[test]
 fn replace_reopens_only_lines_skipped_as_sealed() {
     let sandbox = Sandbox::new("store-reopen").unwrap();
     let store = Archive::open(&sandbox.database(), BUSY).unwrap();

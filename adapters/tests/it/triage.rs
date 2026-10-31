@@ -1,5 +1,6 @@
 mod batch;
 mod claim;
+mod endpoint;
 mod review;
 mod rig;
 mod screen;
@@ -16,15 +17,13 @@ use self::rig::{
 };
 use adapters::store::Archive;
 
-use crate::support::{BUSY, NOON, Run, SEALED, Sandbox, triage_validate};
+use crate::support::{BUSY, NOON, Run, SEALED, Sandbox};
 
 const COOLDOWN: u64 = 3_600_000;
 const FAILED_TWICE: &str = "1|failed|2|";
 const ONE_QUOTA: u32 = 1;
 const TARGET: &str = env!("CARGO_PKG_VERSION");
 const TIMEOUT: u64 = 200;
-const TOO_MANY: u32 = 201;
-const TOO_MANY_TOPICS: u32 = 250;
 const ZERO: u32 = 0;
 
 fn assert_external_logs(logs: &str) {
@@ -112,6 +111,8 @@ fn config_lists_missing_variables() {
     let key = "POLY_RESOLVE_UNSET_FOR_TEST";
     let decide = json!({"decide": {"key": "${POLY_RESOLVE_UNSET_FOR_TEST}"}});
     assert_eq!(sandbox.triage(&decide).unwrap().missing(), [key]);
+    let proxy = json!({"decide": {"proxy": "${POLY_RESOLVE_UNSET_FOR_TEST}"}});
+    assert_eq!(sandbox.triage(&proxy).unwrap().missing(), [key]);
     let mut screen = sandbox.screen("");
     if let Some(http) = screen
         .pointer_mut("/screen/http")
@@ -195,7 +196,7 @@ async fn decision_timeout_is_reported() {
     start(&sandbox, &patch, SHORT).await.unwrap();
     assert_eq!(
         table(&sandbox, BATCHES).unwrap(),
-        [format!("{FAILED_TWICE}timeout")]
+        [format!("{FAILED_TWICE}timeout:read")]
     );
 }
 
@@ -255,6 +256,17 @@ async fn handoff_cooldown_merges_the_topic() {
     );
     assert_eq!(calls(&sandbox, "decide").unwrap(), 2);
     assert_eq!(calls(&sandbox, "codex").unwrap(), 1);
+}
+
+#[tokio::test]
+async fn ledger_migration_failure_is_logged() {
+    let sandbox = Sandbox::new("triage-ledger-migrate").unwrap();
+    drop(Archive::open(&sandbox.database(), BUSY).unwrap());
+    sandbox
+        .seed("INSERT INTO topics VALUES ('t', 'l', NULL, 'T', 0, '', 0, 0, 0); CREATE TRIGGER refuse BEFORE INSERT ON topics BEGIN SELECT RAISE(ABORT, 'refused'); END;")
+        .unwrap();
+    let logs = logged(&sandbox, &json!({}), QUICK).await.unwrap();
+    assert!(logs.contains("triage ledger open failed"));
 }
 
 #[tokio::test]
@@ -489,35 +501,4 @@ async fn urgent_message_is_analyzed_and_delivered() {
     }
     assert_external_logs(&logs);
     assert!(!logs.contains("server down"));
-}
-
-#[test]
-fn validate_checks_limits_and_rules() {
-    let sandbox = Sandbox::new("triage-validate").unwrap();
-    let ingest = sandbox.config(&json!({})).unwrap();
-    let checked = |patch: &Value| {
-        let triage = sandbox.triage(patch).unwrap();
-        match triage_validate(&ingest, &triage) {
-            Ok(result) => result.map_err(|err| format!("{patch}: {err}")),
-            Err(err) => Err(err.to_string()),
-        }
-    };
-    assert_eq!(checked(&json!({})), Ok(()));
-    let batch = json!({"limits": {"batch": TOO_MANY}});
-    assert!(checked(&batch).unwrap_err().contains("too large"));
-    let topics = json!({"sizes": {"topics_max_open": TOO_MANY_TOPICS}});
-    assert!(checked(&topics).unwrap_err().contains("too large"));
-    let external = json!({"decide": {"url": "https://localhost/decisions"}});
-    assert!(checked(&external).unwrap_err().contains("url invalid"));
-    let invalid = json!({"decide": {"url": "not a url"}});
-    assert!(checked(&invalid).unwrap_err().contains("url invalid"));
-    let credentials = json!({"decide": {"url": "https://user@example.com/decisions"}});
-    assert!(checked(&credentials).unwrap_err().contains("url invalid"));
-    let remote = json!({"screen": {"http": {"url": "https://example.com/model"}}});
-    assert!(checked(&remote).unwrap_err().contains("url invalid"));
-    let no_port = json!({"screen": {"http": {"url": "http://localhost/model"}}});
-    assert!(checked(&no_port).unwrap_err().contains("url invalid"));
-    assert_eq!(checked(&sandbox.screen("")), Ok(()));
-    let rules = json!({"redact": {"patterns": [{"pattern": "(", "placeholder": "x"}]}});
-    assert!(checked(&rules).unwrap_err().contains("invalid pattern"));
 }

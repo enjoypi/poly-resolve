@@ -25,8 +25,8 @@
   - `check(probe, name)` 同时跑 `canary`（须非 0）与 `probe`（须 0），错误是字符串；`Dws::check`、triage 的 `check` 用 `join_all` 并发，报错按声明顺序取第一个
   - 钉钉源 `dws` 的 4 个 `Process`、triage 的 `codex` 与 `notify` 各带一份 `sandbox`，命令一律经 `command` 起，不得绕过；`Dws::check`、`triage::config::Settings::check` 供 cli 启动自检。决策与本地模型使用进程内 HTTP，不经 Seatbelt
 - `triage.rs`：`Setup`、`Lane`、`run`、`validate`
-- `triage/config.rs`：`Settings`、`Exec`、`Var`；`triage/endpoint.rs`：HTTP 地址、可选密钥、超时与本机／外部地址校验
-- `http.rs`：异步 HTTP/1.1 JSON POST；直连 TCP，HTTPS 用 Security Framework 非阻塞 `SslStream` 与 tokio 就绪事件；不读代理、不跟随重定向；支持 Content-Length、chunked 与连接关闭响应；错误不携带 URL、密钥或正文
+- `triage/config.rs`：`Settings`、`Exec`、`Var`；`triage/endpoint.rs`：HTTP 地址、可选密钥与代理、超时与本机／外部地址校验；代理须为 `http://<回环主机>:<端口>` 原样（无结尾 `/`），只配给 HTTPS 决策地址，本地模型配代理即拒绝
+- `http.rs`：异步 HTTP/1.1 JSON POST；直连 TCP，或经 `Call::with_proxy` 的代理先发 `CONNECT host:port`（逐字节读响应头到空行，上限 8 KiB，只认 2xx）再在同一 TCP 上握手；HTTPS 用 Security Framework 非阻塞 `SslStream` 与 tokio 就绪事件，证书按目标主机校验；不读环境代理变量、不跟随重定向、代理失败不回退直连；超时按所处阶段报 `timeout:connect|proxy|tls|send|read`；响应头无法解析时立即结束读取；支持 Content-Length、chunked 与连接关闭响应；错误不携带 URL、密钥或正文
 - `triage/desk.rs`：调 domain `triage` feature；`Desk::rules` 为库里学到的规则在前、配置的在后
 - `triage/intake.rs`：入库、成批、重新脱敏；`triage/screen.rs`：本地模型筛查；`triage/batch.rs`：封批、发送、落结果；`triage/alert.rs`：分析、通知；三者是以 `&Shift` 为参数的自由函数（`multiple_inherent_impl` 禁止给 `Shift` 再写 impl）
 - `ledger.rs`：`lines`、`batches`、`answers`、`topics`、`placements`、`alerts`、`learned_rules` 的读写；参数打成一个 JSON 对象经 `json_extract(?1, …)` 取值（绕开参数个数限制），读返回 `json_group_array`，失败只记 warn 并返回空或 0；`Ledger::apply` 是唯一的多语句事务（`BEGIN IMMEDIATE` … `COMMIT`，任一步失败则 `ROLLBACK`）
@@ -58,7 +58,7 @@
 - `seal`（`Ledger::sealable`）：批内无 `screening/pending/leaked` 行时，取已通过的行，加上开放话题（`last_at_ms` 在 `session_max_ms` 内，至多 `topics_max_open` 个）和各会话仍开放的话题（`attach`），调 domain `triage.pack` 得冻结的请求体与 `layout`，写 `batches`（`ready`）；没有已通过的行则直接写 `sent`、`payload` 为空关批
 - `send`：按 `calls` 中实际决策请求数（`max_decisions_per_hour`）取最早的 `ready` 批；限额只阻止新请求，已存应答仍可重放
   - URL 与 key 经 HTTP 配置从环境变量读取，请求体走 JSON POST，argv 不含密钥；响应交 domain `triage.sort`
-  - 失败（连接、HTTP 状态、超时、响应无法解析）`reason` 为 `connect`、`http:<码>`、`timeout`、`io` 或 `bad_answer`，达 `max_attempts` 转 `failed`
+  - 失败（连接、HTTP 状态、超时、响应无法解析）`reason` 为 `connect`、`proxy_connect`、`proxy:<码>`、`http:<码>`、`timeout:<阶段>`、`io`、`bad_answer` 或 URL 校验错误，达 `max_attempts` 转 `failed`
   - 成功先把应答写进 `answers`，写不进就不调用 `apply`；再经 `Ledger::apply` 一个事务写结果；`next_batch` 带出已存的应答，有则直接重放、不再外发，故 `apply` 失败不会重复调用决策接口
   - `apply` 事务：写 `placements`；写 `topics`（`ON CONFLICT` 取概率最大值与最近时间）；对 `urgent` 话题开 `alerts`（键 `<话题>@<批号>`，初始 `waiting`，同话题等待项合并）；批置 `sent` 且 `attempts` 归零；崩溃发生在存应答前则整批重发
 - `analyze`：取当前可转交的 `pending` 项（按 `calls` 检查小时额度与同话题冷却），话题的已通过行（`Ledger::topic_lines`）交 domain `triage.brief`
@@ -103,6 +103,7 @@
   - 一个进程只能有一层 Seatbelt，外层内再 `sandbox-exec` 更严格的策略或 `codex sandbox` 都退出 71；codex 的 `-s read-only` 现保留作纵深防御，若启动即 71 改 `-s danger-full-access`
   - `process-exec` 对符号链接无效，策略放行真实路径所在目录（如 `/opt/homebrew/Cellar/curl`、`/opt/homebrew/Caskroom/codex`）
   - 网络规则的主机只能是 `*` 或 `localhost`，只能限端口
+  - 代理：`codex.sb`、`dws.sb` 见到参数 `PROXY` 时取其最后一个 `:` 后的端口，只放行 `localhost:<端口>`、不放行 `*:443`，未传则照旧直连 443；`PROXY` 为空或带结尾 `/` 时策略报 invalid port 退出 65
   - `-D` 值在 `ps` 可见，不传 secret
   - `sandbox-exec` 用 execvp，PID 与管道语义不变；失败码：策略或参数无效 65，被包装程序不存在 71
   - 规则不全的后果是命令失败，故每条新规则都要能在 `log stream` 里对上拒绝记录；拒绝记录里的进程名可能是 `sh`、`security` 而不是 `dws`
@@ -134,6 +135,8 @@
   - codex：`FAKE_CODEX`（fail、empty、junk、resume_fail、escape、slow）；默认输出 `thread.started`（会话 ID 取 `FAKE_THREAD`，默认 T1）与含 `ANALYSIS` 的 `agent_message` 两行 JSONL
   - send：`FAKE_SEND`（fail、slow）
 - 决策与本地模型用 `tests/it/triage/stub.rs` 的本机动态端口 HTTP stub；每个 `Sandbox` 独立端口。请求写入 `<角色>-calls.txt`（JSONL：方法、路径、头）与 `<角色>-body.txt`；行为由目录内 `decide-stub.json`、`screen-stub.json` 的 `mode`（fail、junk、slow）与概率、话题、置信度字段控制，`screen.json` 可整包覆盖响应。补丁顶层 `stub.decide`、`stub.screen` 由 `rig::behave` 写成这些文件，不进生产配置
+- 代理用例在 `tests/it/http/proxy.rs`：线程 stub 读到空行后按设定回包或经 `pipe` 双向转发；可用代理与格式不合规的代理分别取 `.cargo/config.toml` 的 `POLY_RESOLVE_TEST_PROXY`、`POLY_RESOLVE_TEST_BAD_PROXY`（测试不能 `set_var`）
+- HTTPS 用例由 `openssl s_server -quiet` 从 stdin 回写固定响应（`-www` 不回应 POST）；`fixtures/tls` 为 P-256 自签叶证书，须 `CA:FALSE`、`extendedKeyUsage=serverAuth`、SAN `DNS:localhost`、有效期不超过 825 天，否则 Security Framework 拒绝：`openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -days 825 -nodes -subj /CN=localhost -addext subjectAltName=DNS:localhost -addext extendedKeyUsage=serverAuth -addext basicConstraints=critical,CA:FALSE -keyout key.pem -outform DER -out cert.der`
 - 存储故障注入：
   - 预建缺列的表（`BAD_SCHEMA`，在 `heal` 的查询处失败）
   - 对已建表加触发器 `REFUSE_INSERT`、`REFUSE_UPDATE`（写失败而查询正常）

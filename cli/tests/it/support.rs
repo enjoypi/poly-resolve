@@ -1,8 +1,10 @@
 use std::ffi::OsString;
 use std::fs;
 use std::io::{self, BufReader, Lines};
+use std::net::TcpListener;
 use std::path::Path;
 use std::process::{Child, ChildStderr, Command, ExitCode, Output};
+use std::sync::OnceLock;
 
 use cli::run as run_cli;
 
@@ -140,8 +142,17 @@ pub(crate) fn config(name: &str, body: &str) -> io::Result<String> {
     Ok(path)
 }
 
+pub(crate) fn decisions() -> String {
+    static OPEN: OnceLock<Option<TcpListener>> = OnceLock::new();
+    OPEN.get_or_init(|| TcpListener::bind("127.0.0.1:0").ok())
+        .as_ref()
+        .and_then(|listener| listener.local_addr().ok())
+        .map_or_else(String::new, |address| address.to_string())
+}
+
 pub(crate) fn live(dir: &str) -> String {
-    YAML.replace("/nonexistent/dws", FAKE)
+    YAML.replace("localhost:15801", &decisions())
+        .replace("/nonexistent/dws", FAKE)
         .replace("/nonexistent/triage", TRIAGE)
         .replace("/nonexistent/fake.sb", PROFILE)
         .replace("/nonexistent/fixtures", FIXTURES)

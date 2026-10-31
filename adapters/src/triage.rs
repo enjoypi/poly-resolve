@@ -20,6 +20,7 @@ use self::alert::run as relay_alerts;
 use self::batch::{seal, send};
 use self::config::Settings;
 use self::desk::Desk;
+use self::endpoint::Http;
 use self::intake::{form, intake, rerender};
 use self::screen::screen;
 use crate::config::Settings as Ingest;
@@ -151,8 +152,28 @@ fn failure(done: &io::Result<Output>) -> String {
     )
 }
 
+async fn knock(client: &HttpClient, http: &Http) -> Result<(), String> {
+    let url = http.url()?;
+    let proxy = http.proxy().ok().flatten();
+    let call = Call::new(&url, "", http.timeout_ms()).with_proxy(proxy.as_ref());
+    client.probe(&call).await
+}
+
 fn number(row: &Value, key: &str) -> u64 {
     row.get(key).and_then(Value::as_u64).unwrap_or_default()
+}
+
+pub async fn reach(triage: &Settings) -> Result<(), String> {
+    let client = HttpClient::new();
+    knock(&client, triage.decide())
+        .await
+        .map_err(|err| format!("triage.decide: unreachable {err}"))?;
+    match triage.codex().endpoint() {
+        Some(http) => knock(&client, http)
+            .await
+            .map_err(|err| format!("triage.codex.endpoint: unreachable {err}")),
+        None => Ok(()),
+    }
 }
 
 fn retry_before(shift: &Shift<'_>) -> u64 {
@@ -199,13 +220,13 @@ pub fn validate(setup: Setup<'_>) -> Result<(), String> {
         .decide()
         .url()
         .map(drop)
-        .map_err(|_err| "triage.decide.url invalid".to_owned())?;
+        .map_err(|err| format!("triage.decide: {err}"))?;
     if let Some(screen) = triage.screen() {
         screen
             .http()
             .local_url()
             .map(drop)
-            .map_err(|_err| "triage.screen.http.url invalid".to_owned())?;
+            .map_err(|err| format!("triage.screen.http: {err}"))?;
     }
     let desk = Desk::new(setup.context, setup.ingest, triage);
     desk.redact(&desk.rules(&[]), "")
