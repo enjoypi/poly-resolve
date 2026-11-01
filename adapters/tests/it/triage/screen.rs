@@ -70,6 +70,48 @@ async fn failed_screening_is_retried_and_never_lets_lines_through() {
 }
 
 #[tokio::test]
+async fn hints_follow_renamed_topics() {
+    let sandbox = Sandbox::new("screen-hints-renamed").unwrap();
+    seed(&sandbox, &[(KEY, "u1", "c1", "server down")]).unwrap();
+    start(&sandbox, &json!({"stub": {"decide": {"p": "0.1"}}}), QUICK)
+        .await
+        .unwrap();
+    seed_from(&sandbox, &[(SECOND, "u1", "c2", "still down")], LATER).unwrap();
+    sandbox
+        .write(
+            "screen.json",
+            r#"{"lines":[{"line":"L1","risk":"low","spans":[],"topics":["t1-0"]}]}"#,
+        )
+        .unwrap();
+    sandbox
+        .seed("CREATE TRIGGER refuse BEFORE INSERT ON batches BEGIN SELECT RAISE(ABORT, 'refused'); END;")
+        .unwrap();
+    start(&sandbox, &screened(&sandbox), QUICK).await.unwrap();
+    sandbox
+        .seed("DROP TRIGGER refuse; INSERT INTO topics SELECT 'T1', label, probability, 'T1', until_ms, until_key, thread_at_ms, created_at_ms, last_at_ms FROM topics WHERE id = 't1-0'; UPDATE placements SET topic_id = 'T1'; DELETE FROM topics WHERE id = 't1-0'; INSERT INTO topic_aliases VALUES ('t1-0', 'T1'); INSERT INTO topics VALUES ('t9-0', 'other', 0.1, '', 0, '', 0, 0, 9999999999999);")
+        .unwrap();
+    let mut patch = screened(&sandbox);
+    if let Some(map) = patch.as_object_mut() {
+        drop(map.insert(
+            "stub".to_owned(),
+            json!({"decide": {"p": "0.1", "topics": "T1"}}),
+        ));
+    }
+    start(&sandbox, &patch, QUICK).await.unwrap();
+    let body = decided(&sandbox).unwrap();
+    assert_eq!(
+        body.pointer("/questions/1/choices/0/value"),
+        Some(&json!("T1"))
+    );
+    assert_eq!(
+        body.pointer("/questions/1/choices")
+            .and_then(Value::as_array)
+            .map(Vec::len),
+        Some(2)
+    );
+}
+
+#[tokio::test]
 async fn hints_narrow_the_topic_options() {
     let sandbox = Sandbox::new("screen-hints").unwrap();
     seed(&sandbox, &[(KEY, "u1", "c1", "server down")]).unwrap();

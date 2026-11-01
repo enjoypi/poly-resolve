@@ -68,6 +68,8 @@ struct Draft {
 pub(crate) struct Entry {
     conversation_id: String,
     #[serde(default)]
+    created_at_ms: u64,
+    #[serde(default)]
     hints: Vec<String>,
     key: String,
     #[serde(flatten)]
@@ -114,6 +116,10 @@ impl Layout {
 #[derive(Deserialize, JsonSchema)]
 #[schemars(rename = "TriageOpen")]
 pub(crate) struct Open {
+    #[serde(default)]
+    created_at_ms: u64,
+    #[serde(default)]
+    first: Option<String>,
     label: String,
     #[serde(default)]
     probability: Option<f64>,
@@ -348,27 +354,38 @@ fn labelled(shown: &Value, tag: &str) -> Value {
     Value::Object(map)
 }
 
+fn offered(req: &PackRequest, block: &Block<'_>, open: &Open) -> bool {
+    let narrowed: Vec<&str> = block
+        .entries
+        .iter()
+        .flat_map(|entry| entry.hints.iter().map(String::as_str))
+        .filter(|hint| req.topics.iter().any(|known| known.topic == *hint))
+        .collect();
+    let earliest = block
+        .entries
+        .iter()
+        .map(|entry| entry.created_at_ms)
+        .min()
+        .unwrap_or_default();
+    narrowed.is_empty() || narrowed.contains(&open.topic.as_str()) || open.created_at_ms > earliest
+}
+
 fn options(req: &PackRequest, found: &[Block<'_>], style: &Style<'_>) -> Vec<Picks> {
     found
         .iter()
         .enumerate()
         .map(|(index, block)| {
-            let narrowed: Vec<&str> = block
-                .entries
-                .iter()
-                .flat_map(|entry| entry.hints.iter().map(String::as_str))
-                .collect();
             let known = req
                 .topics
                 .iter()
-                .filter(|open| narrowed.is_empty() || narrowed.contains(&open.topic.as_str()))
+                .filter(|open| offered(req, block, open))
                 .map(|open| Pick {
                     choice: Choice {
                         segment: None,
                         topic: Some(open.topic.clone()),
                         value: open.topic.clone(),
                     },
-                    text: style.mask().apply(&open.label),
+                    text: topic_label(req, open, style),
                 });
             let earlier = found
                 .iter()
@@ -462,4 +479,12 @@ fn predicate(question: &Question, number: usize) -> Value {
         "name": format!("{}_{}", question.name, number.saturating_add(1)),
         "type": "predicate",
     })
+}
+
+fn topic_label(req: &PackRequest, open: &Open, style: &Style<'_>) -> String {
+    let chars = usize::try_from(req.label_chars).unwrap_or(usize::MAX);
+    open.first.as_deref().map_or_else(
+        || style.mask().apply(&open.label),
+        |first| style.mask().apply(first).chars().take(chars).collect(),
+    )
 }

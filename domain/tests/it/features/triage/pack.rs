@@ -118,6 +118,25 @@ fn pack_attaches_segments_to_the_open_topic_of_their_conversation() {
 }
 
 #[test]
+fn pack_ignores_hints_that_match_no_open_topic() {
+    let mut hinted = entry(["k1", "c1", "hello"], NOON);
+    if let Some(map) = hinted.as_object_mut() {
+        drop(map.insert("hints".to_owned(), json!(["gone"])));
+    }
+    let topics = json!([{"label": "first", "topic": "t3-0"}]);
+    let reply = pack(&json!([hinted]), &json!([]), &topics)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        body_of(&reply).pointer("/questions/1/choices"),
+        Some(&json!([
+            {"description": "first", "value": "t3-0"},
+            {"description": "new topic", "value": "new"},
+        ]))
+    );
+}
+
+#[test]
 fn pack_ignores_stale_or_foreign_attachments() {
     let lines = json!([entry(["k1", "c1", "hello"], NOON)]);
     let attach = json!([
@@ -130,6 +149,31 @@ fn pack_ignores_stale_or_foreign_attachments() {
     assert_eq!(
         segments.first().and_then(|first| first.get("attach")),
         Some(&Value::Null)
+    );
+}
+
+#[test]
+fn pack_keeps_topics_the_screen_could_not_know() {
+    let mut hinted = entry(["k1", "c1", "hello"], NOON);
+    if let Some(map) = hinted.as_object_mut() {
+        drop(map.insert("created_at_ms".to_owned(), json!(NOON)));
+        drop(map.insert("hints".to_owned(), json!(["t4-0"])));
+    }
+    let topics = json!([
+        {"created_at_ms": NOON - 1, "label": "old", "topic": "t3-0"},
+        {"created_at_ms": NOON - 1, "label": "second", "topic": "t4-0"},
+        {"created_at_ms": NOON + 1, "label": "fresh", "topic": "t5-0"},
+    ]);
+    let reply = pack(&json!([hinted]), &json!([]), &topics)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        body_of(&reply).pointer("/questions/1/choices"),
+        Some(&json!([
+            {"description": "second", "value": "t4-0"},
+            {"description": "fresh", "value": "t5-0"},
+            {"description": "new topic", "value": "new"},
+        ]))
     );
 }
 
@@ -174,6 +218,32 @@ fn pack_labels_masks_and_aliases() {
         .filter_map(|segment| segment.get("label").and_then(Value::as_str))
         .collect();
     assert_eq!(labels, ["tok", "sec", "lat"]);
+}
+
+#[test]
+fn pack_labels_topics_from_their_first_line() {
+    let lines = json!([entry(["k1", "c1", "hello"], NOON)]);
+    let topics = json!([{"first": "token abc-9 here", "label": "token ab", "topic": "t3-0"}]);
+    let request = patched(
+        request(&lines, &json!([]), &topics),
+        "rules",
+        &json!([{"pattern": "abc-9", "placeholder": "[x]"}]),
+    );
+    let reply = call("pack", &request.to_string()).unwrap().unwrap();
+    assert_eq!(
+        body_of(&reply).pointer("/questions/1/choices/0/description"),
+        Some(&json!("tok"))
+    );
+    let wide = patched(
+        patched(request, "label_chars", &json!(ROOMY)),
+        "topics",
+        &topics,
+    );
+    let roomy = call("pack", &wide.to_string()).unwrap().unwrap();
+    assert_eq!(
+        body_of(&roomy).pointer("/questions/1/choices/0/description"),
+        Some(&json!("token [x] here"))
+    );
 }
 
 #[test]

@@ -71,6 +71,25 @@ async fn historical_high_topic_stays_urgent_after_low_scored_batch() {
 }
 
 #[tokio::test]
+async fn learned_rules_reach_topic_labels() {
+    let sandbox = Sandbox::new("topic-label").unwrap();
+    seed(&sandbox, &[(KEY, "u1", "c1", "key abcdefgh9 x")]).unwrap();
+    let quiet = json!({"stub": {"decide": {"p": QUIET}}});
+    start(&sandbox, &quiet, QUICK).await.unwrap();
+    assert_eq!(table(&sandbox, TOPICS).unwrap(), ["t1-0|key abcd|"]);
+    sandbox
+        .seed("INSERT INTO learned_rules (pattern, placeholder, source_key, reviewer, created_at_ms) VALUES ('abcdefgh9', '[k]', 'k', '', 1);")
+        .unwrap();
+    seed_from(&sandbox, &[(SECOND, "u1", "c2", "still down")], LATER).unwrap();
+    start(&sandbox, &quiet, QUICK).await.unwrap();
+    let body = decided(&sandbox).unwrap();
+    assert_eq!(
+        body.pointer("/questions/1/choices/0"),
+        Some(&json!({"description": "key [k] ", "value": FIRST_TOPIC}))
+    );
+}
+
+#[tokio::test]
 async fn long_pauses_split_a_conversation() {
     let sandbox = Sandbox::new("topic-pause").unwrap();
     let rows = [

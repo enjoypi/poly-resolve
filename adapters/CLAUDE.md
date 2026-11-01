@@ -29,6 +29,7 @@
 - `http.rs`：异步 HTTP/1.1 JSON POST；直连 TCP，或经 `Call::with_proxy` 的代理先发 `CONNECT host:port`（逐字节读响应头到空行，上限 8 KiB，只认 2xx）再在同一 TCP 上握手；HTTPS 用 Security Framework 非阻塞 `SslStream` 与 tokio 就绪事件，证书按目标主机校验；不读环境代理变量、不跟随重定向、代理失败不回退直连；超时按所处阶段报 `timeout:connect|proxy|tls|send|read`；响应头无法解析时立即结束读取；支持 Content-Length、chunked 与连接关闭响应；错误不携带 URL、密钥或正文
 - `triage/desk.rs`：调 domain `triage` feature；`Desk::rules` 为库里学到的规则在前、配置的在后
 - `triage/intake.rs`：入库、成批、重新脱敏；`triage/screen.rs`：本地模型筛查；`triage/batch.rs`：封批、发送、落结果；`triage/alert.rs`：分析、通知；三者是以 `&Shift` 为参数的自由函数（`multiple_inherent_impl` 禁止给 `Shift` 再写 impl）
+- 外发的话题选项：`OPEN_TOPICS` 带出话题最早一条已通过行的原文 `first` 与 `created_at_ms`，domain 按当前规则先脱敏再截断生成说明，存库的 label 只供页面；hints 收窄时保留 `created_at_ms` 晚于该段最早一行入库时间的话题，hints 全不匹配开放话题时不收窄
 - `ledger.rs`：`lines`、`batches`、`answers`、`topics`、`placements`、`alerts`、`learned_rules` 的读写；参数打成一个 JSON 对象经 `json_extract(?1, …)` 取值（绕开参数个数限制），读返回 `json_group_array`，失败只记 warn 并返回空或 0；`Ledger::apply` 是唯一的多语句事务（`BEGIN IMMEDIATE` … `COMMIT`，任一步失败则 `ROLLBACK`）
 - `pipe.rs`：`feed(Job)` 起子进程（args 里的 `${名}` 由 `Exec::args` 换成同名 vars 的值，stderr 置 null，stdin 写入后关闭，超时 `TimedOut`，`kill_on_drop`）；`probe(exec)` 供 `Settings::check`
 
@@ -53,16 +54,17 @@
 - 先记账再调用：外部调用前 `claim_*` 把状态尝试与 `calls` 流水写在同一事务（`attempts + 1`、`updated_at_ms` 置当前，`WHERE state = 起点 AND attempts < max_attempts`），影响 0 行不调用；被停机打断则 `release_*` 删除流水并退回尝试。失败请求保留流水，`requests_since` 按 `calls` 计实际请求；失败只写 `reason` 并在 `attempts ≥ max_attempts` 时转 `failed`；`next_*` 跳过已用尽次数的
 - `intake`：`Ledger::unlined` 取 `triage_state.since_ms` 起还没有 `lines` 行的消息，从新到旧，每轮至多 `intake` 条；逐条调 domain `triage.line`（规则无效则记 warn、该条留待下一轮），写 `lines`（`INSERT OR IGNORE`，`queued` 或带原因 `skipped`，`rules_rev` 记当时最大的规则 id）
 - `rerender`：把 `rules_rev` 落后的 `queued/pending/leaked/screening` 行经 domain `redact` 重新脱敏，`leaked` 行回到 `pending`
-- `form`：没有未结批（有行 `batch_id > 0` 且其批还不是 `sent/failed`）时，把最新的至多 `batch` 条 `queued` 行编入新批（批号＝最大批号 + 1）；未配 `triage.screen` 时状态按 `review.mode` 为 `pending`（审核人空）或 `approved`（审核人 `auto`），配了则为 `screening`
+- `form`：没有未封批（有行 `batch_id > 0` 但 `batches` 里没有该批）时，把最新的至多 `batch` 条 `queued` 行编入新批（批号＝最大批号 + 1）；未配 `triage.screen` 时状态按 `review.mode` 为 `pending`（审核人空）或 `approved`（审核人 `auto`），配了则为 `screening`
 - `screen`（可选）：取至多 `batch` 条 `screening` 行（`reason = 'deferred'` 的要等过 `retry_after_ms`），连同开放话题调 domain `triage.screen`，经 HTTP 发给本机模型，响应交 domain `triage.screened`，写回 `lines.text/flag/hints`；`manual` 转 `pending`，`auto` 时 `flag` 非空转 `rejected`（原因 `screen`）、其余转 `approved`；失败（连接、状态、超时、无法解析）整批标 `deferred` 不放行
-- `seal`（`Ledger::sealable`）：批内无 `screening/pending/leaked` 行时，取已通过的行，加上开放话题（`last_at_ms` 在 `session_max_ms` 内，至多 `topics_max_open` 个）和各会话仍开放的话题（`attach`），调 domain `triage.pack` 得冻结的请求体与 `layout`，写 `batches`（`ready`）；没有已通过的行则直接写 `sent`、`payload` 为空关批
+- `seal`（`Ledger::sealable`）：批内无 `screening/pending/leaked` 行，且没有其他批处于 `ready`（或本批没有已通过行）时，取已通过的行，加上开放话题（`last_at_ms` 在 `session_max_ms` 内，至多 `topics_max_open` 个）和各会话仍开放的话题（`attach`），调 domain `triage.pack` 得冻结的请求体与 `layout`，写 `batches`（`ready`）；没有已通过的行则直接写 `sent`、`payload` 为空关批
 - `send`：按 `calls` 中实际决策请求数（`max_decisions_per_hour`）取最早的 `ready` 批；限额只阻止新请求，已存应答仍可重放
+  - 没有已存应答时，每次尝试前用 `packed` 按当前规则、开放话题与 `attach` 重新打包；新 `payload`、`layout` 随 `BATCH_CLAIM` 在同一语句写回，该语句要求不存在 id 大于打包所用 rev 的 `learned_rules`，否则不 claim、下轮重打包；外发与判答都用新打包结果；“一次只外发一批”由 `SEALABLE` 保证，`BATCH_NEXT` 的退避条件会跳过等待中的批
   - URL 与 key 经 HTTP 配置从环境变量读取，请求体走 JSON POST，argv 不含密钥；响应交 domain `triage.sort`
   - 失败（连接、HTTP 状态、超时、响应无法解析）`reason` 为 `connect`、`proxy_connect`、`proxy:<码>`、`http:<码>`、`timeout:<阶段>`、`io`、`bad_answer` 或 URL 校验错误，达 `max_attempts` 转 `failed`
   - 成功先把应答写进 `answers`，写不进就不调用 `apply`；再经 `Ledger::apply` 一个事务写结果；`next_batch` 带出已存的应答，有则直接重放、不再外发，故 `apply` 失败不会重复调用决策接口
   - `apply` 事务：写 `placements`；写 `topics`（`ON CONFLICT` 取概率最大值与最近时间）；对 `urgent` 话题开 `alerts`（键 `<话题>@<批号>`，初始 `waiting`，同话题等待项合并）；批置 `sent` 且 `attempts` 归零；崩溃发生在存应答前则整批重发
 - `analyze`：取当前可转交的 `pending` 项（按 `calls` 检查小时额度与同话题冷却），话题的已通过行（`Ledger::topic_lines`）交 domain `triage.brief`
-  - 话题 ID 与 Codex 会话 ID 相同。首次返回 `thread_id` 时，事务内迁移临时话题 ID 并级联 `placements/alerts/calls`；`thread_at_ms` 在 `session_max_ms` 内则续写：`followup` 模板、只含 `(until_ms, until_key)` 之后的行、命令追加 `session.resume`；否则新建：`prompt` 模板、追加 `session.fresh`
+  - 话题 ID 与 Codex 会话 ID 相同。首次返回 `thread_id` 时，事务内迁移临时话题 ID 并级联 `placements/alerts/calls`，并在 `topic_aliases` 记下旧 ID（先把指向旧 ID 的别名改指新 ID，保持一跳）；`MIGRATE` 同样写别名；`PLACE`、`TOPICS`、`OPEN_ALERT` 与 `BATCH_LINES` 的 hints 经别名解析，旧 layout 与旧提示写回时落到新 ID；`thread_at_ms` 在 `session_max_ms` 内则续写：`followup` 模板、只含 `(until_ms, until_key)` 之后的行、命令追加 `session.resume`；否则新建：`prompt` 模板、追加 `session.fresh`
   - codex 的 stdin 传提示词，stdout 是 `--json` 事件流，经 domain `triage.reply` 取会话 ID 与最终回复；退出非 0、输出无法解析、回复为空都算失败，空输出的 `reason` 为 `exit:0`
   - 成功先把分析、会话 ID 与游标写库，再推进 `analyzed`；推进失败下轮重放已存分析，不重跑 Codex。失败 `attempts + 1` 并把 `thread_at_ms` 归零，让下次新建会话
 - `deliver`：用 `triage.notice` 渲染，dws 发送（参数末尾追加 `notify_target` 与 `--idempotency-key=<话题>@<批号>`）→ `sent`；失败达 `max_attempts` 转 `failed`；阶段推进（`ADVANCE_ALERT … WHERE state = from`）把 `attempts` 与 `updated_at_ms` 归零，故发送失败只重试发送

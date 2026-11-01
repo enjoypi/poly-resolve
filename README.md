@@ -173,7 +173,7 @@ sops exec-env secrets/prod.enc.yaml './target/release/cli serve --config cli/con
 
 ### 外发审核
 
-浏览器打开 `<服务地址>/#reviews`，逐条通过或拒绝，顶部“整批通过”一次通过当前列出的全部。拒绝须选原因；漏脱敏类原因还须粘贴漏掉的原文，系统据此学出规则并让该条重新脱敏后回到待审。一批不审完，不会外发，也不开下一批。`review.mode: auto` 时不经人工。
+浏览器打开 `<服务地址>/#reviews`，逐条通过或拒绝，顶部“整批通过”一次通过当前列出的全部。拒绝须选原因；漏脱敏类原因还须粘贴漏掉的原文，系统据此学出规则并让该条重新脱敏后回到待审。一批不审完不会外发；审完一批即可审下一批，下一批等上一批外发结束才外发。`review.mode: auto` 时不经人工。
 
 接口：`GET /api/reviews`、`PATCH /api/reviews/{key}`；“整批通过”逐条发送。脱敏规则的样例在 `domain/tests/it/redact.rs`，改规则后跑测试验证。
 

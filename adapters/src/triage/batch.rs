@@ -2,6 +2,7 @@ use std::time::Instant;
 
 use serde_json::{Value, from_str, json};
 
+use super::desk::Packed;
 use super::trace::{Outcome, external};
 use super::{HOUR_MS, NONE, Shift, current, number, retry_before, text};
 use crate::http::Call;
@@ -67,6 +68,41 @@ fn judge(shift: &Shift<'_>, batch: &Value, reply: Result<String, String>) {
     }
 }
 
+fn packed(shift: &Shift<'_>, batch_id: u64, rules: &Value) -> Option<Packed> {
+    let lines = shift.ledger.batch_lines(&json!({"batch_id": batch_id}));
+    let since = now_ms().saturating_sub(shift.triage.session_max_ms());
+    let topics = shift.ledger.open_topics(&json!({
+        "limit": shift.triage.topics_max_open(),
+        "since_ms": since,
+    }));
+    let attach = shift
+        .ledger
+        .attach(&json!({"batch_id": batch_id, "since_ms": since}));
+    shift.desk.pack(&json!({
+        "attach": attach,
+        "batch_id": batch_id,
+        "lines": lines,
+        "rules": rules,
+        "topics": topics,
+    }))
+}
+
+fn repacked(shift: &Shift<'_>, batch: &Value) -> Option<Value> {
+    let batch_id = number(batch, "id");
+    let (rules, rev) = current(shift);
+    let Some(found) = packed(shift, batch_id, &rules) else {
+        tracing::warn!(batch_id, "batch repack failed");
+        return None;
+    };
+    Some(json!({
+        "attempts": number(batch, "attempts"),
+        "id": batch_id,
+        "layout": found.layout().to_string(),
+        "payload": found.body(),
+        "rev": rev,
+    }))
+}
+
 async fn request(shift: &mut Shift<'_>, batch: &Value) -> Option<Option<Result<String, String>>> {
     let triage = shift.triage;
     let setup = triage.decide();
@@ -79,7 +115,14 @@ async fn request(shift: &mut Shift<'_>, batch: &Value) -> Option<Option<Result<S
     let call = Call::new(&url, text(batch, "payload"), setup.timeout_ms())
         .with_key(key.as_deref())
         .with_proxy(proxy.as_ref());
-    let claim = json!({"at_ms": now_ms(), "id": number(batch, "id"), "max_attempts": triage.max_attempts()});
+    let claim = json!({
+        "at_ms": now_ms(),
+        "id": number(batch, "id"),
+        "layout": text(batch, "layout"),
+        "max_attempts": triage.max_attempts(),
+        "payload": text(batch, "payload"),
+        "rev": number(batch, "rev"),
+    });
     if shift.ledger.claim_batch(&claim) == 0 {
         return Some(None);
     }
@@ -136,33 +179,16 @@ pub(super) fn seal(shift: &Shift<'_>) {
         return;
     }
     let (rules, _rev) = current(shift);
-    let since = now.saturating_sub(shift.triage.session_max_ms());
-    let topics = shift.ledger.open_topics(&json!({
-        "limit": shift.triage.topics_max_open(),
-        "since_ms": since,
-    }));
-    let attach = shift
-        .ledger
-        .attach(&json!({"batch_id": batch_id, "since_ms": since}));
-    let sealed = shift
-        .desk
-        .pack(&json!({
-            "attach": attach,
-            "batch_id": batch_id,
-            "lines": lines,
-            "rules": rules,
-            "topics": topics,
+    let sealed = packed(shift, batch_id, &rules).map(|packed| {
+        shift.ledger.seal(&json!({
+            "at_ms": now,
+            "id": batch_id,
+            "layout": packed.layout().to_string(),
+            "payload": packed.body(),
+            "state": READY,
+            "updated_ms": NONE,
         }))
-        .map(|packed| {
-            shift.ledger.seal(&json!({
-                "at_ms": now,
-                "id": batch_id,
-                "layout": packed.layout().to_string(),
-                "payload": packed.body(),
-                "state": READY,
-                "updated_ms": NONE,
-            }))
-        });
+    });
     tracing::info!(sealed, lines = lines.len(), "batch sealed");
 }
 
@@ -181,12 +207,15 @@ pub(super) async fn send(shift: &mut Shift<'_>) -> Option<()> {
                 return Some(());
             }
         }
-        let reply = match stored {
-            Some(body) => Some(Ok(body.to_owned())),
-            None => request(shift, batch).await?,
+        if let Some(body) = stored {
+            judge(shift, batch, Ok(body.to_owned()));
+            continue;
+        }
+        let Some(fresh) = repacked(shift, batch) else {
+            continue;
         };
-        if let Some(outcome) = reply {
-            judge(shift, batch, outcome);
+        if let Some(outcome) = request(shift, &fresh).await? {
+            judge(shift, &fresh, outcome);
         }
     }
     Some(())
