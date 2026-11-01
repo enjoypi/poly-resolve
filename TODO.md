@@ -15,4 +15,4 @@
 - `failed` 的批不自动重试，其中已通过的行没有优先级：补重试或人工重发入口
 - 用真实密文验证 dws 并发解密：同时跑多个 `dws chat crypto decrypt`（含跨过令牌过期点），查 `~/.local/bin/.dws-runtime.lock` 与报错；无冲突再调大 `ingest.sources[].dingtalk.dws.parallel`（垃圾输入只得到 `key request already in progress`，无法判断）
 - 脱敏正则每条消息现编译一遍：`triage.line` 改批量，每轮只编译一次
-- `web/test/badge.test.ts` 用了真实钉钉会话 ID（自 `bf21600` 起公开）：换成假值，改写历史并强推；`docs/api-decisions.md`、`docs/api-responses.md` 是 OpenAI 文档原文，决定删除或改写成字段摘要
+- `web/test/badge.test.ts` 用了真实钉钉会话 ID（自 `bf21600` 起公开）：换成假值，改写历史并强推
