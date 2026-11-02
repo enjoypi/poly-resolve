@@ -5,6 +5,7 @@ use serde_json::{Value, json};
 use super::rig::{BATCHES, NOTHING, QUICK, calls, logged, one, seed, start, table, two};
 use crate::support::{Sandbox, triage_reach, triage_validate};
 
+const BACKLOG: u64 = 999;
 const BRIEF: u64 = 1_000;
 const TOO_MANY: u32 = 201;
 const TOO_MANY_TOPICS: u32 = 250;
@@ -100,6 +101,8 @@ fn validate_checks_limits_and_rules() {
     assert!(checked(&batch).unwrap_err().contains("too large"));
     let topics = json!({"sizes": {"topics_max_open": TOO_MANY_TOPICS}});
     assert!(checked(&topics).unwrap_err().contains("too large"));
+    let backlog = json!({"limits": {"backlog_max_ms": BACKLOG, "lookback_ms": BRIEF}});
+    assert!(checked(&backlog).unwrap_err().contains("backlog_max_ms"));
     for url in [
         "https://localhost/decisions",
         "not a url",

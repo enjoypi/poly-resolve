@@ -1,25 +1,12 @@
 import type { components } from "./api.gen";
 import type { connect } from "./client";
 import { REVIEW_LIMIT, TEXT } from "./config";
+import { area, button } from "./dom";
 import { stamp } from "./stamp";
 
 type Client = ReturnType<typeof connect>;
 type Item = components["schemas"]["ReviewItem"];
 type Reason = components["schemas"]["ReviewReason"];
-
-function area(tag: string, className: string, ...children: (Node | string)[]): HTMLElement {
-  const element = document.createElement(tag);
-  element.className = className;
-  element.append(...children);
-  return element;
-}
-
-function button(label: string, className: string, click: () => void): HTMLButtonElement {
-  const element = area("button", className, label) as HTMLButtonElement;
-  element.type = "button";
-  element.onclick = click;
-  return element;
-}
 
 function option(label: string, value: string): HTMLOptionElement {
   const element = area("option", "", label) as HTMLOptionElement;

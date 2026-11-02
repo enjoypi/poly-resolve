@@ -160,7 +160,8 @@ fn serves_with_triage_enabled() {
     fs::write(format!("{dir}/listen.txt"), format!("{EVENT}\n")).unwrap();
     let yaml = live(&dir)
         .replace("mode: disabled", "mode: enabled")
-        .replace("lookback_ms: 1000\n", "lookback_ms: 1000000000000\n");
+        .replace("lookback_ms: 1000\n", "lookback_ms: 1000000000000\n")
+        .replace("backlog_max_ms: 1000\n", "backlog_max_ms: 1000000000000\n");
     let path = config("serve-triage.yaml", &yaml).unwrap();
     let mut server = start(&path).unwrap();
     await_log(&mut server.lines, "event stored").unwrap();

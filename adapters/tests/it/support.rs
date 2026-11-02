@@ -67,6 +67,7 @@ pub(crate) const REFUSE_INSERT: &str =
     "CREATE TRIGGER refuse BEFORE INSERT ON messages BEGIN SELECT RAISE(ABORT, 'refused'); END;";
 pub(crate) const REFUSE_UPDATE: &str =
     "CREATE TRIGGER refuse BEFORE UPDATE ON messages BEGIN SELECT RAISE(ABORT, 'refused'); END;";
+const REVIVALS: u32 = 0;
 pub(crate) const SEALED: &str = "QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo0MTIzNDU2||2||1||196";
 const SHARED: [&str; 6] = [
     "backoff_initial_ms",
@@ -249,6 +250,7 @@ impl Sandbox {
             "codex": self.exec("codex"),
             "decide": self.http(DECISIONS),
             "limits": {
+                "backlog_max_ms": LOOKBACK,
                 "batch": BATCH,
                 "handoff_cooldown_ms": ZERO,
                 "intake": INTAKE,
@@ -256,6 +258,7 @@ impl Sandbox {
                 "max_attempts": ATTEMPTS,
                 "max_decisions_per_hour": QUOTA,
                 "max_handoffs_per_hour": QUOTA,
+                "max_revivals": REVIVALS,
                 "parallel": PARALLEL_LIMIT,
                 "poll_ms": POLL,
                 "retry_after_ms": ZERO,
@@ -301,7 +304,7 @@ impl Sandbox {
         let context = Context::new(
             &errors,
             Rules::new(&paging, &[], LEARN_MIN),
-            Ports::new(&store, &store),
+            Ports::new(&store, &store, &store),
         );
         let setup = Setup::new(request.ingest, request.triage, &context);
         let mut batches = Box::pin(sleep(Duration::from_millis(millis)));
@@ -381,7 +384,7 @@ pub(crate) async fn run_logged(config: &Settings, millis: u64) -> Fallible<(u8, 
     let context = Context::new(
         &errors,
         Rules::new(&paging, &[], LEARN_MIN),
-        Ports::new(&shelf, &shelf),
+        Ports::new(&shelf, &shelf, &shelf),
     );
     let mut stop = Box::pin(sleep(Duration::from_millis(millis)));
     let source = config.sources().first().ok_or("no source")?;
@@ -452,7 +455,7 @@ pub(crate) fn triage_validate(ingest: &Settings, triage: &Triage) -> Fallible<Re
     let context = Context::new(
         &errors,
         Rules::new(&paging, &[], LEARN_MIN),
-        Ports::new(&shelf, &shelf),
+        Ports::new(&shelf, &shelf, &shelf),
     );
     Ok(validate(Setup::new(ingest, triage, &context)))
 }

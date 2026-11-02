@@ -57,6 +57,8 @@ export const PRESETS: Preset[] = [
   { back_ms: 604_800_000, label: "7 天" },
 ];
 
+export const FAILED_HASH = "#failed";
+
 export const REVIEW_HASH = "#reviews";
 
 export const REVIEW_LIMIT = 200;
@@ -79,10 +81,15 @@ export const TEXT = {
   copyFailed: "复制失败",
   counts: (shown: number, loaded: number) => `显示 ${shown}／已加载 ${loaded} 条。`,
   empty: "没有消息。",
+  failed: "失败批",
+  failedCount: (count: number) => `失败 ${count} 批`,
+  failedMeta: (attempts: number, lines: number, reason: string) =>
+    `已尝试 ${attempts} 次 · ${lines} 条 · ${reason}`,
   fields: "全部字段",
   flagged: (flag: string) => `本地模型提示：${flag}`,
   leakPaste: "粘贴漏掉的原文",
   more: "加载更多",
+  noFailed: "没有失败的批。",
   noReviews: "没有待审核项。",
   panel: "筛选",
   partial: "还有更早的消息未加载，筛选与排序只含已加载的行。",
@@ -92,6 +99,7 @@ export const TEXT = {
   reasonPick: "拒绝原因",
   refresh: "刷新",
   reject: "拒绝",
+  resend: "重发",
   reviews: "审核",
   search: "搜索全部字段",
   since: "起",

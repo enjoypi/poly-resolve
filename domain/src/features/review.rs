@@ -45,15 +45,20 @@ pub(crate) enum Update {
     },
 }
 
-pub(crate) fn list(req: &ListRequest, context: &Context<'_>) -> Result<ListResponse, AppError> {
+pub(super) fn limit(requested: Option<u32>, context: &Context<'_>) -> Result<u32, AppError> {
     let paging = context.paging();
-    let limit = req.limit.unwrap_or_else(|| paging.default_limit());
-    if limit == 0 || limit > paging.max_limit() {
+    let count = requested.unwrap_or_else(|| paging.default_limit());
+    if count == 0 || count > paging.max_limit() {
         return Err(AppError::BadRequest);
     }
+    Ok(count)
+}
+
+pub(crate) fn list(req: &ListRequest, context: &Context<'_>) -> Result<ListResponse, AppError> {
+    let count = limit(req.limit, context)?;
     let state = req.state.as_deref().unwrap_or(PENDING);
     Ok(ListResponse {
-        items: context.docket().list(&Listing::new(state, limit))?,
+        items: context.docket().list(&Listing::new(state, count))?,
         reasons: context.reasons().to_vec(),
     })
 }

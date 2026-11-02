@@ -59,7 +59,7 @@ impl Settings {
                 self.triage.reasons(),
                 self.triage.learn_min_chars(),
             ),
-            Ports::new(reader, reader),
+            Ports::new(reader, reader, reader),
         )
     }
 

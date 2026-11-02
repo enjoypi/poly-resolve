@@ -1,7 +1,10 @@
+mod backlog;
 mod batch;
 mod claim;
 mod endpoint;
+mod hold;
 mod review;
+mod revive;
 mod rig;
 mod screen;
 pub(crate) mod stub;
@@ -288,7 +291,9 @@ async fn ledger_read_failure_is_logged() {
     let sandbox = Sandbox::new("triage-ledger-read").unwrap();
     seed(&sandbox, &one()).unwrap();
     sandbox
-        .seed("DROP TABLE batches; CREATE TABLE batches (id INTEGER);")
+        .seed(
+            "DROP TABLE batches; CREATE TABLE batches (id INTEGER, state TEXT, revivals INTEGER);",
+        )
         .unwrap();
     let logs = logged(&sandbox, &json!({}), QUICK).await.unwrap();
     assert!(logs.contains("ledger read failed"));

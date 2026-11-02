@@ -2,7 +2,7 @@ use std::time::Instant;
 
 use serde_json::{Value, from_str, json};
 
-use super::desk::Packed;
+use super::desk::{Packed, Sorted};
 use super::trace::{Outcome, external};
 use super::{HOUR_MS, NONE, Shift, current, number, retry_before, text};
 use crate::http::Call;
@@ -12,11 +12,27 @@ const READY: &str = "ready";
 const SENT: &str = "sent";
 const URGENT: &str = "urgent";
 
-fn alerts(_shift: &Shift<'_>, topics: &[Value], batch_id: u64) -> Vec<Value> {
+fn alerts(shift: &Shift<'_>, found: &Sorted, batch_id: u64) -> Vec<Value> {
     let now = now_ms();
-    topics
+    let lookback = shift.triage.lookback_ms();
+    let lines = shift.ledger.batch_lines(&json!({"batch_id": batch_id}));
+    let fresh: Vec<&str> = lines
         .iter()
-        .filter(|topic| text(topic, "urgent") == URGENT)
+        .filter(|line| {
+            number(line, "created_at_ms").saturating_sub(number(line, "occurred_at_ms")) <= lookback
+        })
+        .map(|line| text(line, "key"))
+        .collect();
+    let live: Vec<&str> = found
+        .placements()
+        .iter()
+        .filter(|placement| fresh.contains(&text(placement, "key")))
+        .map(|placement| text(placement, "topic"))
+        .collect();
+    found
+        .topics()
+        .iter()
+        .filter(|topic| text(topic, "urgent") == URGENT && live.contains(&text(topic, "topic")))
         .map(|topic| {
             json!({
                 "at_ms": now,
@@ -51,19 +67,30 @@ fn judge(shift: &Shift<'_>, batch: &Value, reply: Result<String, String>) {
                     "placements": found.placements(),
                     "topics": found.topics(),
                 }),
-                &alerts(shift, found.topics(), batch_id),
+                &alerts(shift, &found, batch_id),
             );
             tracing::info!(saved, rows, topics = found.topics().len(), "batch decided");
         }
         (_, outcome) => {
             let reason = outcome.map_or_else(|failed| failed, |_| "bad_answer".to_owned());
+            let max_attempts = shift.triage.max_attempts();
             let rows = shift.ledger.fail_batch(&json!({
                 "at_ms": now,
                 "id": batch_id,
-                "max_attempts": shift.triage.max_attempts(),
+                "max_attempts": max_attempts,
                 "reason": reason,
             }));
-            tracing::warn!(rows, reason, "decision failed");
+            let attempt = number(batch, "attempts").saturating_add(1);
+            let limit =
+                u64::from(max_attempts).saturating_mul(number(batch, "revivals").saturating_add(1));
+            tracing::warn!(
+                batch_id,
+                rows,
+                reason,
+                attempt,
+                exhausted = attempt >= limit,
+                "decision failed"
+            );
         }
     }
 }
@@ -87,6 +114,18 @@ fn packed(shift: &Shift<'_>, batch_id: u64, rules: &Value) -> Option<Packed> {
     }))
 }
 
+fn quota_full(shift: &Shift<'_>) -> bool {
+    let used = shift.ledger.requests_since(&json!({
+        "since_ms": now_ms().saturating_sub(HOUR_MS),
+    }));
+    let limit = u64::from(shift.triage.max_decisions_per_hour());
+    let full = if used >= limit { "full" } else { "" };
+    if shift.noted("decisions", full) {
+        tracing::info!(used, limit, "decision quota reached");
+    }
+    !full.is_empty()
+}
+
 fn repacked(shift: &Shift<'_>, batch: &Value) -> Option<Value> {
     let batch_id = number(batch, "id");
     let (rules, rev) = current(shift);
@@ -97,6 +136,7 @@ fn repacked(shift: &Shift<'_>, batch: &Value) -> Option<Value> {
     Some(json!({
         "attempts": number(batch, "attempts"),
         "id": batch_id,
+        "revivals": number(batch, "revivals"),
         "layout": found.layout().to_string(),
         "payload": found.body(),
         "rev": rev,
@@ -124,6 +164,7 @@ async fn request(shift: &mut Shift<'_>, batch: &Value) -> Option<Option<Result<S
         "rev": number(batch, "rev"),
     });
     if shift.ledger.claim_batch(&claim) == 0 {
+        tracing::info!(batch_id = number(batch, "id"), "batch claim skipped");
         return Some(None);
     }
     let started = Instant::now();
@@ -155,6 +196,16 @@ async fn request(shift: &mut Shift<'_>, batch: &Value) -> Option<Option<Result<S
     Some(Some(done.map(|reply| reply.body().to_owned())))
 }
 
+fn revive(shift: &Shift<'_>) {
+    let revived = shift.ledger.revive(&json!({
+        "max_revivals": shift.triage.max_revivals(),
+        "retry_before_ms": retry_before(shift),
+    }));
+    if revived > 0 {
+        tracing::info!(revived, "failed batch revived");
+    }
+}
+
 pub(super) fn seal(shift: &Shift<'_>) {
     let Some(batch_id) = shift
         .ledger
@@ -162,6 +213,13 @@ pub(super) fn seal(shift: &Shift<'_>) {
         .first()
         .map(|row| number(row, "batch_id"))
     else {
+        let stuck = shift.ledger.stuck(&json!({"after": NONE}));
+        let first = stuck.first();
+        let state = first
+            .map_or_default(|row| format!("{}@{}", text(row, "reason"), number(row, "batch_id")));
+        if shift.noted("seal", &state) {
+            tracing::info!(state, "batch waiting");
+        }
         return;
     };
     let lines = shift.ledger.batch_lines(&json!({"batch_id": batch_id}));
@@ -193,19 +251,15 @@ pub(super) fn seal(shift: &Shift<'_>) {
 }
 
 pub(super) async fn send(shift: &mut Shift<'_>) -> Option<()> {
+    revive(shift);
     let due = shift.ledger.next_batch(&json!({
         "max_attempts": shift.triage.max_attempts(),
         "retry_before_ms": retry_before(shift),
     }));
     for batch in &due {
         let stored = batch.get("answer").and_then(Value::as_str);
-        if stored.is_none() {
-            let used = shift.ledger.requests_since(&json!({
-                "since_ms": now_ms().saturating_sub(HOUR_MS),
-            }));
-            if used >= u64::from(shift.triage.max_decisions_per_hour()) {
-                return Some(());
-            }
+        if stored.is_none() && quota_full(shift) {
+            return Some(());
         }
         if let Some(body) = stored {
             judge(shift, batch, Ok(body.to_owned()));

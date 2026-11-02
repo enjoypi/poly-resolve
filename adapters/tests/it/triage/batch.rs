@@ -13,6 +13,20 @@ const SHORT_LOOKBACK: u64 = 1_000;
 const TWO: u32 = 2;
 
 #[tokio::test]
+async fn disabling_keeps_the_backlog() {
+    let sandbox = Sandbox::new("batch-lookback-disable").unwrap();
+    seed(&sandbox, &one()).unwrap();
+    let patch = json!({"limits": {"lookback_ms": SHORT_LOOKBACK}});
+    start(&sandbox, &json!({}), QUICK).await.unwrap();
+    seed_from(&sandbox, &[(SECOND, "u1", "c1", "still down")], LATER).unwrap();
+    start(&sandbox, &json!({"mode": "disabled"}), QUICK)
+        .await
+        .unwrap();
+    start(&sandbox, &patch, QUICK).await.unwrap();
+    assert_eq!(calls(&sandbox, "decide").unwrap(), 2);
+}
+
+#[tokio::test]
 async fn empty_batches_close_while_the_previous_one_waits() {
     let sandbox = Sandbox::new("batch-overlap-empty").unwrap();
     seed(&sandbox, &three()).unwrap();
@@ -113,20 +127,6 @@ async fn lookback_continues_backlog_after_restart() {
             format!("{SECOND}|approved||2")
         ]
     );
-}
-
-#[tokio::test]
-async fn lookback_reanchors_after_disable() {
-    let sandbox = Sandbox::new("batch-lookback-disable").unwrap();
-    seed(&sandbox, &one()).unwrap();
-    let patch = json!({"limits": {"lookback_ms": SHORT_LOOKBACK}});
-    start(&sandbox, &json!({}), QUICK).await.unwrap();
-    seed_from(&sandbox, &[(SECOND, "u1", "c1", "still down")], LATER).unwrap();
-    start(&sandbox, &json!({"mode": "disabled"}), QUICK)
-        .await
-        .unwrap();
-    start(&sandbox, &patch, QUICK).await.unwrap();
-    assert_eq!(calls(&sandbox, "decide").unwrap(), 1);
 }
 
 #[tokio::test]

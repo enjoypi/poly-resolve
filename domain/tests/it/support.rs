@@ -1,3 +1,4 @@
+use domain::batches::{Item as Batch, Roster};
 use domain::features::{Call, Context, Origin, Ports, Rules, Target, dispatch};
 use domain::inbox::{Paging, Query, Reader, Row};
 use domain::review::{Docket, Item, Listing, Reason, Ruling};
@@ -33,6 +34,16 @@ impl Docket for Broken {
 
 impl Reader for Broken {
     fn page(&self, _query: &Query) -> Result<Vec<Row>, AppError> {
+        Err(AppError::Storage)
+    }
+}
+
+impl Roster for Broken {
+    fn list(&self, _listing: &Listing<'_>) -> Result<Vec<Batch>, AppError> {
+        Err(AppError::Storage)
+    }
+
+    fn revive(&self, _batch_id: u64) -> Result<Option<String>, AppError> {
         Err(AppError::Storage)
     }
 }
@@ -132,7 +143,15 @@ impl Fixture {
         docket: &dyn Docket,
         call: &Call<'_>,
     ) -> Result<String, AppError> {
-        self.dispatch_both(Ports::new(&Rows::default(), docket), call)
+        self.dispatch_both(Ports::new(&Rows::default(), docket, &Pool::default()), call)
+    }
+
+    pub(crate) fn dispatch_roster(
+        &self,
+        roster: &dyn Roster,
+        call: &Call<'_>,
+    ) -> Result<String, AppError> {
+        self.dispatch_both(Ports::new(&Rows::default(), &Dock::default(), roster), call)
     }
 
     pub(crate) fn dispatch_with(
@@ -140,7 +159,7 @@ impl Fixture {
         reader: &dyn Reader,
         call: &Call<'_>,
     ) -> Result<String, AppError> {
-        self.dispatch_both(Ports::new(reader, &Dock::default()), call)
+        self.dispatch_both(Ports::new(reader, &Dock::default(), &Pool::default()), call)
     }
 
     pub(crate) const fn errors(&self) -> &Errors {
@@ -157,6 +176,57 @@ impl Fixture {
             paging: from_str(PAGING)?,
             reasons: from_str(REASONS)?,
         })
+    }
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct Pool(Vec<(u64, String)>);
+
+impl Pool {
+    pub(crate) fn new(items: &[(u64, &str)]) -> Self {
+        Self(
+            items
+                .iter()
+                .map(|&(batch_id, state)| (batch_id, state.to_owned()))
+                .collect(),
+        )
+    }
+}
+
+impl Roster for Pool {
+    fn list(&self, listing: &Listing<'_>) -> Result<Vec<Batch>, AppError> {
+        let limit = usize::try_from(listing.limit()).unwrap_or(usize::MAX);
+        self.0
+            .iter()
+            .filter(|entry| entry.1 == listing.state())
+            .take(limit)
+            .map(|entry| {
+                let (batch_id, state) = (entry.0, &entry.1);
+                from_value(json!({
+                    "attempts": BATCH,
+                    "batch_id": batch_id,
+                    "lines": BATCH,
+                    "reason": "http:500",
+                    "state": state,
+                    "updated_at_ms": STAMP,
+                }))
+                .map_err(|_err| AppError::Storage)
+            })
+            .collect()
+    }
+
+    fn revive(&self, batch_id: u64) -> Result<Option<String>, AppError> {
+        Ok(self
+            .0
+            .iter()
+            .find(|entry| entry.0 == batch_id)
+            .map(|entry| {
+                if entry.1 == "failed" {
+                    "ready".to_owned()
+                } else {
+                    entry.1.clone()
+                }
+            }))
     }
 }
 

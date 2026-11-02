@@ -71,6 +71,16 @@ fn open_fails_on_non_database_file() {
 }
 
 #[test]
+fn open_fails_when_batches_cannot_gain_revivals() {
+    let sandbox = Sandbox::new("store-batches-view").unwrap();
+    sandbox
+        .seed("CREATE VIEW batches AS SELECT 1 AS id;")
+        .unwrap();
+    let err = Archive::open(&sandbox.database(), BUSY).unwrap_err();
+    assert!(err.to_string().contains("view"), "{err}");
+}
+
+#[test]
 fn open_fails_when_topics_cannot_be_inspected() {
     let sandbox = Sandbox::new("store-topics-broken").unwrap();
     sandbox

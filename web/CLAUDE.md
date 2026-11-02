@@ -14,7 +14,7 @@
 
 ## 入口与模块
 
-- `index.html` 是入口，`<link>` 引入 `src/style.css` 与 `src/favicon.svg`；`src/main.ts` 用 `connect(location.origin)` 按 `location.hash` 调 `renderMessages` 或（`REVIEW_HASH`）`renderReviews`，`hashchange` 时整页重载
+- `index.html` 是入口，`<link>` 引入 `src/style.css` 与 `src/favicon.svg`；`src/main.ts` 用 `connect(location.origin)` 按 `location.hash` 调 `renderMessages`、（`REVIEW_HASH`）`renderReviews` 或（`FAILED_HASH`）`renderFailed`，并在前两页的 `.bar` 追加下一页链接，`hashchange` 时整页重载
 - `bun run build` 把产物平铺写到 `dist/`（已忽略），由 `cli serve` 的 `web_dir` 托管，不清旧产物；`bun build` 会按哈希重命名资源并改写引用
 - `src/` 保持平铺（contract 测试只扫这一层；改成子目录须同步改扫描范围）；一个模块一件事，文件名即职责，以下几个需注明：
   - `messages.ts`：`renderMessages(client, root, timeZone?)`，只构造 `Board`
@@ -23,6 +23,8 @@
   - `columns.ts`：列推断与显示值
   - `view.ts`：排序、筛选，纯函数
   - `reviews.ts`：`renderReviews(client, root, timeZone?)`，只构造 `Queue`
+  - `failed.ts`：`renderFailed(client, root, timeZone?)`，失败批页
+  - `dom.ts`：`area`、`button`，审核页与失败批页共用
 - `config.ts` 是前端唯一的常量源：字段呈现表 `FIELDS`（标签、类型、默认隐藏、回退字段、占位、`look`、`primary`）、`DETAIL`、`PIN`、`TEXT` 及各项上限与时长；`PAGE_LIMIT` 须不超过 `cli/config.yaml` 的 `messages.max`
 - 字段：新增字段不必改 `config.ts`；已登记 `priority`（数字，默认显示）、`topic` 与 `analysis`（默认隐藏）；未登记的字段按值推断（键以 `_ms` 结尾的整数为时间，全数值为数字，其余为文本）并默认显示
 - 正文、发送人等一律 `textContent`、`createElement`、`createTextNode` 写入，禁 `innerHTML`；出错只显示错误 `code`，网络失败显示 `unreachable`；空值占位在 `FIELDS` 里
@@ -47,6 +49,10 @@
 - 每行一张卡片：批号、会话、发送人、时间、脱敏文字、“通过”、原因下拉、漏脱敏类原因（`ReviewReason.placeholder` 非空）才出现的 `textarea`、“拒绝”；成功后移除卡片，失败显示错误码
 - 安全：文字只经 `textContent` 写入 `<pre>`，不渲染；拒绝按钮在选了原因前禁用，漏脱敏类原因还须粘贴非空原文；`textarea` 设 `autocomplete=off`，提交后无论成败都清空；不填审核人、不带 `x-user`
 - happy-dom 无全局 `Option`，下拉项用 `createElement("option")`
+
+## 失败批页
+
+- `GET /api/batches` 取 `REVIEW_LIMIT` 条失败批，每批一张卡片（复用审核页样式类）：批号、时间、`TEXT.failedMeta`（尝试次数、已通过条数、原因）与“重发”；重发 `PATCH /api/batches/{batch_id}` 请求体 `{state:"ready"}`，成功移除卡片，失败显示错误码；不自动轮询
 
 ## 样式与视觉
 

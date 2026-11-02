@@ -3,13 +3,21 @@ use serde_json::json;
 
 use crate::support::{Fixture, local};
 
-static ROUTES: [Bound; 4] = [
+static ROUTES: [Bound; 6] = [
+    ("batches", "list", "get", "/api/batches"),
+    ("batches", "update", "patch", "/api/batches/{batch_id}"),
     ("health", "check", "get", "/api/health"),
     ("messages", "list", "get", "/api/messages"),
     ("review", "list", "get", "/api/reviews"),
     ("review", "update", "patch", "/api/reviews/{key}"),
 ];
-static SCHEMAS: [&str; 12] = [
+static SCHEMAS: [&str; 18] = [
+    "BatchItem",
+    "BatchKey",
+    "BatchListRequest",
+    "BatchListResponse",
+    "BatchStateResponse",
+    "BatchUpdateRequest",
     "ErrorBody",
     "HealthCheckResponse",
     "MessagesListItem",
@@ -31,7 +39,7 @@ type Failure<'name> = (&'name str, Vec<u16>);
 #[test]
 fn describes_health_route() {
     let listing = build();
-    let entry = listing.entries().first().unwrap();
+    let entry = listing.entries().get(2).unwrap();
     assert_eq!(entry.params(), None);
     assert_eq!(entry.body(), None);
     assert_eq!(
@@ -55,7 +63,7 @@ fn describes_health_route() {
 #[test]
 fn describes_review_update_route() {
     let listing = build();
-    let entry = listing.entries().get(3).unwrap();
+    let entry = listing.entries().get(5).unwrap();
     assert_eq!(
         entry.params(),
         Some(&json!({"$ref": "#/components/schemas/ReviewKey"}))
@@ -93,6 +101,8 @@ fn lists_failures_per_route() {
     assert_eq!(
         failing,
         [
+            ("batches", vec![400, 503]),
+            ("batches", vec![400, 404, 409, 503]),
             ("health", vec![]),
             ("messages", vec![400, 503]),
             ("review", vec![400, 503]),

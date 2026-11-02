@@ -10,8 +10,8 @@
 - `config.rs`：`Settings`（cli 配置的 `ingest` 段，`deny_unknown_fields`）：共享项与 `sources`；`verify`（非空、无无类型项、标签不重复，cli 加载时调用）、`check`（各源自检并发）、`missing`、`profile(标签)`、`prepare`（建库建表开 WAL，cli 起任务前同步调一次，免得多连接同时首次切 WAL 互锁成 `database is locked`）
 - `ingest.rs`：`Source`（每个可选字段一种类型，目前只有 `dingtalk`；不用枚举，因引用上 match 枚举撞 `pattern_type_mismatch`，取值一律 `Option` 组合子）、`Site`（`Settings` 与 `&Context` 打包）、`Profile`（本人、通知会话、密文长度，均可空，供 triage 按消息来源判定）、`label(来源, 账号)`、`run(site, source, stop)` 按类型分派
 - `store.rs`：
-  - `connect(path, busy_ms)`：`busy_timeout`、`journal_mode = WAL`、`synchronous = NORMAL` 与 `SCHEMA`，`Archive::open`、`Ledger::open`、`Settings::prepare` 共用
-  - `Shelf`：`inbox::Reader` 与 `review::Docket` 的 SQLite 实现，`Settings::shelf()` 构造；每次调用才打开（删库造 503 的用例依赖它，不改成长连接）并设 `busy_timeout`，`page`、`list`、`source` 只读（`SQLITE_OPEN_READ_ONLY`），`settle` 读写，都不建库不建表
+  - `connect(path, busy_ms)`：`busy_timeout`、`journal_mode = WAL`、`synchronous = NORMAL` 与 `SCHEMA`，`Archive::open`、`Ledger::open`、`Settings::prepare` 共用；旧库缺列由 `ensure(conn, Column)` 补（`topics.until_key`；`batches.revivals`，补列时把已有 `failed` 批的 `revivals` 置 -1，表示不自动重来、只等人工重发）
+  - `Shelf`：`inbox::Reader`、`review::Docket` 与 `batches::Roster` 的 SQLite 实现，`Settings::shelf()` 构造；每次调用才打开（删库造 503 的用例依赖它，不改成长连接）并设 `busy_timeout`，`page`、`list`、`source` 只读（`SQLITE_OPEN_READ_ONLY`），`settle`、`revive` 读写，都不建库不建表；`revive` 只把 `failed` 且当前没有 `ready` 批的批置回 `ready`，`revivals` 取 `MAX(revivals, 0) + 1`，返回该批当前状态
   - `page`：单条 SQL 用 `json_group_array(json_object(…))` 取回再反序列化成 `Row`，不按来源过滤，行值比较 `(occurred_at_ms, key) < (游标)` 翻页，叠加 `Query` 的时间范围 `[since, until)`（走 `messages_by_when` 索引）；失败记 warn 并返回 `AppError::Storage`
   - `settle`：`Transaction::new_unchecked(Immediate)` 一个事务里先写 `learned_rules`（`INSERT OR IGNORE`，仅当该行仍是 `pending`），再 `UPDATE … WHERE state = 'pending'`，最后读回当前状态
   - `Archive`：`INSERT OR IGNORE … json_each` 直接吃 domain 返回的 JSON（`save_event` 包成数组，`save_page` 取 `$.envelopes`）；水位取 `MAX(occurred_at_ms)`，不另建表；错误装箱
@@ -49,20 +49,20 @@
 
 ## 分级与转交
 
-- `triage::run(setup, lane, stop)` 返回 `()`，永不使 serve 退出；每条 lane 各开一个账本连接，打开失败记 error 后返回。`mode: disabled` 只记录开关状态；首次启用把 `now - lookback_ms` 固化到 `triage_state`，重启不前移，明确禁用后再启用才重新锚定
+- `triage::run(setup, lane, stop)` 返回 `()`，永不使 serve 退出；每条 lane 各开一个账本连接，打开失败记 error 后返回。`mode: disabled` 只记录开关状态；首次启用把 `now - lookback_ms` 固化到 `triage_state`，重启与停用后再启用都不前移；`intake` 的实际下界取锚点与 `now - backlog_max_ms` 的较大者，被截掉时记一条 info `backlog older than backlog_max_ms left out`
 - `Lane::Batches` 每轮：`intake` → `rerender` → `form` → `screen` → `seal` → `send` → 睡 `poll_ms`；`Lane::Alerts` 每轮：激活等待项 → 并行分析与通知 → 睡 `poll_ms`；两条 lane 并行，独立话题的外部调用用 `join_all` 并行，SQLite 读写与 claim 在调用前后串行；每个状态只有一个 lane 消费，不需认领中间态；`exec` 与 HTTP 经 `race` 打断，被打断返回 `None` 逐层 `?` 退出
 - 先记账再调用：外部调用前 `claim_*` 把状态尝试与 `calls` 流水写在同一事务（`attempts + 1`、`updated_at_ms` 置当前，`WHERE state = 起点 AND attempts < max_attempts`），影响 0 行不调用；被停机打断则 `release_*` 删除流水并退回尝试。失败请求保留流水，`requests_since` 按 `calls` 计实际请求；失败只写 `reason` 并在 `attempts ≥ max_attempts` 时转 `failed`；`next_*` 跳过已用尽次数的
-- `intake`：`Ledger::unlined` 取 `triage_state.since_ms` 起还没有 `lines` 行的消息，从新到旧，每轮至多 `intake` 条；逐条调 domain `triage.line`（规则无效则记 warn、该条留待下一轮），写 `lines`（`INSERT OR IGNORE`，`queued` 或带原因 `skipped`，`rules_rev` 记当时最大的规则 id）
+- `intake`：`Ledger::unlined` 取上述下界起还没有 `lines` 行的消息，从新到旧，每轮至多 `intake` 条；逐条调 domain `triage.line`（规则无效则记 warn、该条留待下一轮），写 `lines`（`INSERT OR IGNORE`，`queued` 或带原因 `skipped`，`rules_rev` 记当时最大的规则 id）
 - `rerender`：把 `rules_rev` 落后的 `queued/pending/leaked/screening` 行经 domain `redact` 重新脱敏，`leaked` 行回到 `pending`
-- `form`：没有未封批（有行 `batch_id > 0` 但 `batches` 里没有该批）时，把最新的至多 `batch` 条 `queued` 行编入新批（批号＝最大批号 + 1）；未配 `triage.screen` 时状态按 `review.mode` 为 `pending`（审核人空）或 `approved`（审核人 `auto`），配了则为 `screening`
+- `form`：没有未封批（有行 `batch_id > 0` 但 `batches` 里没有该批）时，把至多 `batch` 条 `queued` 行编入新批（批号＝最大批号 + 1）：有发生时间早于 `now - lookback_ms` 的 `queued` 行时从旧到新取，否则从新到旧；未配 `triage.screen` 时状态按 `review.mode` 为 `pending`（审核人空）或 `approved`（审核人 `auto`），配了则为 `screening`
 - `screen`（可选）：取至多 `batch` 条 `screening` 行（`reason = 'deferred'` 的要等过 `retry_after_ms`），连同开放话题调 domain `triage.screen`，经 HTTP 发给本机模型，响应交 domain `triage.screened`，写回 `lines.text/flag/hints`；`manual` 转 `pending`，`auto` 时 `flag` 非空转 `rejected`（原因 `screen`）、其余转 `approved`；失败（连接、状态、超时、无法解析）整批标 `deferred` 不放行
 - `seal`（`Ledger::sealable`）：批内无 `screening/pending/leaked` 行，且没有其他批处于 `ready`（或本批没有已通过行）时，取已通过的行，加上开放话题（`last_at_ms` 在 `session_max_ms` 内，至多 `topics_max_open` 个）和各会话仍开放的话题（`attach`），调 domain `triage.pack` 得冻结的请求体与 `layout`，写 `batches`（`ready`）；没有已通过的行则直接写 `sent`、`payload` 为空关批
-- `send`：按 `calls` 中实际决策请求数（`max_decisions_per_hour`）取最早的 `ready` 批；限额只阻止新请求，已存应答仍可重放
+- `send`：先自动重来至多一个 `failed` 批（`REVIVE`：失败超过 `retry_after_ms`、`0 ≤ revivals < max_revivals`、当前没有 `ready` 批），再按 `calls` 中实际决策请求数（`max_decisions_per_hour`）取最早的 `ready` 批；限额只阻止新请求，已存应答仍可重放；尝试上限为 `max_attempts × (revivals + 1)`，`attempts` 不归零，故 `calls` 主键 `(kind, subject, attempt)` 不冲突；`BATCH_SEAL` 写 `ready` 前同样要求没有 `ready` 批，防人工重发与封批并发
   - 没有已存应答时，每次尝试前用 `packed` 按当前规则、开放话题与 `attach` 重新打包；新 `payload`、`layout` 随 `BATCH_CLAIM` 在同一语句写回，该语句要求不存在 id 大于打包所用 rev 的 `learned_rules`，否则不 claim、下轮重打包；外发与判答都用新打包结果；“一次只外发一批”由 `SEALABLE` 保证，`BATCH_NEXT` 的退避条件会跳过等待中的批
   - URL 与 key 经 HTTP 配置从环境变量读取，请求体走 JSON POST，argv 不含密钥；响应交 domain `triage.sort`
   - 失败（连接、HTTP 状态、超时、响应无法解析）`reason` 为 `connect`、`proxy_connect`、`proxy:<码>`、`http:<码>`、`timeout:<阶段>`、`io`、`bad_answer` 或 URL 校验错误，达 `max_attempts` 转 `failed`
   - 成功先把应答写进 `answers`，写不进就不调用 `apply`；再经 `Ledger::apply` 一个事务写结果；`next_batch` 带出已存的应答，有则直接重放、不再外发，故 `apply` 失败不会重复调用决策接口
-  - `apply` 事务：写 `placements`；写 `topics`（`ON CONFLICT` 取概率最大值与最近时间）；对 `urgent` 话题开 `alerts`（键 `<话题>@<批号>`，初始 `waiting`，同话题等待项合并）；批置 `sent` 且 `attempts` 归零；崩溃发生在存应答前则整批重发
+  - `apply` 事务：写 `placements`；写 `topics`（`ON CONFLICT` 取概率最大值与最近时间）；对 `urgent` 且含新行（`created_at_ms - occurred_at_ms ≤ lookback_ms`）的话题开 `alerts`（键 `<话题>@<批号>`，初始 `waiting`，同话题等待项合并），只含积压行的话题不转交；批置 `sent` 且 `attempts` 归零；崩溃发生在存应答前则整批重发
 - `analyze`：取当前可转交的 `pending` 项（按 `calls` 检查小时额度与同话题冷却），话题的已通过行（`Ledger::topic_lines`）交 domain `triage.brief`
   - 话题 ID 与 Codex 会话 ID 相同。首次返回 `thread_id` 时，事务内迁移临时话题 ID 并级联 `placements/alerts/calls`，并在 `topic_aliases` 记下旧 ID（先把指向旧 ID 的别名改指新 ID，保持一跳）；`MIGRATE` 同样写别名；`PLACE`、`TOPICS`、`OPEN_ALERT` 与 `BATCH_LINES` 的 hints 经别名解析，旧 layout 与旧提示写回时落到新 ID；`thread_at_ms` 在 `session_max_ms` 内则续写：`followup` 模板、只含 `(until_ms, until_key)` 之后的行、命令追加 `session.resume`；否则新建：`prompt` 模板、追加 `session.fresh`
   - codex 的 stdin 传提示词，stdout 是 `--json` 事件流，经 domain `triage.reply` 取会话 ID 与最终回复；退出非 0、输出无法解析、回复为空都算失败，空输出的 `reason` 为 `exit:0`
@@ -75,10 +75,11 @@
 - 停机：在途子进程被打断并 kill，状态不改，下次启动续做（至少一次，发送靠幂等键去重）
 - 排查（只读：`sqlite3 -readonly <store_path>`，WAL 下库所在目录须可写以建 `-shm`）：
   - `lines` 按 `state, reason` 计数，本人、通知会话、空正文、密文均为 `skipped`
-  - `batches` 由 `ready` 变 `sent`；`failed` 的批不自动重试；`answers` 存决策应答
+  - `batches` 由 `ready` 变 `sent`；`failed` 的批按 `max_revivals` 自动重来，`revivals = -1` 的旧批只能人工重发；`answers` 存决策应答
   - 已通过的行都有 `placements`
   - `alerts` 由 `waiting` → `pending` → `analyzed` → `sent`；冷却或限额时停在 `pending`，不丢消息
-  - 日志关键词：`batch formed`、`batch sealed`、`batch decided`、`alert analyzed`、`alert sent`，WARN `decision failed`、`alert analysis failed`、`alert step failed`
+  - 日志关键词：`batch formed`、`batch sealed`、`batch decided`、`alert analyzed`、`alert sent`、`failed batch revived`，WARN `decision failed`（带 `batch_id`、`attempt`、`exhausted`）、`alert analysis failed`、`alert step failed`
+  - 等待原因只在变化时记一条 info（`Shift::noted` 按主题记上次原因）：`decision quota reached`、`handoff held`（`reason` 为 `quota` 或 `cooldown`）、`batch waiting`（`state` 为 `review@<批号>` 或 `sending@<批号>`）、`backlog … left out`；`batch claim skipped` 表示打包后又学到规则、下轮重打包
 
 ## 新增数据源
 

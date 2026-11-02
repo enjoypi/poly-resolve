@@ -39,6 +39,10 @@ fn spec_declares_statuses_per_operation() {
         ["200", "400", "403", "404", "409", "415", "422", "503"]
     );
     assert_eq!(
+        statuses("/paths/~1api~1batches~1{batch_id}/patch/responses"),
+        ["200", "400", "403", "404", "409", "415", "503"]
+    );
+    assert_eq!(
         document.pointer("/paths/~1api~1messages/get/responses/503/description"),
         Some(&json!("storage unavailable"))
     );
@@ -49,6 +53,8 @@ fn spec_declares_statuses_per_operation() {
     assert_eq!(
         paths,
         [
+            "/api/batches",
+            "/api/batches/{batch_id}",
             "/api/health",
             "/api/messages",
             "/api/reviews",

@@ -24,10 +24,12 @@ pub(super) fn form(shift: &Shift<'_>) {
         (false, true) => (APPROVED, AUTO),
         (false, false) => (PENDING, ""),
     };
+    let now = now_ms();
     let formed = shift.ledger.form(&json!({
-        "at_ms": now_ms(),
+        "at_ms": now,
         "limit": shift.triage.batch(),
         "reviewer": reviewer,
+        "stale_before_ms": now.saturating_sub(shift.triage.lookback_ms()),
         "state": state,
     }));
     if formed > 0 {
@@ -42,9 +44,18 @@ pub(super) fn intake(shift: &Shift<'_>) {
         "since_ms": now.saturating_sub(shift.triage.lookback_ms()),
     }));
     let messages = since.map_or_default(|since_ms| {
+        let floor = since_ms.max(now.saturating_sub(shift.triage.backlog_max_ms()));
+        let capped = if floor > since_ms { "capped" } else { "" };
+        if shift.noted("backlog", capped) {
+            tracing::info!(
+                since_ms,
+                floor,
+                "backlog older than backlog_max_ms left out"
+            );
+        }
         shift.ledger.unlined(&json!({
             "limit": shift.triage.intake(),
-            "since_ms": since_ms,
+            "since_ms": floor,
         }))
     });
     let (rules, rev) = current(shift);

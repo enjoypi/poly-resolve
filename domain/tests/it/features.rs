@@ -1,3 +1,4 @@
+mod batches;
 mod health;
 mod ingest;
 mod messages;

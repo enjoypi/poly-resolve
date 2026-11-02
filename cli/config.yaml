@@ -102,6 +102,7 @@ triage:
     timeout_ms: 35000
     url: "${DECISIONS_URL}"
   limits:
+    backlog_max_ms: 21600000
     batch: 20
     handoff_cooldown_ms: 600000
     intake: 200
@@ -109,6 +110,7 @@ triage:
     max_attempts: 3
     max_decisions_per_hour: 30
     max_handoffs_per_hour: 1
+    max_revivals: 2
     parallel: 4
     poll_ms: 5000
     retry_after_ms: 60000

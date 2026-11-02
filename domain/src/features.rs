@@ -1,8 +1,10 @@
+mod batches;
 pub mod catalog;
 mod health;
 mod ingest;
 mod messages;
 mod review;
+mod routes;
 mod triage;
 
 use std::time::Instant;
@@ -13,182 +15,11 @@ use serde::de::DeserializeOwned;
 use serde_json::{from_str, to_string};
 use serde_urlencoded::from_str as from_query;
 
+use self::routes::ROUTES;
+use crate::batches::Roster;
 use crate::inbox::{Paging, Reader};
 use crate::review::{Docket, Reason};
 use crate::{AppError, Errors};
-
-static ROUTES: [Route; 19] = [
-    Route {
-        action: "check",
-        call: |_call, _context| Ok(to_string(&health::check()).unwrap_or_default()),
-        failures: &[],
-        feature: "health",
-        http: Http::Bound("get", "/api/health", bare::<health::Response>),
-        trace: Trace::Full,
-    },
-    Route {
-        action: "assemble",
-        call: |call, _context| typed(call.request, ingest::assemble),
-        failures: &[],
-        feature: "ingest",
-        http: Http::Hidden,
-        trace: Trace::Redacted,
-    },
-    Route {
-        action: "cipher",
-        call: |call, _context| typed(call.request, ingest::cipher),
-        failures: &[],
-        feature: "ingest",
-        http: Http::Hidden,
-        trace: Trace::Redacted,
-    },
-    Route {
-        action: "parse_event",
-        call: |call, _context| fallible(call.request, ingest::parse_event),
-        failures: &[],
-        feature: "ingest",
-        http: Http::Hidden,
-        trace: Trace::Redacted,
-    },
-    Route {
-        action: "parse_page",
-        call: |call, _context| fallible(call.request, ingest::parse_page),
-        failures: &[],
-        feature: "ingest",
-        http: Http::Hidden,
-        trace: Trace::Redacted,
-    },
-    Route {
-        action: "reveal",
-        call: |call, _context| typed(call.request, ingest::reveal),
-        failures: &[],
-        feature: "ingest",
-        http: Http::Hidden,
-        trace: Trace::Redacted,
-    },
-    Route {
-        action: "window",
-        call: |call, _context| fallible(call.request, ingest::window),
-        failures: &[],
-        feature: "ingest",
-        http: Http::Hidden,
-        trace: Trace::Full,
-    },
-    Route {
-        action: "list",
-        call: |call, context| listed(call.params, context, messages::list),
-        failures: &[AppError::BadRequest, AppError::Storage],
-        feature: "messages",
-        http: Http::Bound(
-            "get",
-            "/api/messages",
-            asked::<messages::ListRequest, messages::ListResponse>,
-        ),
-        trace: Trace::Redacted,
-    },
-    Route {
-        action: "list",
-        call: |call, context| listed(call.params, context, review::list),
-        failures: &[AppError::BadRequest, AppError::Storage],
-        feature: "review",
-        http: Http::Bound(
-            "get",
-            "/api/reviews",
-            asked::<review::ListRequest, review::ListResponse>,
-        ),
-        trace: Trace::Redacted,
-    },
-    Route {
-        action: "update",
-        call: |call, context| keyed(call, context, review::update),
-        failures: &[
-            AppError::BadRequest,
-            AppError::NotFound,
-            AppError::Conflict,
-            AppError::Unprocessable,
-            AppError::Storage,
-        ],
-        feature: "review",
-        http: Http::Bound(
-            "patch",
-            "/api/reviews/{key}",
-            changed::<review::Key, review::Update, review::RulingResponse>,
-        ),
-        trace: Trace::Redacted,
-    },
-    Route {
-        action: "brief",
-        call: |call, _context| fallible(call.request, triage::prompt::brief),
-        failures: &[],
-        feature: "triage",
-        http: Http::Hidden,
-        trace: Trace::Redacted,
-    },
-    Route {
-        action: "line",
-        call: |call, _context| fallible(call.request, triage::line::line),
-        failures: &[],
-        feature: "triage",
-        http: Http::Hidden,
-        trace: Trace::Redacted,
-    },
-    Route {
-        action: "notice",
-        call: |call, _context| typed(call.request, triage::prompt::notice),
-        failures: &[],
-        feature: "triage",
-        http: Http::Hidden,
-        trace: Trace::Redacted,
-    },
-    Route {
-        action: "pack",
-        call: |call, _context| fallible(call.request, triage::pack::pack),
-        failures: &[],
-        feature: "triage",
-        http: Http::Hidden,
-        trace: Trace::Redacted,
-    },
-    Route {
-        action: "redact",
-        call: |call, _context| fallible(call.request, triage::redact::redact),
-        failures: &[],
-        feature: "triage",
-        http: Http::Hidden,
-        trace: Trace::Redacted,
-    },
-    Route {
-        action: "reply",
-        call: |call, _context| fallible(call.request, triage::reply::reply),
-        failures: &[],
-        feature: "triage",
-        http: Http::Hidden,
-        trace: Trace::Redacted,
-    },
-    Route {
-        action: "screen",
-        call: |call, _context| typed(call.request, triage::screen::screen),
-        failures: &[],
-        feature: "triage",
-        http: Http::Hidden,
-        trace: Trace::Redacted,
-    },
-    Route {
-        action: "screened",
-        call: |call, _context| fallible(call.request, triage::screened::screened),
-        failures: &[],
-        feature: "triage",
-        http: Http::Hidden,
-        trace: Trace::Redacted,
-    },
-    Route {
-        action: "sort",
-        call: |call, _context| fallible(call.request, triage::sort::sort),
-        failures: &[],
-        feature: "triage",
-        http: Http::Hidden,
-        trace: Trace::Redacted,
-    },
-];
 
 type Binding = (&'static str, &'static str, Describer);
 
@@ -257,6 +88,10 @@ impl<'ctx> Context<'ctx> {
     const fn reasons(&self) -> &[Reason] {
         self.rules.reasons
     }
+
+    const fn roster(&self) -> &dyn Roster {
+        self.ports.roster
+    }
 }
 
 type Describer = fn(&mut SchemaGenerator) -> Shapes;
@@ -308,12 +143,21 @@ impl<'call> Origin<'call> {
 pub struct Ports<'ports> {
     docket: &'ports dyn Docket,
     reader: &'ports dyn Reader,
+    roster: &'ports dyn Roster,
 }
 
 impl<'ports> Ports<'ports> {
     #[must_use = "端口需交给 Context"]
-    pub const fn new(reader: &'ports dyn Reader, docket: &'ports dyn Docket) -> Self {
-        Self { docket, reader }
+    pub const fn new(
+        reader: &'ports dyn Reader,
+        docket: &'ports dyn Docket,
+        roster: &'ports dyn Roster,
+    ) -> Self {
+        Self {
+            docket,
+            reader,
+            roster,
+        }
     }
 }
 

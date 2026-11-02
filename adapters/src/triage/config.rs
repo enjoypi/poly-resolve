@@ -73,6 +73,7 @@ impl Exec {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Limits {
+    backlog_max_ms: u64,
     batch: NonZeroU32,
     handoff_cooldown_ms: u64,
     intake: NonZeroU32,
@@ -80,6 +81,7 @@ struct Limits {
     max_attempts: NonZeroU32,
     max_decisions_per_hour: u32,
     max_handoffs_per_hour: u32,
+    max_revivals: u32,
     parallel: NonZeroU32,
     poll_ms: NonZeroU64,
     retry_after_ms: u64,
@@ -209,6 +211,10 @@ pub struct Settings {
 }
 
 impl Settings {
+    pub(crate) const fn backlog_max_ms(&self) -> u64 {
+        self.limits.backlog_max_ms
+    }
+
     pub(crate) const fn batch(&self) -> u32 {
         self.limits.batch.get()
     }
@@ -276,6 +282,10 @@ impl Settings {
 
     pub(crate) const fn max_handoffs_per_hour(&self) -> u32 {
         self.limits.max_handoffs_per_hour
+    }
+
+    pub(crate) const fn max_revivals(&self) -> u32 {
+        self.limits.max_revivals
     }
 
     #[must_use = "缺失的环境变量需报告"]

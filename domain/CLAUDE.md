@@ -7,7 +7,7 @@
 ## 调用
 
 - 业务只经 `features::dispatch(&Context, &Call)` 调用；`Call` 由 `Origin`（transport、session_id、user）、`Target`（feature、action）与 request（JSON 请求体）经各自的 `new` 构造，HTTP 的路径与查询参数经 `with_params` 以 urlencoded 字符串传入
-- `Context::new(errors, Rules, Ports)` 由调用方（cli、adapters）构造：`Rules::new(&Paging, &[Reason], learn_min_chars)`；`Ports::new(reader, docket)`，`reader` 是 `inbox::Reader`（存储读取），`docket` 是 `review::Docket`（审核台读写），均由 adapters 实现
+- `Context::new(errors, Rules, Ports)` 由调用方（cli、adapters）构造：`Rules::new(&Paging, &[Reason], learn_min_chars)`；`Ports::new(reader, docket, roster)`，`reader` 是 `inbox::Reader`（存储读取），`docket` 是 `review::Docket`（审核台读写），`roster` 是 `batches::Roster`（失败批读写），均由 adapters 实现
 - handler 包装：`typed`（`fn(Req) -> Resp`）、`fallible`（`fn(&Req) -> Result`）解 JSON 请求体，供内部动作；`listed`（`fn(&Params, &Context) -> Result`）只解 params；`keyed`（`fn(&Params, Req, &Context) -> Result`）解 params 与请求体；JSON 共用 `decode`，urlencoded 共用 `params`（`serde_urlencoded`）；health 不解码；`Route.call` 为 `fn(&Call, &Context)`，不需要上下文的路由闭包忽略第二个参数
 - `route` 的 `&&` 两侧都要有用例：功能不存在、功能存在而动作不存在、两者都存在
 - `catalog::build` 供 cli 拼路由与 OpenAPI：只列 `Http::Bound(方法, 路径模板, 描述)` 的路由，`Entry` 给出 `method`、`path`、`params`、`body`、`response`；描述函数 `bare`（无参数无请求体）、`asked`（只有 params）、`changed`（params 加请求体）；schema 引用路径为 `/components/schemas`，错误体 `ErrorBody` 取自 `Body`
@@ -15,7 +15,7 @@
 ## 新功能
 
 - 新建 `src/features/<f>.rs`
-- `features.rs` 加 `mod <f>;`，每个 action 在 `ROUTES` 加一项：`call` 按签名选包装，`http` 对外为 `Http::Bound("get"|"patch", "/api/<资源>", 描述)`、内部为 `Http::Hidden`；路由与接口说明共用此表；`features.rs` 已近 512 行，新增功能时把 `ROUTES` 拆到子模块
+- `features.rs` 加 `mod <f>;`，每个 action 在 `features/routes.rs` 的 `ROUTES` 加一项（按 feature 字母序）：`call` 按签名选包装，`http` 对外为 `Http::Bound("get"|"patch", "/api/<资源>", 描述)`、内部为 `Http::Hidden`；路由与接口说明共用此表
 - `ROUTES` 项另有 `failures`：该路由可能返回的全部错误（含 `BadRequest`，如 `messages.list` 为 `[BadRequest, Storage]`），供接口说明声明状态码，须与实际一致
 - 含消息内容的路由标 `Trace::Redacted`
 - 自定义类型的 Req、Resp 派生 `JsonSchema`，并加 `#[schemars(rename = "<Feature><Action>Request")]`（Resp 同理）避免跨功能重名
@@ -71,7 +71,7 @@
 - `screened`（`triage/screened.rs`）：`{lines, min_chars, placeholder, response, topics}` → `{lines[{key,text,flag,hints}]}`；从 `choices[0].message.content` 解出 `{lines[{line,risk,spans,topics}]}`；片段去空白后须不短于 `min_chars` 且是该行文字的子串才用 `placeholder` 遮盖；话题须在给定话题内且去重；`risk == high` 且无可用片段 `flag = unmasked`，缺该行的判断 `flag = missing`；响应无法解析按请求无效
 - `learn`（`triage/learn.rs`，不是路由，供 `review.update`）：粘贴的原文去空白后须不短于 `min_chars` 且是该行文字的子串，转义成字面量正则，否则 `Unprocessable`
 - `transcript.rs`：`Row`（`key?`、`occurred_at_ms,sender,text`，`render` 过 `Mask` 并按 `max` 截断）、`Style`、`fit`（整个 JSON 数组超 `max_chars` 就丢最旧的行，至少留最后一条）
-- 脱敏（`triage/redact.rs`）：`Mask::new(&[Rule])` 编译全部正则，任一无效返回 `BadRequest`（失败即不外发）；`apply` 按序 `replace_all`，placeholder 里可写 `${1}`；`regex` 只开 `std`、`perf`、`unicode-perl`、`unicode-case`，无环视，规则里数字类用 `[0-9]`、不用 `\b`（CJK 属 word 字符）；每次调用现编译，不缓存
+- 脱敏（`triage/redact.rs`）：`Mask::new(&[Rule])` 编译全部正则，任一无效返回 `BadRequest`（失败即不外发）；`apply` 按序 `replace_all`，placeholder 里可写 `${1}`；`regex` 只开 `std`、`perf`、`unicode-perl`、`unicode-case`，无环视，规则里数字类用 `[0-9]`、不用 `\b`（CJK 属 word 字符）；每次调用现编译，不缓存：实测 `cli/config.yaml` 的 25 条规则 release 下每次约 3 ms，intake 每轮至多 `intake` 条，暂不改批量；学到的规则多到每轮耗时明显再改
 - 提示词模板里的“不可信数据”说明在配置里；domain 只做占位符替换
 
 ## review
@@ -88,6 +88,15 @@
 - `settle`：键不存在 `NotFound`；返回状态与本次裁决的 `ruling.state()` 相同回 200（含重复提交），不同即 `Conflict`；请求格式错 `BadRequest`
 - 拒绝的日志只记 `redacted:<字节数>`，粘贴的原文不入日志
 
+## batches
+
+- `Roster`（`batches.rs`，`Debug + Sync`）：`list(&Listing)` → `Vec<Item>`；`revive(batch_id)` → 该批当前状态，不存在为 `None`；失败返回 `AppError::Storage`
+- `Item{attempts,batch_id,lines,reason,state,updated_at_ms}`，`lines` 为已通过的行数
+- 路由（`features/batches.rs`）：
+  - `batches.list`（`listed`，`GET /api/batches`）：查询参数 `limit?, state?`（缺省列 `failed`，条数规则同 `review.list`，共用 `review::limit`）→ `{items}`
+  - `batches.update`（`keyed`，`PATCH /api/batches/{batch_id}`）：请求体 `{state:"ready"}` → `{state}`；返回状态为 `ready` 回 200（含重复提交），否则 `Conflict`，不存在 `NotFound`
+- 不含消息内容，标 `Trace::Full`
+
 ## 错误
 
 - 错误码由调用方经 `Errors`（从配置反序列化）传入；`UnknownAction` 只在按字符串查不到路由时出现（adapters 与测试），HTTP 不会遇到
@@ -103,6 +112,6 @@
 ## 测试
 
 - `tests/it/support.rs`：`local` 构造 adapters 来源的 `Call`（需要参数时 `.with_params`）；`Fixture` 持有 `Errors` 与 `Paging`，`dispatch` 用空 reader，`dispatch_with(&reader, &call)` 换 reader，`dispatch_review(&docket, &call)` 换审核台
-- 替身：`Rows`（按契约过滤并截断的内存 reader）；`Broken`（`Reader` 与 `Docket` 都恒返回 `Storage`）；`Dock`（内存 `Docket`，按键与状态存项，`source` 返回固定的 `LEAKED` 文字，带规则的裁决只在规则为 `LEARNED` 与 `[x]` 时返回 `leaked`，否则 `mislearned`）
+- 替身：`Rows`（按契约过滤并截断的内存 reader）；`Broken`（`Reader`、`Docket`、`Roster` 都恒返回 `Storage`）；`Pool`（内存 `Roster`，`failed` 重发得 `ready`，其余返回原状态）；`dispatch_roster(&roster, &call)` 换失败批端口；`Dock`（内存 `Docket`，按键与状态存项，`source` 返回固定的 `LEAKED` 文字，带规则的裁决只在规则为 `LEARNED` 与 `[x]` 时返回 `leaked`，否则 `mislearned`）
 - triage 测试按动作一文件，放 `tests/it/features/triage/`，与 `src/features/triage/` 对应
 - 用 scoped subscriber 捕获日志前先确保常驻占位 `Dispatch`（`tests/it/log.rs` 的 `ANCHOR`）：tracing-core 只注册 1 个 dispatcher 时按当前线程算 callsite interest，并行测试中无 subscriber 的线程会把 interest 缓存成 never，日志丢失

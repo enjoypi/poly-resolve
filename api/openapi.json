@@ -1,6 +1,118 @@
 {
   "components": {
     "schemas": {
+      "BatchItem": {
+        "properties": {
+          "attempts": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "batch_id": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "lines": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "updated_at_ms": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "attempts",
+          "batch_id",
+          "lines",
+          "reason",
+          "state",
+          "updated_at_ms"
+        ],
+        "type": "object"
+      },
+      "BatchKey": {
+        "properties": {
+          "batch_id": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "batch_id"
+        ],
+        "type": "object"
+      },
+      "BatchListRequest": {
+        "properties": {
+          "limit": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "state": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "BatchListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/BatchItem"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "BatchStateResponse": {
+        "properties": {
+          "state": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "state"
+        ],
+        "type": "object"
+      },
+      "BatchUpdateRequest": {
+        "oneOf": [
+          {
+            "properties": {
+              "state": {
+                "const": "ready",
+                "type": "string"
+              }
+            },
+            "required": [
+              "state"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "ErrorBody": {
         "properties": {
           "code": {
@@ -322,6 +434,191 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/batches": {
+      "get": {
+        "parameters": [
+          {
+            "description": "set by the gateway",
+            "in": "header",
+            "name": "x-session-id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "set by the gateway",
+            "in": "header",
+            "name": "x-user",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "state",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BatchListResponse"
+                }
+              }
+            },
+            "description": "success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "bad request"
+          },
+          "403": {
+            "description": "host not allowed"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "storage unavailable"
+          }
+        }
+      }
+    },
+    "/api/batches/{batch_id}": {
+      "patch": {
+        "parameters": [
+          {
+            "description": "set by the gateway",
+            "in": "header",
+            "name": "x-session-id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "set by the gateway",
+            "in": "header",
+            "name": "x-user",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "batch_id",
+            "required": true,
+            "schema": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BatchUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BatchStateResponse"
+                }
+              }
+            },
+            "description": "success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "bad request"
+          },
+          "403": {
+            "description": "host not allowed"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "already settled differently"
+          },
+          "415": {
+            "description": "content-type is not application/json"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "storage unavailable"
+          }
+        }
+      }
+    },
     "/api/health": {
       "get": {
         "parameters": [

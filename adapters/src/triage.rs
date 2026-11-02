@@ -7,6 +7,8 @@ mod intake;
 mod screen;
 mod trace;
 
+use alloc::collections::BTreeMap;
+use core::cell::RefCell;
 use core::pin::pin;
 use core::time::Duration;
 use std::io;
@@ -71,11 +73,30 @@ struct Shift<'shift> {
     http: HttpClient,
     lane: Lane,
     ledger: Ledger,
+    notes: RefCell<BTreeMap<&'static str, String>>,
     stop: Stop<'shift>,
     triage: &'shift Settings,
 }
 
 impl Shift<'_> {
+    fn gate(&self, state: &str) -> Value {
+        let now = now_ms();
+        json!({
+            "cooldown_since_ms": now.saturating_sub(self.triage.handoff_cooldown_ms()),
+            "hour_since_ms": now.saturating_sub(HOUR_MS),
+            "max_attempts": self.triage.max_attempts(),
+            "max_per_hour": self.triage.max_handoffs_per_hour(),
+            "parallel": self.triage.parallel(),
+            "retry_before_ms": retry_before(self),
+            "state": state,
+        })
+    }
+
+    fn noted(&self, topic: &'static str, state: &str) -> bool {
+        let previous = self.notes.borrow_mut().insert(topic, state.to_owned());
+        !state.is_empty() && previous.as_deref() != Some(state)
+    }
+
     async fn pause(&mut self) -> Option<()> {
         let mut nap = pin!(sleep(Duration::from_millis(self.triage.poll_ms())));
         race(&mut *self.stop, nap.as_mut()).await
@@ -98,6 +119,16 @@ impl Shift<'_> {
     async fn relay(&mut self) -> Option<()> {
         let woken = self.ledger.wake_alerts();
         tracing::debug!(woken, "alerts activated");
+        let held = self.ledger.held(&self.gate(PENDING));
+        let first = held.first();
+        let reason = first.map_or("", |row| text(row, "reason"));
+        if self.noted("handoff", reason) {
+            tracing::info!(
+                reason,
+                alerts = first.map_or(NONE, |row| number(row, "count")),
+                "handoff held"
+            );
+        }
         let pending = self.waiting(PENDING);
         let analyzed = self.waiting(ANALYZED);
         relay_alerts(self, &pending, &analyzed).await
@@ -122,16 +153,7 @@ impl Shift<'_> {
     }
 
     fn waiting(&self, state: &str) -> Vec<Value> {
-        let now = now_ms();
-        self.ledger.next_alert(&json!({
-            "cooldown_since_ms": now.saturating_sub(self.triage.handoff_cooldown_ms()),
-            "hour_since_ms": now.saturating_sub(HOUR_MS),
-            "max_attempts": self.triage.max_attempts(),
-            "max_per_hour": self.triage.max_handoffs_per_hour(),
-            "parallel": self.triage.parallel(),
-            "retry_before_ms": retry_before(self),
-            "state": state,
-        }))
+        self.ledger.next_alert(&self.gate(state))
     }
 }
 
@@ -195,6 +217,7 @@ pub async fn run(setup: Setup<'_>, lane: Lane, stop: Stop<'_>) {
                 http: HttpClient::new(),
                 lane,
                 ledger,
+                notes: RefCell::default(),
                 stop,
                 triage: setup.triage,
             }
@@ -215,6 +238,9 @@ pub fn validate(setup: Setup<'_>) -> Result<(), String> {
         || triage.topics_max_open().saturating_add(triage.batch()) > MAX_CHOICES
     {
         return Err("triage.limits.batch or triage.sizes.topics_max_open too large".to_owned());
+    }
+    if triage.backlog_max_ms() < triage.lookback_ms() {
+        return Err("triage.limits.backlog_max_ms below lookback_ms".to_owned());
     }
     triage
         .decide()

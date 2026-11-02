@@ -1,20 +1,28 @@
 import { connect } from "./client";
-import { REVIEW_HASH, TEXT } from "./config";
+import { FAILED_HASH, REVIEW_HASH, TEXT } from "./config";
+import { renderFailed } from "./failed";
 import { renderMessages } from "./messages";
 import { renderReviews } from "./reviews";
+
+function link(root: HTMLElement, hash: string, label: string): void {
+  const anchor = document.createElement("a");
+  anchor.className = "back";
+  anchor.href = hash;
+  anchor.textContent = label;
+  root.querySelector(".bar")?.append(anchor);
+}
 
 const root = document.getElementById("app");
 if (root) {
   const client = connect(location.origin);
   if (location.hash === REVIEW_HASH) {
     await renderReviews(client, root);
+    link(root, FAILED_HASH, TEXT.failed);
+  } else if (location.hash === FAILED_HASH) {
+    await renderFailed(client, root);
   } else {
     await renderMessages(client, root);
-    const link = document.createElement("a");
-    link.className = "back";
-    link.href = REVIEW_HASH;
-    link.textContent = TEXT.reviews;
-    root.querySelector(".bar")?.append(link);
+    link(root, REVIEW_HASH, TEXT.reviews);
   }
   addEventListener("hashchange", () => location.reload());
 }
