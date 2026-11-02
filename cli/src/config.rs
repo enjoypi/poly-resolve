@@ -15,6 +15,7 @@ use tracing::Dispatch;
 use tracing_subscriber::filter::LevelFilter;
 
 use domain::redact::Redactor;
+use domain::review::Draw;
 
 use crate::log;
 
@@ -36,9 +37,11 @@ struct File {
 
 pub(crate) struct Settings {
     addr: SocketAddr,
+    draw: Draw,
     errors: Errors,
     ingest: Ingest,
     log: Dispatch,
+    marks: Vec<String>,
     messages: Paging,
     sandbox_exit_code: u8,
     serve_exit_code: u8,
@@ -60,7 +63,9 @@ impl Settings {
                 &self.messages,
                 self.triage.reasons(),
                 self.triage.learn_min_chars(),
-            ),
+            )
+            .with_draw(&self.draw)
+            .with_placeholders(self.marks.as_slice()),
             Ports::new(reader, reader, reader),
         )
     }
@@ -121,9 +126,11 @@ pub(crate) fn load(path: &Path) -> Result<Settings, String> {
         .map_err(|err| format!("{}: {err}", path.display()))?;
     Ok(Settings {
         addr: file.addr,
+        draw: file.triage.draw(),
         errors: file.errors,
         ingest: file.ingest,
         log: log::dispatch(level, Redactor::new(&file.triage.patterns()).ok()),
+        marks: file.triage.marks(),
         messages: file.messages,
         sandbox_exit_code: file.sandbox_exit_code.get(),
         serve_exit_code: file.serve_exit_code.get(),

@@ -114,7 +114,9 @@ async fn socks_reset_maps_to_io() {
             drop(stream);
         }
     });
-    let proxy = format!("socks5://127.0.0.1:{port}").parse::<Uri>().unwrap();
+    let proxy = format!("socks5h://127.0.0.1:{port}")
+        .parse::<Uri>()
+        .unwrap();
     let target = "http://127.0.0.1:1/v1".parse::<Uri>().unwrap();
     assert_eq!(post(&proxy, &target).await.unwrap_err(), "io");
     drop(worker.join());

@@ -2,7 +2,7 @@ use std::env;
 use std::io::ErrorKind;
 
 use adapters::store::{Archive, Shelf};
-use domain::review::{Docket as _, Ruling};
+use domain::review::{Docket as _, Draw, Ruling};
 use rusqlite::{Connection, Error};
 use serde_json::{Value, from_str, json};
 
@@ -15,6 +15,7 @@ pub(super) const KEY: &str = "dingtalk:acct:m1";
 pub(super) const LATER: u64 = 60_000;
 pub(super) const LINES: &str = "SELECT key || '|' || state || '|' || reason || '|' || batch_id AS item FROM lines ORDER BY key";
 pub(super) const NOTHING: [&str; 0] = [];
+pub(super) const PICK: Draw = Draw::reviewed(20);
 pub(super) const PLACEMENTS: &str = "SELECT key || '|' || topic_id || '|' || COALESCE(probability, '') AS item FROM placements ORDER BY key";
 pub(super) const QUICK: u64 = 2_500;
 pub(super) const SECOND: &str = "dingtalk:acct:m2";
@@ -51,6 +52,19 @@ pub(super) fn calls(sandbox: &Sandbox, role: &str) -> Fallible<usize> {
 
 pub(super) fn decided(sandbox: &Sandbox) -> Fallible<Value> {
     Ok(from_str(&sandbox.read("decide-body.txt")?)?)
+}
+
+pub(super) fn draw(sandbox: &Sandbox, policy: Draw) -> Fallible<String> {
+    let path = sandbox.database();
+    let shelf = Shelf::new(&path, BUSY);
+    let pick = policy.pick().ok_or("draw is off")?;
+    let drawn = shelf
+        .draw(pick)
+        .map_err(|err| format!("status {}", err.status()))?;
+    Ok(drawn.map_or_else(
+        || "busy".to_owned(),
+        |found| format!("{}|{}", found.batch_id(), found.lines()),
+    ))
 }
 
 pub(super) fn home() -> Fallible<String> {

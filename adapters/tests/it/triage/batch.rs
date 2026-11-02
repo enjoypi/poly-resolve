@@ -1,9 +1,9 @@
-use domain::review::Ruling;
+use domain::review::{Draw, Ruling};
 use serde_json::{Value, json};
 
 use super::rig::{
     ALERTS, BATCHES, KEY, LATER, LINES, NOTHING, PLACEMENTS, QUICK, SECOND, Seed, THIRD, calls,
-    decided, input_of, logged, one, questions_of, rule, seed, seed_from, start, table, two,
+    decided, draw, input_of, logged, one, questions_of, rule, seed, seed_from, start, table, two,
 };
 use crate::support::{Fallible, Sandbox};
 
@@ -32,6 +32,7 @@ async fn empty_batches_close_while_the_previous_one_waits() {
     seed(&sandbox, &three()).unwrap();
     let manual = json!({"limits": {"batch": TWO}, "review": {"mode": "manual"}});
     start(&sandbox, &manual, QUICK).await.unwrap();
+    assert_eq!(draw(&sandbox, Draw::reviewed(TWO)).unwrap(), "1|2");
     for key in [SECOND, THIRD] {
         let approved = rule(&sandbox, &Ruling::approve(key)).unwrap();
         assert_eq!(approved.as_deref(), Some("approved"));
@@ -42,6 +43,7 @@ async fn empty_batches_close_while_the_previous_one_waits() {
         "stub": {"decide": {"mode": "fail"}},
     });
     start(&sandbox, &held, QUICK).await.unwrap();
+    assert_eq!(draw(&sandbox, Draw::reviewed(TWO)).unwrap(), "2|1");
     let rejected = rule(&sandbox, &Ruling::reject(KEY, "noise")).unwrap();
     assert_eq!(rejected.as_deref(), Some("rejected"));
     start(&sandbox, &held, QUICK).await.unwrap();
@@ -179,6 +181,7 @@ async fn next_batch_is_reviewed_while_the_previous_one_is_stuck() {
     seed(&sandbox, &three()).unwrap();
     let manual = json!({"limits": {"batch": TWO}, "review": {"mode": "manual"}});
     start(&sandbox, &manual, QUICK).await.unwrap();
+    assert_eq!(draw(&sandbox, Draw::reviewed(TWO)).unwrap(), "1|2");
     for key in [SECOND, THIRD] {
         let approved = rule(&sandbox, &Ruling::approve(key)).unwrap();
         assert_eq!(approved.as_deref(), Some("approved"));
@@ -190,6 +193,7 @@ async fn next_batch_is_reviewed_while_the_previous_one_is_stuck() {
     });
     start(&sandbox, &stuck, QUICK).await.unwrap();
     assert_eq!(table(&sandbox, BATCHES).unwrap(), ["1|ready|0|"]);
+    assert_eq!(draw(&sandbox, Draw::reviewed(TWO)).unwrap(), "2|1");
     start(&sandbox, &stuck, QUICK).await.unwrap();
     assert_eq!(
         table(&sandbox, LINES).unwrap(),

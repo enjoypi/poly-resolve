@@ -1,6 +1,6 @@
 use serde_json::json;
 
-use super::rig::{logged, one, seed};
+use super::rig::{PICK, draw, logged, one, seed, start};
 use crate::support::Sandbox;
 
 const NONE: u32 = 0;
@@ -30,6 +30,8 @@ async fn review_wait_is_logged_once() {
     let sandbox = Sandbox::new("hold-review").unwrap();
     seed(&sandbox, &one()).unwrap();
     let patch = json!({"review": {"mode": "manual"}});
+    start(&sandbox, &patch, QUICK_HOLD).await.unwrap();
+    assert_eq!(draw(&sandbox, PICK).unwrap(), "1|1");
     let logs = logged(&sandbox, &patch, QUICK_HOLD).await.unwrap();
     assert_eq!(logs.matches("batch waiting").count(), 1);
     assert!(logs.contains("review@1"));

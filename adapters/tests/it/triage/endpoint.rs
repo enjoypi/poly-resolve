@@ -35,7 +35,7 @@ async fn invalid_decision_url_keeps_the_batch_unsent() {
     assert_eq!(calls(&proxied, "decide").unwrap(), 0);
     assert_eq!(
         table(&proxied, BATCHES).unwrap(),
-        ["1|ready|0|proxy must be http:// or socks5://<loopback>:<port>"]
+        ["1|ready|0|proxy must be http://, socks5:// or socks5h://<loopback>:<port>"]
     );
 }
 

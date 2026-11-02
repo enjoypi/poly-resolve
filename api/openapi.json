@@ -256,6 +256,45 @@
         ],
         "type": "object"
       },
+      "ReviewDrawRequest": {
+        "oneOf": [
+          {
+            "properties": {
+              "state": {
+                "const": "pending",
+                "type": "string"
+              }
+            },
+            "required": [
+              "state"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "ReviewDrawResponse": {
+        "properties": {
+          "batch_id": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "lines": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "state": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "batch_id",
+          "lines",
+          "state"
+        ],
+        "type": "object"
+      },
       "ReviewItem": {
         "properties": {
           "batch_id": {
@@ -341,6 +380,12 @@
             },
             "type": "array"
           },
+          "placeholders": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "reasons": {
             "items": {
               "$ref": "#/components/schemas/ReviewReason"
@@ -350,6 +395,7 @@
         },
         "required": [
           "items",
+          "placeholders",
           "reasons"
         ],
         "type": "object"
@@ -836,6 +882,86 @@
           },
           "403": {
             "description": "host not allowed"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "storage unavailable"
+          }
+        }
+      },
+      "patch": {
+        "parameters": [
+          {
+            "description": "set by the gateway",
+            "in": "header",
+            "name": "x-session-id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "set by the gateway",
+            "in": "header",
+            "name": "x-user",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewDrawRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewDrawResponse"
+                }
+              }
+            },
+            "description": "success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "bad request"
+          },
+          "403": {
+            "description": "host not allowed"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "already settled differently"
+          },
+          "415": {
+            "description": "content-type is not application/json"
           },
           "503": {
             "content": {

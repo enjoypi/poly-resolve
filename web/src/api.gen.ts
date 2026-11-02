@@ -314,7 +314,68 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        patch?: never;
+        patch: {
+            parameters: {
+                query?: never;
+                header?: {
+                    "x-session-id"?: string;
+                    "x-user"?: string;
+                };
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ReviewDrawRequest"];
+                };
+            };
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ReviewDrawResponse"];
+                    };
+                };
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ErrorBody"];
+                    };
+                };
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ErrorBody"];
+                    };
+                };
+                415: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ErrorBody"];
+                    };
+                };
+            };
+        };
         trace?: never;
     };
     "/api/reviews/{key}": {
@@ -470,6 +531,14 @@ export interface components {
             items: components["schemas"]["MessagesListItem"][];
             next_cursor?: string | null;
         };
+        ReviewDrawRequest: {
+            state: "pending";
+        };
+        ReviewDrawResponse: {
+            batch_id: number;
+            lines: number;
+            state: string;
+        };
         ReviewItem: {
             batch_id: number;
             conversation_id: string;
@@ -490,6 +559,7 @@ export interface components {
         };
         ReviewListResponse: {
             items: components["schemas"]["ReviewItem"][];
+            placeholders: string[];
             reasons: components["schemas"]["ReviewReason"][];
         };
         ReviewReason: {

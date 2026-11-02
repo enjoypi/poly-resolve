@@ -9,6 +9,21 @@ use crate::review::{Item, Listing, Reason, Rule, Ruling};
 const PENDING: &str = "pending";
 
 #[derive(Deserialize, JsonSchema)]
+#[schemars(rename = "ReviewDrawRequest")]
+#[serde(tag = "state", rename_all = "lowercase")]
+pub(crate) enum DrawRequest {
+    Pending,
+}
+
+#[derive(JsonSchema, Serialize)]
+#[schemars(rename = "ReviewDrawResponse")]
+pub(crate) struct DrawResponse {
+    batch_id: u64,
+    lines: u64,
+    state: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
 #[schemars(rename = "ReviewKey")]
 pub(crate) struct Key {
     key: String,
@@ -25,6 +40,7 @@ pub(crate) struct ListRequest {
 #[schemars(rename = "ReviewListResponse")]
 pub(crate) struct ListResponse {
     items: Vec<Item>,
+    placeholders: Vec<String>,
     reasons: Vec<Reason>,
 }
 
@@ -45,6 +61,16 @@ pub(crate) enum Update {
     },
 }
 
+pub(crate) fn draw(_req: &DrawRequest, context: &Context<'_>) -> Result<DrawResponse, AppError> {
+    let pick = context.draw().pick().ok_or(AppError::Conflict)?;
+    let drawn = context.docket().draw(pick)?.ok_or(AppError::Conflict)?;
+    Ok(DrawResponse {
+        batch_id: drawn.batch_id(),
+        lines: drawn.lines(),
+        state: pick.state().to_owned(),
+    })
+}
+
 pub(super) fn limit(requested: Option<u32>, context: &Context<'_>) -> Result<u32, AppError> {
     let paging = context.paging();
     let count = requested.unwrap_or_else(|| paging.default_limit());
@@ -59,6 +85,7 @@ pub(crate) fn list(req: &ListRequest, context: &Context<'_>) -> Result<ListRespo
     let state = req.state.as_deref().unwrap_or(PENDING);
     Ok(ListResponse {
         items: context.docket().list(&Listing::new(state, count))?,
+        placeholders: context.placeholders().to_vec(),
         reasons: context.reasons().to_vec(),
     })
 }

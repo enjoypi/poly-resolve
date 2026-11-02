@@ -18,8 +18,10 @@ use serde_urlencoded::from_str as from_query;
 use self::routes::ROUTES;
 use crate::batches::Roster;
 use crate::inbox::{Paging, Reader};
-use crate::review::{Docket, Reason};
+use crate::review::{Docket, Draw, Reason};
 use crate::{AppError, Errors};
+
+const OFF: Draw = Draw::off();
 
 type Binding = (&'static str, &'static str, Describer);
 
@@ -60,6 +62,10 @@ impl<'ctx> Context<'ctx> {
         self.ports.docket
     }
 
+    const fn draw(&self) -> Draw {
+        *self.rules.draw
+    }
+
     const fn errors(&self) -> &Errors {
         self.errors
     }
@@ -79,6 +85,10 @@ impl<'ctx> Context<'ctx> {
 
     const fn paging(&self) -> Paging {
         *self.rules.paging
+    }
+
+    const fn placeholders(&self) -> &[String] {
+        self.rules.placeholders
     }
 
     const fn reader(&self) -> &dyn Reader {
@@ -174,8 +184,10 @@ struct Route {
 
 #[derive(Clone, Copy, Debug)]
 pub struct Rules<'rules> {
+    draw: &'rules Draw,
     learn_min_chars: u32,
     paging: &'rules Paging,
+    placeholders: &'rules [String],
     reasons: &'rules [Reason],
 }
 
@@ -187,9 +199,24 @@ impl<'rules> Rules<'rules> {
         learn_min_chars: u32,
     ) -> Self {
         Self {
+            draw: &OFF,
             learn_min_chars,
             paging,
+            placeholders: &[],
             reasons,
+        }
+    }
+
+    #[must_use = "规则需交给 Context"]
+    pub const fn with_draw(self, draw: &'rules Draw) -> Self {
+        Self { draw, ..self }
+    }
+
+    #[must_use = "规则需交给 Context"]
+    pub const fn with_placeholders(self, placeholders: &'rules [String]) -> Self {
+        Self {
+            placeholders,
+            ..self
         }
     }
 }
@@ -330,10 +357,35 @@ where
     from_query(query).map_err(|_err| AppError::BadRequest)
 }
 
+fn posted<Req, Resp>(
+    request: &str,
+    context: &Context<'_>,
+    handler: Queried<Req, Resp>,
+) -> Result<String, AppError>
+where
+    Req: DeserializeOwned,
+    Resp: Serialize,
+{
+    let resp = handler(&decode(request)?, context)?;
+    Ok(to_string(&resp).unwrap_or_default())
+}
+
 fn route(target: Target<'_>) -> Option<&'static Route> {
     ROUTES
         .iter()
         .find(|hit| hit.feature == target.feature && hit.action == target.action)
+}
+
+fn sent<Req, Resp>(generator: &mut SchemaGenerator) -> Shapes
+where
+    Req: JsonSchema,
+    Resp: JsonSchema,
+{
+    (
+        None,
+        Some(generator.subschema_for::<Req>()),
+        generator.subschema_for::<Resp>(),
+    )
 }
 
 fn typed<Req, Resp>(request: &str, handler: fn(Req) -> Resp) -> Result<String, AppError>

@@ -5,7 +5,7 @@ use std::path::Path;
 use domain::AppError;
 use domain::batches::{Item as Batch, Roster};
 use domain::inbox::{Mark, Query, Reader, Row};
-use domain::review::{Docket, Item, Listing, Ruling};
+use domain::review::{Docket, Drawn, Item, Listing, Pick, Ruling};
 use rusqlite::{Connection, Error, OpenFlags, Transaction, TransactionBehavior, params};
 use serde_json::{Value, from_str};
 
@@ -18,9 +18,11 @@ const CURSOR: Column = Column {
     name: "until_key",
     table: "topics",
 };
+const DRAW: &str = "UPDATE lines SET batch_id = ?4, state = ?2, reviewer = '', updated_at_ms = ?3 WHERE key IN (SELECT key FROM lines WHERE state = 'queued' ORDER BY occurred_at_ms DESC, key DESC LIMIT ?1)";
 const INSERT: &str = "INSERT OR IGNORE INTO messages (key, source, account, conversation_id, sender_id, sender_name, text, occurred_at_ms, received_at_ms, raw) SELECT json_extract(value, '$.key'), json_extract(value, '$.source'), json_extract(value, '$.account'), json_extract(value, '$.conversation_id'), json_extract(value, '$.sender_id'), json_extract(value, '$.sender_name'), json_extract(value, '$.text'), json_extract(value, '$.occurred_at_ms'), json_extract(value, '$.received_at_ms'), json_extract(value, '$.raw') FROM json_each(?1, ?2)";
 const LEARN: &str = "INSERT OR IGNORE INTO learned_rules (pattern, placeholder, source_key, reviewer, created_at_ms) SELECT ?1, ?2, ?3, '', ?4 WHERE EXISTS (SELECT 1 FROM lines WHERE key = ?3 AND state = 'pending')";
 const LIST: &str = "SELECT json_group_array(json_object('account', account, 'analysis', analysis, 'conversation_id', conversation_id, 'key', key, 'occurred_at_ms', occurred_at_ms, 'priority', priority, 'received_at_ms', received_at_ms, 'sender_id', sender_id, 'sender_name', sender_name, 'source', source, 'text', text, 'topic', topic) ORDER BY occurred_at_ms DESC, key DESC) FROM (SELECT m.*, p.probability AS priority, p.topic_id AS topic, (SELECT a.analysis FROM alerts a WHERE a.topic_id = p.topic_id AND a.analysis IS NOT NULL ORDER BY a.created_at_ms DESC LIMIT 1) AS analysis FROM messages m LEFT JOIN placements p ON p.key = m.key WHERE (?1 IS NULL OR (m.occurred_at_ms, m.key) < (?1, ?2)) AND (?4 IS NULL OR m.occurred_at_ms >= ?4) AND (?5 IS NULL OR m.occurred_at_ms < ?5) ORDER BY m.occurred_at_ms DESC, m.key DESC LIMIT ?3)";
+const NEXT_BATCH: &str = "SELECT CASE WHEN EXISTS (SELECT 1 FROM lines a WHERE a.batch_id > 0 AND a.state IN ('screening', 'pending', 'leaked') AND NOT EXISTS (SELECT 1 FROM batches b WHERE b.id = a.batch_id)) THEN -1 ELSE COALESCE(MAX(batch_id), 0) + 1 END FROM lines";
 const PRESENT: &str = "SELECT COUNT(*) FROM pragma_table_info(?1) WHERE name = ?2";
 const REPLACE: &str = "UPDATE messages SET text = json_extract(?2, '$.text') WHERE key = json_extract(?2, '$.key') AND text = json_extract(?1, '$.text')";
 const REVIEWS: &str = "SELECT json_group_array(json_object('batch_id', batch_id, 'conversation_id', conversation_id, 'flag', flag, 'key', key, 'occurred_at_ms', occurred_at_ms, 'reason', reason, 'sender', sender, 'state', state, 'text', text)) FROM (SELECT * FROM lines WHERE state = ?1 AND batch_id > 0 ORDER BY flag = '', batch_id, occurred_at_ms, key LIMIT ?2)";
@@ -132,6 +134,37 @@ impl<'shelf> Shelf<'shelf> {
         Ok(from_str(&json)?)
     }
 
+    fn drawn(&self, pick: Pick) -> Fallible<Option<Drawn>> {
+        let connection = self.open(OpenFlags::SQLITE_OPEN_READ_WRITE)?;
+        let now = signed(now_ms());
+        let (next, changed) =
+            Transaction::new_unchecked(&connection, TransactionBehavior::Immediate)
+                .map_err(Box::new)
+                .and_then(|transaction| {
+                    let next: i64 = transaction
+                        .query_row_and_then(NEXT_BATCH, [], |row| row.get(0).map_err(Box::new))?;
+                    let changed = if next < 0 {
+                        None
+                    } else {
+                        let args = params![i64::from(pick.limit()), pick.state(), now, next];
+                        Some(transaction.execute(DRAW, args).map_err(Box::new)?)
+                    };
+                    transaction
+                        .commit()
+                        .map(|()| (next, changed))
+                        .map_err(Box::new)
+                })?;
+        Ok(changed.map(|count| {
+            let lines = u64::try_from(count).unwrap_or(u64::MAX);
+            let batch_id = if lines > 0 {
+                u64::try_from(next).unwrap_or_default()
+            } else {
+                0
+            };
+            Drawn::new(batch_id, lines)
+        }))
+    }
+
     fn fetch(&self, query: &Query) -> Result<Vec<Row>, Failure> {
         let connection = self.open(OpenFlags::SQLITE_OPEN_READ_ONLY)?;
         let mark = query.cursor();
@@ -211,6 +244,13 @@ impl<'shelf> Shelf<'shelf> {
 }
 
 impl Docket for Shelf<'_> {
+    fn draw(&self, pick: Pick) -> Result<Option<Drawn>, AppError> {
+        self.drawn(pick).map_err(|err| {
+            tracing::warn!(error = %err, "review draw failed");
+            AppError::Storage
+        })
+    }
+
     fn list(&self, listing: &Listing<'_>) -> Result<Vec<Item>, AppError> {
         self.reviews(listing).map_err(|err| {
             tracing::warn!(error = %err, "reviews read failed");

@@ -3,7 +3,8 @@ use core::iter::once;
 use core::num::{NonZeroU32, NonZeroU64};
 use std::env;
 
-use domain::review::{Reason, Rule as Pattern};
+use domain::redact::marks;
+use domain::review::{Draw, Reason, Rule as Pattern};
 use futures_util::future::join_all;
 use serde::{Deserialize, Serialize};
 
@@ -238,6 +239,17 @@ impl Settings {
         &self.decide
     }
 
+    #[must_use = "策略需交给 Context"]
+    pub fn draw(&self) -> Draw {
+        if !self.enabled() || self.review_auto() {
+            Draw::off()
+        } else if self.screen.is_some() {
+            Draw::screened(self.batch())
+        } else {
+            Draw::reviewed(self.batch())
+        }
+    }
+
     #[must_use = "开关需用于决定是否运行"]
     pub fn enabled(&self) -> bool {
         self.mode == Mode::Enabled
@@ -270,6 +282,19 @@ impl Settings {
 
     pub(crate) const fn lookback_ms(&self) -> u64 {
         self.limits.lookback_ms
+    }
+
+    #[must_use = "占位符需交给 Context"]
+    pub fn marks(&self) -> Vec<String> {
+        let placeholders: Vec<&str> = self
+            .redact
+            .patterns
+            .iter()
+            .map(|rule| rule.placeholder.as_str())
+            .chain(self.review.reasons.iter().filter_map(Reason::placeholder))
+            .chain(self.screen.iter().map(Screen::placeholder))
+            .collect();
+        marks(&placeholders)
     }
 
     pub(crate) const fn max_attempts(&self) -> u32 {

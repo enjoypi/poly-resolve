@@ -1,7 +1,7 @@
 use domain::batches::{Item as Batch, Roster};
 use domain::features::{Call, Context, Origin, Ports, Rules, Target, dispatch};
 use domain::inbox::{Paging, Query, Reader, Row};
-use domain::review::{Docket, Item, Listing, Reason, Ruling};
+use domain::review::{Docket, Draw, Drawn, Item, Listing, Pick, Reason, Ruling};
 use domain::{AppError, Errors};
 use serde_json::{Error, from_str, from_value, json};
 
@@ -10,6 +10,7 @@ pub(crate) const ERRORS: &str = r#"{"bad_request":{"code":"invalid"},"conflict":
 pub(crate) const LEAKED: &str = "the secret-token-123 here";
 const LEARNED: &str = r"secret\-token\-123";
 pub(crate) const LEARN_MIN: u32 = 4;
+pub(crate) const MARK: &str = "[x]";
 pub(crate) const PAGING: &str = r#"{"default":2,"max":3}"#;
 pub(crate) const REASONS: &str =
     r#"[{"code":"leak","label":"Leaked","placeholder":"[x]"},{"code":"noise","label":"Noise"}]"#;
@@ -19,6 +20,10 @@ const STAMP: u64 = 1_000;
 pub(crate) struct Broken;
 
 impl Docket for Broken {
+    fn draw(&self, _pick: Pick) -> Result<Option<Drawn>, AppError> {
+        Err(AppError::Storage)
+    }
+
     fn list(&self, _listing: &Listing<'_>) -> Result<Vec<Item>, AppError> {
         Err(AppError::Storage)
     }
@@ -66,6 +71,22 @@ impl Dock {
 }
 
 impl Docket for Dock {
+    fn draw(&self, pick: Pick) -> Result<Option<Drawn>, AppError> {
+        if self.0.iter().any(|entry| entry.state == "pending") {
+            return Ok(None);
+        }
+        let limit = usize::try_from(pick.limit()).unwrap_or(usize::MAX);
+        let lines = self
+            .0
+            .iter()
+            .filter(|entry| entry.state == "queued")
+            .take(limit)
+            .count();
+        let count = u64::try_from(lines).unwrap_or(u64::MAX);
+        let batch_id = if count > 0 { BATCH } else { 0 };
+        Ok(Some(Drawn::new(batch_id, count)))
+    }
+
     fn list(&self, listing: &Listing<'_>) -> Result<Vec<Item>, AppError> {
         let limit = usize::try_from(listing.limit()).unwrap_or(usize::MAX);
         self.0
@@ -123,8 +144,10 @@ struct Entry {
 }
 
 pub(crate) struct Fixture {
+    draw: Draw,
     errors: Errors,
     paging: Paging,
+    placeholders: Vec<String>,
     reasons: Vec<Reason>,
 }
 
@@ -134,7 +157,9 @@ impl Fixture {
     }
 
     fn dispatch_both(&self, ports: Ports<'_>, call: &Call<'_>) -> Result<String, AppError> {
-        let rules = Rules::new(&self.paging, &self.reasons, LEARN_MIN);
+        let rules = Rules::new(&self.paging, &self.reasons, LEARN_MIN)
+            .with_draw(&self.draw)
+            .with_placeholders(&self.placeholders);
         dispatch(&Context::new(&self.errors, rules, ports), call)
     }
 
@@ -172,10 +197,16 @@ impl Fixture {
 
     pub(crate) fn with(errors: &str) -> Result<Self, Error> {
         Ok(Self {
+            draw: Draw::off(),
             errors: from_str(errors)?,
             paging: from_str(PAGING)?,
+            placeholders: vec![MARK.to_owned()],
             reasons: from_str(REASONS)?,
         })
+    }
+
+    pub(crate) fn with_draw(self, draw: Draw) -> Self {
+        Self { draw, ..self }
     }
 }
 

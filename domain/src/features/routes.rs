@@ -1,12 +1,12 @@
 use super::{
     Http, Route, Trace, asked, bare, batches, changed, fallible, health, ingest, keyed, listed,
-    messages, review, triage, typed,
+    messages, posted, review, sent, triage, typed,
 };
 use serde_json::to_string;
 
 use crate::AppError;
 
-pub(super) static ROUTES: [Route; 23] = [
+pub(super) static ROUTES: [Route; 24] = [
     Route {
         action: "list",
         call: |call, context| listed(call.params, context, batches::list),
@@ -119,6 +119,18 @@ pub(super) static ROUTES: [Route; 23] = [
             asked::<messages::ListRequest, messages::ListResponse>,
         ),
         trace: Trace::Redacted,
+    },
+    Route {
+        action: "draw",
+        call: |call, context| posted(call.request, context, review::draw),
+        failures: &[AppError::BadRequest, AppError::Conflict, AppError::Storage],
+        feature: "review",
+        http: Http::Bound(
+            "patch",
+            "/api/reviews",
+            sent::<review::DrawRequest, review::DrawResponse>,
+        ),
+        trace: Trace::Full,
     },
     Route {
         action: "list",

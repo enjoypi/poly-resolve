@@ -36,6 +36,7 @@ function item(key: string, patch: Record<string, unknown> = {}) {
 function listing() {
   return {
     items: [item("a"), item("b", { flag: "unmasked", text: "<script>alert(1)</script>" })],
+    placeholders: ["[x]"],
     reasons,
   };
 }
@@ -103,7 +104,7 @@ test("渲染待审行：正文只作文本，批、会话、发送人、时间�
 
 test("待审列表：一次 GET limit=200，渲染 200 张卡片与计数", async () => {
   const items = Array.from({ length: 200 }, (_, index) => item(`k${index}`));
-  const { calls, root } = await open([{ body: { items, reasons } }]);
+  const { calls, root } = await open([{ body: { items, placeholders: [], reasons } }]);
   expect(calls).toHaveLength(1);
   expect(calls[0]?.body).toEqual({ limit: "200" });
   expect(cards(root)).toHaveLength(200);
@@ -249,7 +250,7 @@ test("拒绝：网络失败也清空粘贴框", async () => {
 });
 
 test("空列表显示提示并隐藏整批按钮，刷新重新加载", async () => {
-  const { calls, root } = await open([{ body: { items: [], reasons } }, { body: listing() }]);
+  const { calls, root } = await open([{ body: { items: [], placeholders: [], reasons } }, { body: listing() }]);
   expect(root.querySelector(".count")?.textContent).toBe(TEXT.noReviews);
   expect((root.querySelector(".approve-all") as HTMLButtonElement).hidden).toBe(true);
   click(root, ".refresh");
@@ -274,4 +275,57 @@ test("接口出错显示错误码，网络失败显示 unreachable", async () =>
   await renderReviews(down, mixed);
   click(mixed, ".approve");
   await until(() => mixed.querySelector(".error")?.textContent === TEXT.unreachable);
+});
+
+const empty = { items: [], placeholders: [], reasons };
+
+function drawButton(root: HTMLElement) {
+  return root.querySelector(".draw") as HTMLButtonElement;
+}
+
+test("占位符标红：只包占位符，其余仍是原文文本", async () => {
+  const marked = item("a", { text: "pin [num] and <b>[x]</b>[num]" });
+  const { root } = await open([{ body: { items: [marked], placeholders: ["[num]", "[x]"], reasons } }]);
+  const payload = root.querySelector(".payload");
+  const spans = Array.from(payload?.querySelectorAll(".masked") ?? [], (node) => node.textContent);
+  expect(spans).toEqual(["[num]", "[x]", "[num]"]);
+  expect(payload?.textContent).toBe("pin [num] and <b>[x]</b>[num]");
+  expect(payload?.querySelector("b")).toBeNull();
+  const plain = await open([{ body: { items: [item("c", { text: "a.b" })], placeholders: [], reasons } }]);
+  expect(plain.root.querySelector(".payload")?.textContent).toBe("a.b");
+  expect(plain.root.querySelector(".masked")).toBeNull();
+});
+
+test("审核按钮：有待审项时不可点，空列表点击后取批并加载", async () => {
+  const busy = await open([{ body: listing() }]);
+  expect(drawButton(busy.root).disabled).toBe(true);
+  const { calls, root } = await open([
+    { body: empty },
+    { body: { batch_id: 1, lines: 2, state: "pending" } },
+    { body: listing() },
+  ]);
+  expect(drawButton(root).disabled).toBe(false);
+  drawButton(root).click();
+  await until(() => cards(root).length === 2);
+  expect(calls[1]).toEqual({ body: { state: "pending" }, path: route("/reviews"), user: null });
+  expect(drawButton(root).disabled).toBe(true);
+});
+
+test("审核按钮：筛查中、无新消息、未审完与网络失败各有提示", async () => {
+  const screening = await open([{ body: empty }, { body: { batch_id: 1, lines: 2, state: "screening" } }]);
+  drawButton(screening.root).click();
+  await until(() => screening.root.querySelector(".count")?.textContent === TEXT.drawn(2));
+  const none = await open([{ body: empty }, { body: { batch_id: 0, lines: 0, state: "pending" } }]);
+  drawButton(none.root).click();
+  await until(() => none.root.querySelector(".count")?.textContent === TEXT.noQueued);
+  const clash = await open([{ body: empty }, { body: { code: "clash" }, status: 409 }]);
+  drawButton(clash.root).click();
+  await until(() => clash.root.querySelector(".error")?.textContent === "clash");
+  const down = connect("http://localhost", async (request: Request) =>
+    request.method === "GET" ? Response.json(empty) : Promise.reject(new Error("down")),
+  );
+  const broken = document.createElement("div");
+  await renderReviews(down, broken);
+  drawButton(broken).click();
+  await until(() => broken.querySelector(".error")?.textContent === TEXT.unreachable);
 });

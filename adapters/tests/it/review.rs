@@ -1,3 +1,5 @@
+mod draw;
+
 use adapters::store::{Archive, Shelf};
 use domain::review::{Docket as _, Item, Listing, Rule, Ruling};
 use rusqlite::{Connection, Error};

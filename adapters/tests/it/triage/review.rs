@@ -1,9 +1,9 @@
-use domain::review::{Rule, Ruling};
+use domain::review::{Draw, Rule, Ruling};
 use serde_json::{Value, json};
 
 use super::rig::{
-    BATCHES, KEY, LINES, NOTHING, PLACEMENTS, QUICK, SECOND, THIRD, calls, decided, input_of,
-    logged, questions_of, rule, seed, seed_from, start, table, two,
+    BATCHES, KEY, LINES, NOTHING, PICK, PLACEMENTS, QUICK, SECOND, THIRD, calls, decided, draw,
+    input_of, logged, questions_of, rule, seed, seed_from, start, table, two,
 };
 use crate::support::Sandbox;
 
@@ -41,10 +41,12 @@ async fn empty_batches_do_not_spend_the_decision_quota() {
     });
     seed(&sandbox, &[(KEY, "u1", "c1", "server down")]).unwrap();
     start(&sandbox, &patch, QUICK).await.unwrap();
+    assert_eq!(draw(&sandbox, PICK).unwrap(), "1|1");
     let rejected = rule(&sandbox, &Ruling::reject(KEY, "noise")).unwrap();
     assert_eq!(rejected.as_deref(), Some("rejected"));
     seed_from(&sandbox, &[(THIRD, "u1", "c1", "next")], LATER).unwrap();
     start(&sandbox, &patch, QUICK).await.unwrap();
+    assert_eq!(draw(&sandbox, PICK).unwrap(), "2|1");
     let approved = rule(&sandbox, &Ruling::approve(THIRD)).unwrap();
     assert_eq!(approved.as_deref(), Some("approved"));
     start(&sandbox, &patch, QUICK).await.unwrap();
@@ -89,6 +91,7 @@ async fn leaked_text_is_masked_again_and_reviewed_before_sending() {
         "review": {"mode": "manual"},
     });
     start(&sandbox, &patch, QUICK).await.unwrap();
+    assert_eq!(draw(&sandbox, Draw::reviewed(ONE)).unwrap(), "1|1");
     assert_eq!(
         table(&sandbox, LINES).unwrap(),
         [format!("{KEY}|pending||1"), format!("{SECOND}|queued||0")]
@@ -143,11 +146,13 @@ async fn learned_rules_reach_a_batch_waiting_to_be_sent() {
         "stub": {"decide": {"mode": "fail"}},
     });
     start(&sandbox, &held, QUICK).await.unwrap();
+    assert_eq!(draw(&sandbox, Draw::reviewed(ONE)).unwrap(), "1|1");
     let approved = rule(&sandbox, &Ruling::approve(KEY)).unwrap();
     assert_eq!(approved.as_deref(), Some("approved"));
     start(&sandbox, &held, QUICK).await.unwrap();
     assert_eq!(table(&sandbox, BATCHES).unwrap(), ["1|ready|1|http:500"]);
     assert!(sandbox.read("decide-body.txt").unwrap().contains(SECRET));
+    assert_eq!(draw(&sandbox, Draw::reviewed(ONE)).unwrap(), "2|1");
     let learned = Rule::new(r"abc\-secret\-9".to_owned(), "[x]".to_owned());
     let ruling = Ruling::reject(SECOND, "leak").learned(&learned);
     assert_eq!(rule(&sandbox, &ruling).unwrap().as_deref(), Some("leaked"));
@@ -171,10 +176,16 @@ async fn manual_lines_wait_for_approval_and_rejected_ones_stay_home() {
     start(&sandbox, &manual(), QUICK).await.unwrap();
     assert_eq!(
         table(&sandbox, LINES).unwrap(),
-        [format!("{KEY}|pending||1"), format!("{SECOND}|pending||1")]
+        [format!("{KEY}|queued||0"), format!("{SECOND}|queued||0")]
     );
     assert_eq!(calls(&sandbox, "decide").unwrap(), 0);
     assert_eq!(table(&sandbox, BATCHES).unwrap(), NOTHING);
+    assert_eq!(draw(&sandbox, PICK).unwrap(), "1|2");
+    assert_eq!(draw(&sandbox, PICK).unwrap(), "busy");
+    assert_eq!(
+        table(&sandbox, LINES).unwrap(),
+        [format!("{KEY}|pending||1"), format!("{SECOND}|pending||1")]
+    );
     let approved = rule(&sandbox, &Ruling::approve(KEY)).unwrap();
     assert_eq!(approved.as_deref(), Some("approved"));
     start(&sandbox, &manual(), QUICK).await.unwrap();
@@ -202,12 +213,14 @@ async fn rejected_batches_close_without_a_request() {
     let sandbox = Sandbox::new("review-closed").unwrap();
     seed(&sandbox, &[(KEY, "u1", "c1", "server down")]).unwrap();
     start(&sandbox, &manual(), QUICK).await.unwrap();
+    assert_eq!(draw(&sandbox, PICK).unwrap(), "1|1");
     let rejected = rule(&sandbox, &Ruling::reject(KEY, "noise")).unwrap();
     assert_eq!(rejected.as_deref(), Some("rejected"));
     seed_from(&sandbox, &[(THIRD, "u1", "c1", "next")], LATER).unwrap();
     start(&sandbox, &manual(), QUICK).await.unwrap();
     assert_eq!(table(&sandbox, BATCHES).unwrap(), ["1|sent|0|"]);
     assert_eq!(calls(&sandbox, "decide").unwrap(), 0);
+    assert_eq!(draw(&sandbox, PICK).unwrap(), "2|1");
     assert_eq!(
         table(&sandbox, LINES).unwrap(),
         [

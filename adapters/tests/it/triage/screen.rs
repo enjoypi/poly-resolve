@@ -1,15 +1,16 @@
 use serde_json::{Value, from_str, json};
 
 use super::rig::{
-    BATCHES, KEY, LATER, LINES, NOTHING, PLACEMENTS, QUICK, SECOND, calls, decided, input_of,
+    BATCHES, KEY, LATER, LINES, NOTHING, PLACEMENTS, QUICK, SECOND, calls, decided, draw, input_of,
     logged, questions_of, rule, seed, seed_from, start, table, two,
 };
 use crate::support::{Fallible, Sandbox};
-use domain::review::Ruling;
+use domain::review::{Draw, Ruling};
 
 const FLAGGED: &str =
     "SELECT key || '|' || state || '|' || flag || '|' || reason AS item FROM lines ORDER BY key";
 const SECRET: &str = "abc-secret-9";
+const TEN: u32 = 10;
 
 #[tokio::test]
 async fn auto_mode_drops_flagged_lines_and_keeps_the_rest() {
@@ -164,6 +165,15 @@ async fn model_masks_spans_and_flags_unmaskable_secrets_for_review() {
         )
         .unwrap();
     let merged = manual(&sandbox);
+    start(&sandbox, &merged, QUICK).await.unwrap();
+    assert_eq!(draw(&sandbox, Draw::screened(TEN)).unwrap(), "1|2");
+    assert_eq!(
+        table(&sandbox, FLAGGED).unwrap(),
+        [
+            format!("{KEY}|screening||"),
+            format!("{SECOND}|screening||")
+        ]
+    );
     start(&sandbox, &merged, QUICK).await.unwrap();
     assert_eq!(
         table(&sandbox, FLAGGED).unwrap(),

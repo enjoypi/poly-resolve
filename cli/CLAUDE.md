@@ -12,7 +12,7 @@
 - `Var`：`triage` 段里 `"${NAME}"` 写法的值，整串须为 `${NAME}`；加载时只校验写法、不读环境，用时才读（不存值，`Debug` 只显示名字）
 - `missing()`：`serve` 在 `triage.mode: enabled` 且 `triage.missing()` 与 `ingest.missing()`（各数据源的本人、通知会话）合起来有变量读不到（含空值）时以退出码 2 退出并列出变量名；`ingest` 与未启用时不检查；测试不能 `set_var`（`unsafe_code` forbid），用 `${HOME}`、`${PATH}`、`${CARGO_PKG_NAME}` 表示已设，一个不存在的名字表示缺失
 - `verify`：`serve` 与 `ingest` 在读完配置、检查完 `missing()` 后、绑定端口前调用：`ingest.check()`（各数据源并发）；`triage.mode` 为 `enabled` 时再 `triage.check()`（Codex 与通知子进程）与 `adapters::triage::validate`（含决策和本地模型 URL 校验），再 `adapters::triage::reach`（决策接口与 `codex.endpoint` 经各自代理建 TCP 与 TLS，不发请求）；任一失败以 `sandbox_exit_code` 退出并把原因写 stderr（`fail`）
-- `Settings::context(&reader)` 构造 `domain::features::Context`：`Rules` 取 `messages` 分页、`triage.review.reasons` 与 `triage.review.learn_min_chars`，`Ports` 把同一个 `adapters::store::Shelf` 既作 `Reader` 又作 `Docket`；HTTP 处理与 `ingest` 各用 `settings.ingest().shelf()`
+- `Settings::context(&reader)` 构造 `domain::features::Context`：`Rules` 取 `messages` 分页、`triage.review.reasons`、`triage.review.learn_min_chars`，以及加载时由 `triage.draw()`、`triage.marks()` 算好的取批策略与占位符，`Ports` 把同一个 `adapters::store::Shelf` 既作 `Reader` 又作 `Docket`；HTTP 处理与 `ingest` 各用 `settings.ingest().shelf()`
 
 ## 退出码
 
@@ -70,7 +70,7 @@
 - `tests/it/serve/` 是 `serve.rs` 的子模块，以访问其私有的 `Server`、`start`、`get`、`send`、`raw`、`stop`（`send` 自动带 `Host: <addr>` 与 JSON content-type）：
   - `assets.rs`：临时 `web_dir`，含目录外的 `secret.txt` 验证不可越界
   - `messages.rs`：用 `adapters::store::Archive` 播种临时库（含两个来源），经 HTTP 翻页与按时间筛选
-  - `reviews.rs`：用 dev-dependency `rusqlite` 往库里插 `lines` 行，键含 `+`、`/`，覆盖通过、重复通过、拒绝、409、422、404、漏脱敏拒绝（响应里不含粘贴的原文），以及 `Shelf` 的 `Docket` 的失败日志分支（通过、拒绝、`source` 各一），因其 `tracing` 参数只在有 subscriber 时求值
+  - `reviews.rs`：用 dev-dependency `rusqlite` 往库里插 `lines` 行，键含 `+`、`/`，覆盖列表的 `placeholders`、取批 409（测试配置 `triage.mode: disabled`，同一路径 GET 与 PATCH 并存）、通过、重复通过、拒绝、409、422、404、漏脱敏拒绝（响应里不含粘贴的原文），以及 `Shelf` 的 `Docket` 的失败日志分支（通过、拒绝、`source` 各一），因其 `tracing` 参数只在有 subscriber 时求值
   - `host.rs`：Host 放行与 403、415、内部动作路径 404、POST 405
 - `YAML` 的钉钉源嵌在 `ingest.sources` 列表里，`dws.env` 下的键缩进 12 格，按行替换时照此缩进
 - 配置用例经 `support::load`（`ingest` 子命令）：配置错误退出 2，配置有效则在沙箱自检处以 `sandbox_exit_code` 退出

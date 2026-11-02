@@ -5,7 +5,6 @@ use crate::ingest::now_ms;
 
 const APPROVED: &str = "approved";
 const AUTO: &str = "auto";
-const PENDING: &str = "pending";
 const QUEUED: &str = "queued";
 const SCREENING: &str = "screening";
 const SKIPPED: &str = "skipped";
@@ -17,12 +16,14 @@ struct Stamp<'stamp> {
 }
 
 pub(super) fn form(shift: &Shift<'_>) {
-    let auto = shift.triage.review_auto();
+    if !shift.triage.review_auto() {
+        return;
+    }
     let screening = shift.triage.screen().is_some();
-    let (state, reviewer) = match (screening, auto) {
-        (true, _) => (SCREENING, ""),
-        (false, true) => (APPROVED, AUTO),
-        (false, false) => (PENDING, ""),
+    let (state, reviewer) = if screening {
+        (SCREENING, "")
+    } else {
+        (APPROVED, AUTO)
     };
     let now = now_ms();
     let formed = shift.ledger.form(&json!({
@@ -33,7 +34,7 @@ pub(super) fn form(shift: &Shift<'_>) {
         "state": state,
     }));
     if formed > 0 {
-        tracing::info!(formed, auto, screening, "batch formed");
+        tracing::info!(formed, screening, "batch formed");
     }
 }
 

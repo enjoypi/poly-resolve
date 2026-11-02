@@ -4,7 +4,7 @@ use std::fs;
 use serde_json::{Value, from_str as parse, json};
 use serde_saphyr::from_str;
 
-use domain::redact::Redactor;
+use domain::redact::{Redactor, marks};
 use domain::review::Rule;
 
 use crate::support::{Fixture, local};
@@ -39,6 +39,20 @@ fn log_redactor_applies_rules_in_order() {
     assert_eq!(redactor.apply("pin 1234"), "pix [x]");
     let broken = [Rule::new("(".to_owned(), String::new())];
     assert_eq!(Redactor::new(&broken).unwrap_err().status(), 400);
+}
+
+#[test]
+fn marks_keep_literal_placeholders_longest_first() {
+    let found = marks(&[
+        "${1}[hidden]",
+        "[n]",
+        "",
+        "$1",
+        "[n]",
+        "$$x$name.",
+        "${open",
+    ]);
+    assert_eq!(found, ["[hidden]", "$x.", "[n]"]);
 }
 
 #[test]

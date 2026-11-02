@@ -1,8 +1,10 @@
 use domain::AppError;
-use domain::review::Docket;
+use domain::review::{Docket, Draw};
 use serde_json::{Error, Value, from_str, json};
 
 use crate::support::{Broken, Dock, Fixture, local};
+
+const DRAW: &str = r#"{"state":"pending"}"#;
 
 type Reply = Result<Value, u16>;
 
@@ -13,6 +15,51 @@ fn dock() -> Dock {
         ("k3", "pending"),
         ("k4", "rejected"),
     ])
+}
+
+fn draw(policy: Draw, docket: &dyn Docket, body: &str) -> Result<Reply, Error> {
+    let call = local("review", "draw", body);
+    reply(
+        Fixture::new()?
+            .with_draw(policy)
+            .dispatch_review(docket, &call),
+    )
+}
+
+#[test]
+fn draw_conflicts_while_reviewing_or_when_not_manual() {
+    assert_eq!(draw(Draw::reviewed(5), &dock(), DRAW).unwrap(), Err(409));
+    assert_eq!(draw(Draw::off(), &Broken, DRAW).unwrap(), Err(409));
+}
+
+#[test]
+fn draw_rejects_malformed_requests_and_reports_storage_failure() {
+    let queued = Dock::new(&[("k1", "queued")]);
+    assert_eq!(draw(Draw::reviewed(5), &queued, "nope").unwrap(), Err(400));
+    let other = r#"{"state":"approved"}"#;
+    assert_eq!(draw(Draw::reviewed(5), &queued, other).unwrap(), Err(400));
+    assert_eq!(draw(Draw::reviewed(5), &Broken, DRAW).unwrap(), Err(503));
+}
+
+#[test]
+fn draw_takes_queued_lines_into_review() {
+    let queued = Dock::new(&[("k1", "queued"), ("k2", "queued"), ("k3", "approved")]);
+    let one = draw(Draw::reviewed(1), &queued, DRAW).unwrap().unwrap();
+    assert_eq!(
+        one.to_string(),
+        r#"{"batch_id":1,"lines":1,"state":"pending"}"#
+    );
+    let both = draw(Draw::screened(5), &queued, DRAW).unwrap().unwrap();
+    assert_eq!(
+        both.to_string(),
+        r#"{"batch_id":1,"lines":2,"state":"screening"}"#
+    );
+    let empty = Dock::new(&[("k1", "approved")]);
+    let none = draw(Draw::reviewed(5), &empty, DRAW).unwrap().unwrap();
+    assert_eq!(
+        none.to_string(),
+        r#"{"batch_id":0,"lines":0,"state":"pending"}"#
+    );
 }
 
 fn keys(reply: &Value) -> Vec<&str> {
@@ -36,6 +83,7 @@ fn list(query: &str, docket: &dyn Docket) -> Result<Reply, Error> {
 fn list_defaults_to_pending_and_returns_reasons() {
     let reply = list("", &dock()).unwrap().unwrap();
     assert_eq!(keys(&reply), ["k1", "k3"]);
+    assert_eq!(reply.get("placeholders"), Some(&json!(["[x]"])));
     let reasons = reply.get("reasons").and_then(Value::as_array).unwrap();
     assert_eq!(reasons.len(), 2);
     assert_eq!(

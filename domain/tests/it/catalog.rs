@@ -3,15 +3,16 @@ use serde_json::json;
 
 use crate::support::{Fixture, local};
 
-static ROUTES: [Bound; 6] = [
+static ROUTES: [Bound; 7] = [
     ("batches", "list", "get", "/api/batches"),
     ("batches", "update", "patch", "/api/batches/{batch_id}"),
     ("health", "check", "get", "/api/health"),
     ("messages", "list", "get", "/api/messages"),
+    ("review", "draw", "patch", "/api/reviews"),
     ("review", "list", "get", "/api/reviews"),
     ("review", "update", "patch", "/api/reviews/{key}"),
 ];
-static SCHEMAS: [&str; 18] = [
+static SCHEMAS: [&str; 20] = [
     "BatchItem",
     "BatchKey",
     "BatchListRequest",
@@ -23,6 +24,8 @@ static SCHEMAS: [&str; 18] = [
     "MessagesListItem",
     "MessagesListRequest",
     "MessagesListResponse",
+    "ReviewDrawRequest",
+    "ReviewDrawResponse",
     "ReviewItem",
     "ReviewKey",
     "ReviewListRequest",
@@ -61,9 +64,24 @@ fn describes_health_route() {
 }
 
 #[test]
+fn describes_review_draw_route() {
+    let listing = build();
+    let entry = listing.entries().get(4).unwrap();
+    assert_eq!(entry.params(), None);
+    assert_eq!(
+        entry.body(),
+        Some(&json!({"$ref": "#/components/schemas/ReviewDrawRequest"}))
+    );
+    assert_eq!(
+        entry.response(),
+        &json!({"$ref": "#/components/schemas/ReviewDrawResponse"})
+    );
+}
+
+#[test]
 fn describes_review_update_route() {
     let listing = build();
-    let entry = listing.entries().get(5).unwrap();
+    let entry = listing.entries().get(6).unwrap();
     assert_eq!(
         entry.params(),
         Some(&json!({"$ref": "#/components/schemas/ReviewKey"}))
@@ -98,13 +116,20 @@ fn lists_failures_per_route() {
             )
         })
         .collect();
+    let (head, tail) = failing.split_at(4);
     assert_eq!(
-        failing,
+        head,
         [
             ("batches", vec![400, 503]),
             ("batches", vec![400, 404, 409, 503]),
             ("health", vec![]),
             ("messages", vec![400, 503]),
+        ]
+    );
+    assert_eq!(
+        tail,
+        [
+            ("review", vec![400, 409, 503]),
             ("review", vec![400, 503]),
             ("review", vec![400, 404, 409, 422, 503]),
         ]

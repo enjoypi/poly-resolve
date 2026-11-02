@@ -8,6 +8,19 @@ type Client = ReturnType<typeof connect>;
 type Item = components["schemas"]["ReviewItem"];
 type Reason = components["schemas"]["ReviewReason"];
 
+function escape(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function paint(text: string, marks: string[]): Node[] {
+  if (marks.length === 0) return [document.createTextNode(text)];
+  const pattern = new RegExp(`(${marks.map(escape).join("|")})`);
+  return text
+    .split(pattern)
+    .filter((part) => part !== "")
+    .map((part) => (marks.includes(part) ? area("span", "masked", part) : document.createTextNode(part)));
+}
+
 function option(label: string, value: string): HTMLOptionElement {
   const element = area("option", "", label) as HTMLOptionElement;
   element.value = value;
@@ -18,6 +31,7 @@ class Queue {
   private readonly all = button(TEXT.approveAll, "approve-all", () => void this.approveAll());
   private readonly cards = new Map<string, HTMLElement>();
   private readonly count = area("p", "count");
+  private readonly draw = button(TEXT.draw, "draw", () => void this.take());
   private readonly error = area("p", "error");
   private readonly items = area("section", "items");
 
@@ -33,9 +47,8 @@ class Queue {
     }
   }
 
-  private card(item: Item, reasons: Reason[]): HTMLElement {
-    const text = area("pre", "payload");
-    text.textContent = item.text;
+  private card(item: Item, reasons: Reason[], marks: string[]): HTMLElement {
+    const text = area("pre", "payload", ...paint(item.text, marks));
     const pick = area("select", "reason") as HTMLSelectElement;
     pick.setAttribute("aria-label", TEXT.reasonPick);
     pick.append(option(TEXT.reasonPick, ""), ...reasons.map((reason) => option(reason.label, reason.code)));
@@ -101,7 +114,7 @@ class Queue {
       const { data, error } = await this.client.GET("/api/reviews", {
         params: { query: { limit: REVIEW_LIMIT } },
       });
-      if (data) this.show(data.items, data.reasons);
+      if (data) this.show(data.items, data.reasons, data.placeholders);
       else this.error.textContent = error?.code ?? "";
     } catch {
       this.error.textContent = TEXT.unreachable;
@@ -124,9 +137,9 @@ class Queue {
     }
   }
 
-  private show(items: Item[], reasons: Reason[]): void {
+  private show(items: Item[], reasons: Reason[], marks: string[]): void {
     this.cards.clear();
-    for (const item of items) this.cards.set(item.key, this.card(item, reasons));
+    for (const item of items) this.cards.set(item.key, this.card(item, reasons, marks));
     this.items.replaceChildren(...this.cards.values());
     this.tally();
   }
@@ -135,14 +148,31 @@ class Queue {
     const back = area("a", "back", TEXT.back) as HTMLAnchorElement;
     back.href = "#";
     const refresh = button(TEXT.refresh, "refresh", () => void this.load());
-    const bar = area("header", "bar", area("h1", "brand", TEXT.brand), back, this.all, refresh);
+    const bar = area("header", "bar", area("h1", "brand", TEXT.brand), back, this.draw, this.all, refresh);
     this.root.replaceChildren(area("div", "reviews", bar, this.count, this.error, this.items));
     return this.load();
+  }
+
+  private async take(): Promise<void> {
+    this.error.textContent = "";
+    try {
+      const { data, error } = await this.client.PATCH("/api/reviews", { body: { state: "pending" } });
+      if (!data) {
+        this.error.textContent = error?.code ?? "";
+        return;
+      }
+      if (data.lines === 0) this.count.textContent = TEXT.noQueued;
+      else if (data.state === "pending") await this.load();
+      else this.count.textContent = TEXT.drawn(data.lines);
+    } catch {
+      this.error.textContent = TEXT.unreachable;
+    }
   }
 
   private tally(): void {
     const total = this.cards.size;
     this.all.hidden = total === 0;
+    this.draw.disabled = total > 0;
     this.count.textContent = total === 0 ? TEXT.noReviews : TEXT.pending(total);
   }
 }

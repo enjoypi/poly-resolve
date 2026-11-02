@@ -56,7 +56,7 @@ YAML 文件，各项均必填（注明可选的除外），不允许其他字段
 | ingest.sources[].imap.account / mailbox | 账号标识（自定义，写入每条消息记录，与类型一起不得重复）、收取的文件夹（如 `INBOX`）；一项只收一个文件夹，不收发件箱 |
 | ingest.sources[].imap.url | `imaps://<主机>[:端口]`（默认 993，须写成 `${NAME}`），或仅限本机明文 `imap://127.0.0.1:<端口>`、`imap://[::1]:<端口>`（本机桥接用，不得配代理）；不支持 STARTTLS 与 OAuth2，只用密码或应用专用密码登录 |
 | ingest.sources[].imap.user / password | 登录名与密码，写成 `${NAME}`；只允许 ASCII 可打印字符 |
-| ingest.sources[].imap.proxy | 可选，`http://<回环主机>:<端口>` 或 `socks5://<回环主机>:<端口>`（域名由代理解析），只配给 `imaps` |
+| ingest.sources[].imap.proxy | 可选，`http://<回环主机>:<端口>` 或 `socks5://`、`socks5h://<回环主机>:<端口>`（两者相同，域名都由代理解析），只配给 `imaps` |
 | ingest.sources[].imap.self_sender_ids | 本人地址与别名列表，写成 `${NAME}`，不区分大小写；这些地址发出的邮件不参与决策 |
 | ingest.sources[].imap.idle_ms / poll_ms / timeout_ms | 长连接每轮等待新信的最长毫秒数（建议 300000：到期即刷新连接，无声断线最长约 5 分钟加一次命令超时后发现，推送迟到的新信也在此时取到）、服务器不支持 IDLE 时的轮询间隔、单条命令的超时 |
 | ingest.sources[].imap.initial_backfill_ms / reconcile_overlap_ms | 无记录时首次补拉回溯的毫秒数、补拉从最新邮件时间再往前回溯的毫秒数；服务器按日期检索，实际再多回溯 1 天 |
@@ -71,7 +71,7 @@ YAML 文件，各项均必填（注明可选的除外），不允许其他字段
 | triage.review | mode 为 manual（逐条确认后才外发）或 auto（自动通过）；learn_min_chars 粘贴的漏脱敏原文至少多长；reasons 拒绝原因（code 与 label；带 placeholder 的是漏脱敏类，拒绝时须粘贴漏掉的原文；不带的拒绝即排除） |
 | triage.session | prompt 第一次发话题转写的提示词模板；followup 同一话题后续只发新增消息的模板（`{messages}` 处填入消息）；fresh 新会话追加在 codex 参数后的参数；resume 续写追加的参数（`{thread}` 换成会话 ID） |
 | triage.notice | 发给本人的通知模板（`{probability}`、`{topic}`、`{analysis}`） |
-| triage.decide | 决策 HTTP 接口：url 为 `${NAME}` 形式的环境变量，外部地址须用 HTTPS，本机测试可用回环 HTTP；key 为可选的 `${NAME}` 环境变量；proxy 为可选的 `${NAME}` 环境变量，值形如 `http://127.0.0.1:<端口>`（仅本机 HTTP 代理，无认证、无结尾 `/`，只用于 HTTPS 地址）；timeout_ms 为请求超时毫秒数 |
+| triage.decide | 决策 HTTP 接口：url 为 `${NAME}` 形式的环境变量，外部地址须用 HTTPS，本机测试可用回环 HTTP；key 为可选的 `${NAME}` 环境变量；proxy 为可选的 `${NAME}` 环境变量，值形如 `http://127.0.0.1:<端口>`、`socks5://` 或 `socks5h://127.0.0.1:<端口>`（仅本机代理，无认证、无结尾 `/`，只用于 HTTPS 地址）；timeout_ms 为请求超时毫秒数 |
 | triage.codex.endpoint | 可选，启动冒烟用的 codex 模型接口：url、proxy、timeout_ms 写法同 triage.decide；只建连接与 TLS 握手，不发请求 |
 | triage.codex / notify | 外部命令，共同字段：bin、args、env（字面量环境变量）、vars（`${NAME}` 写法，运行时读同名环境变量传给子进程；args 里的 `${NAME}` 若在 vars 里声明则换成其值）、sandbox、timeout_ms；子进程环境先清空再只放 env 与 vars |
 | triage.codex.args | 须含 `--json`，用 `-m` 指定模型；不含 `--ephemeral` 与结尾的 `-` |
@@ -87,7 +87,8 @@ RESTful，路径挂在 `/api` 下，请求与响应体为 JSON（`content-type: 
 |---|---|
 | `GET /api/health` | 健康检查 |
 | `GET /api/messages?cursor=&from_ms=&to_ms=&limit=` | 查看消息，参数均可选 |
-| `GET /api/reviews?state=&limit=` | 列出审核项，缺省列待审 |
+| `GET /api/reviews?state=&limit=` | 列出审核项，缺省列待审；`placeholders` 为全部脱敏占位符 |
+| `PATCH /api/reviews` | 取批：`{"state":"pending"}`，取排队中最新的 `limits.batch` 条进审核，返回 `batch_id`、`lines`、`state`（配了筛查为 `screening`）；没有排队的消息时 `lines` 为 0；还有待审或筛查中的消息、或不是人工审核模式时 409 |
 | `PATCH /api/reviews/{key}` | 裁决一项：`{"state":"approved"}` 或 `{"state":"rejected","reason":"…","leak":"…"}`，`key` 须 URL 编码 |
 
 | 请求头 | 说明 |
@@ -161,7 +162,7 @@ cd web && bun install --frozen-lockfile && bun run build && cd ..
 | DECISIONS_API_KEY | 决策接口的 API key |
 | CODEX_API_KEY | codex 专用的 API key |
 | CODEX_BASE_URL | codex 模型接口的完整地址（如 `https://<主机>/v1`，Responses 协议，端口须为 443）；展开进 codex 参数，`ps` 里本机可见 |
-| DECISIONS_PROXY | 可选，决策接口所走的本机 HTTP 代理，配 `triage.decide.proxy` 时必填 |
+| DECISIONS_PROXY | 可选，决策接口所走的本机 HTTP 或 SOCKS5 代理，配 `triage.decide.proxy` 时必填 |
 | SCREEN_URL | 可选本地模型接口的完整地址，仅允许带显式端口的回环 HTTP；启用 `triage.screen` 时必填 |
 | SELF_SENDER_ID | 本人的发送人 ID（消息里的 `sender_id`） |
 | NOTIFY_CONVERSATION_ID | 通知所在会话的 ID（消息里的 `conversation_id`） |
@@ -202,13 +203,13 @@ cd web && bun install --frozen-lockfile && bun run build && cd ..
 sops exec-env secrets/prod.enc.yaml './target/release/cli serve --config cli/config.yaml'
 ```
 
-变量只经环境变量传给子进程，不出现在命令行参数与日志里；缺任一变量，`serve` 以退出码 2 退出并列出缺的变量名。首次开启会把 `lookback_ms` 内的未处理消息全部送进审核；停机或停用后再开，从上次的起点接着处理，最远补到 `backlog_max_ms`。codex 的会话文件落在 `.debug/codex-home/sessions`，含脱敏后的对话，不自动清理。
+变量只经环境变量传给子进程，不出现在命令行参数与日志里；缺任一变量，`serve` 以退出码 2 退出并列出缺的变量名。首次开启会把 `lookback_ms` 内的未处理消息脱敏后排队；停机或停用后再开，从上次的起点接着处理，最远补到 `backlog_max_ms`。人工审核模式下排队的消息要在审核页点“审核”才取批；改成 `review.mode: auto` 会自动外发全部排队消息，切换前先确认排队条数。codex 的会话文件落在 `.debug/codex-home/sessions`，含脱敏后的对话，不自动清理。
 
 ### 外发审核
 
-浏览器打开 `<服务地址>/#reviews`，逐条通过或拒绝，顶部“整批通过”一次通过当前列出的全部。拒绝须选原因；漏脱敏类原因还须粘贴漏掉的原文，系统据此学出规则并让该条重新脱敏后回到待审。一批不审完不会外发；审完一批即可审下一批，下一批等上一批外发结束才外发。`review.mode: auto` 时不经人工。
+浏览器打开 `<服务地址>/#reviews`，点“审核”取排队中最新的一批（`limits.batch` 条），较早的留在队列；列表里还有待审项时按钮不可点。配了本地模型筛查时，取批后要等筛查完再点“刷新”。消息里的脱敏占位符标红。逐条通过或拒绝，顶部“整批通过”一次通过当前列出的全部。拒绝须选原因；漏脱敏类原因还须粘贴漏掉的原文，系统据此学出规则并让该条重新脱敏后回到待审。一批不审完不会外发；审完一批即可取下一批，下一批等上一批外发结束才外发。`review.mode: auto` 时自动成批、不经人工。
 
-接口：`GET /api/reviews`、`PATCH /api/reviews/{key}`；“整批通过”逐条发送。
+接口：`GET /api/reviews`、`PATCH /api/reviews`（取批）、`PATCH /api/reviews/{key}`；“整批通过”逐条发送。
 
 决策重试用尽的批在 `<服务地址>/#failed` 列出，点“重发”再给一轮重试（`GET /api/batches`、`PATCH /api/batches/{batch_id}`，请求体 `{"state":"ready"}`）；已有批在外发时返回 409。脱敏规则的样例在 `domain/tests/it/redact.rs`，改规则后跑测试验证。
 
@@ -238,7 +239,7 @@ Qwen3 默认先输出思考过程，提示词末尾的 `/no_think` 关掉它。4
 
 钉钉工具 `dws` 与 `codex` 经 `/usr/bin/sandbox-exec` 启动，策略为 `deny default`，只放行各自必需的文件、网络端口与系统服务；没有关闭沙箱的配置。策略文件在 `cli/sandbox/`（`dws.sb`、`codex.sb`），由各命令的 `sandbox` 引用。决策与本地模型使用进程内 HTTP 客户端，不启动 curl；决策地址须为 HTTPS 或回环 HTTP，本地模型只允许回环 HTTP 与显式端口且不走代理；客户端不跟随重定向，不读环境中的代理变量，只用 `triage.decide.proxy`。
 
-外部命令走代理：在该命令的 `vars` 加 `HTTPS_PROXY: "${NAME}"`、`https_proxy: "${NAME}"`，并在其 `sandbox.vars` 加 `PROXY: "${NAME}"`（三处同一变量）。策略见到 `PROXY` 时只放行 `localhost:<该端口>`，不再直连 443；值须形如 `http://127.0.0.1:<端口>`。notify 与 dws 采集命令要走不同代理时，不要共用 `*dws_sandbox` 锚点。
+外部命令走代理：在该命令的 `vars` 加 `HTTPS_PROXY: "${NAME}"`、`https_proxy: "${NAME}"`，并在其 `sandbox.vars` 加 `PROXY: "${NAME}"`（三处同一变量）。策略见到 `PROXY` 时只放行 `localhost:<该端口>`，不再直连 443，也不放行本机 DNS；值须形如 `http://127.0.0.1:<端口>` 或 `socks5h://127.0.0.1:<端口>`，不能用 `socks5://`（子进程会先在本机解析域名而失败）。notify 与 dws 采集命令要走不同代理时，不要共用 `*dws_sandbox` 锚点。
 
 | 字段 | 说明 |
 |---|---|
@@ -253,7 +254,7 @@ Qwen3 默认先输出思考过程，提示词末尾的 `/no_think` 关掉它。4
 
 排错：
 
-- 沙箱退出 65：路径无法解析（目录或策略文件不存在），或 `PROXY` 不是 `http://<主机>:<端口>`；退出 71：命令不存在。都按命令失败处理，不会不加沙箱运行；升级 dws、codex 后真实路径变化，自检同样会失败
+- 沙箱退出 65：路径无法解析（目录或策略文件不存在）；退出 71：命令不存在。都按命令失败处理，不会不加沙箱运行；升级 dws、codex 后真实路径变化，自检同样会失败
 - codex 启动即退出 71：把 codex 参数里的 `-s read-only` 改为 `-s danger-full-access`，由外层沙箱把关
 - 规则不全时命令失败。另开终端看拒绝记录：`log stream --style compact --predicate 'sender == "Sandbox"'`，按 `deny(1) <操作> <对象>` 逐条补进对应 `.sb`，再复测：`/usr/bin/sandbox-exec -f cli/sandbox/dws.sb -D HOME=$HOME -- dws --help`
 - `dws auth login` 在沙箱外执行
@@ -271,7 +272,7 @@ Qwen3 默认先输出思考过程，提示词末尾的 `/no_think` 关掉它。4
 | 审核项不存在 | 404 | `{"code":"not_found"}` |
 | 路径不存在（含内部动作） | 404 | 空响应体 |
 | 方法不对 | 405 | 空响应体 |
-| 审核项已作不同裁决 | 409 | `{"code":"conflict"}` |
+| 审核项已作不同裁决；取批时还有未审完的消息或不是人工审核模式 | 409 | `{"code":"conflict"}` |
 | PATCH 请求体不是 `application/json` | 415 | 空响应体 |
 | 拒绝原因不在配置里、粘贴的原文过短或不在该条里、原因与是否粘贴不匹配 | 422 | `{"code":"unprocessable"}` |
 | 消息库不存在或读取失败 | 503 | `{"code":"storage"}` |

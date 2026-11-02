@@ -46,8 +46,10 @@
 ## 审核页
 
 - `GET /api/reviews` 取 `REVIEW_LIMIT`（200，与后端单批上限相同，故一次列出全部待审项）条待审行；通过与拒绝都是 `PATCH /api/reviews/{key}`（`params.path.key`，openapi-fetch 负责编码）；顶部显示待审条数（`TEXT.pending`）与“整批通过”（逐条 PATCH，成功的移除卡片，遇到失败即停并显示错误码）；不自动轮询
+- “审核”按钮：`PATCH /api/reviews` 请求体 `{state:"pending"}`；列表有卡片时禁用（最终以 409 为准）；返回 `lines` 为 0 显示 `TEXT.noQueued`，`state` 为 `pending` 重新加载，为 `screening` 显示 `TEXT.drawn`（不轮询）；失败显示错误码
+- 标红：`GET` 返回的 `placeholders` 转义后拼成带捕获组的正则切分正文，占位符放 `span.masked`（`--mask` 红色），其余用文本节点
 - 每行一张卡片：批号、会话、发送人、时间、脱敏文字、“通过”、原因下拉、漏脱敏类原因（`ReviewReason.placeholder` 非空）才出现的 `textarea`、“拒绝”；成功后移除卡片，失败显示错误码
-- 安全：文字只经 `textContent` 写入 `<pre>`，不渲染；拒绝按钮在选了原因前禁用，漏脱敏类原因还须粘贴非空原文；`textarea` 设 `autocomplete=off`，提交后无论成败都清空；不填审核人、不带 `x-user`
+- 安全：文字只经文本节点与 `span` 的 `textContent` 写入 `<pre>`，不渲染；拒绝按钮在选了原因前禁用，漏脱敏类原因还须粘贴非空原文；`textarea` 设 `autocomplete=off`，提交后无论成败都清空；不填审核人、不带 `x-user`
 - happy-dom 无全局 `Option`，下拉项用 `createElement("option")`
 
 ## 失败批页

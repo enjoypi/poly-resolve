@@ -103,7 +103,7 @@ triage:
     url: "${DECISIONS_URL}"
   limits:
     backlog_max_ms: 21600000
-    batch: 20
+    batch: 100
     handoff_cooldown_ms: 600000
     intake: 200
     lookback_ms: 3600000

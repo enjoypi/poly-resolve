@@ -48,6 +48,11 @@ fn reviews_are_listed_and_ruled_over_http() {
             {"code": "noise", "label": "Noise", "placeholder": null},
         ]))
     );
+    assert_eq!(reply.get("placeholders"), Some(&json!(["[num]", "[x]"])));
+    let draw = r#"{"state":"pending"}"#;
+    let idle = send(addr, ["PATCH", "/api/reviews", ""], draw).unwrap();
+    assert!(idle.starts_with("HTTP/1.1 409"));
+    assert_eq!(body(&idle).unwrap(), json!({"code": "clash"}));
     let approve = r#"{"state":"approved"}"#;
     let approved = send(addr, ["PATCH", "/api/reviews/a%2B%2Fb", ""], approve).unwrap();
     assert_eq!(body(&approved).unwrap(), json!({"state": "approved"}));

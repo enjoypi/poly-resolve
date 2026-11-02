@@ -11,8 +11,8 @@ use tokio::net::TcpStream;
 
 use self::tunnel::{connect, socks};
 
-const PROXY_SCHEMES: [&str; 2] = ["http", SOCKS];
-const SOCKS: &str = "socks5";
+const HTTP: &str = "http";
+const PROXY_SCHEMES: [&str; 3] = [HTTP, "socks5", "socks5h"];
 
 #[derive(Clone, Copy)]
 pub(crate) struct Dial<'dial> {
@@ -179,7 +179,7 @@ pub(crate) fn proxied(text: &str) -> Result<Uri, String> {
                     url.port_u16().unwrap_or_default()
                 ) == text
         })
-        .ok_or_else(|| "proxy must be http:// or socks5://<loopback>:<port>".to_owned())
+        .ok_or_else(|| "proxy must be http://, socks5:// or socks5h://<loopback>:<port>".to_owned())
 }
 
 async fn pull(stream: &mut dyn Stream, buffer: &mut [u8]) -> Result<usize, String> {
@@ -209,10 +209,10 @@ async fn tunneled(dial: &Dial<'_>, proxy: &Uri) -> Result<Wire, String> {
     )
     .await
     .map_err(|_err| "proxy_connect".to_owned())?;
-    if proxy.scheme_str() == Some(SOCKS) {
-        socks(&mut wire, dial.host, dial.port).await?;
-    } else {
+    if proxy.scheme_str() == Some(HTTP) {
         connect(&mut wire, dial.host, dial.port).await?;
+    } else {
+        socks(&mut wire, dial.host, dial.port).await?;
     }
     Ok(wire)
 }

@@ -7,6 +7,7 @@
   --line: #2c3548;
   --ion: #9da8ff;
   --warn: #f2b84b;
+  --mask: #ff5c5c;
   --fs-1: 12px;
   --fs-2: 14px;
   --fs-3: 16px;
@@ -676,6 +677,10 @@ td.pick:hover .badge {
   padding: 8px;
   white-space: pre-wrap;
   word-break: break-all;
+}
+
+.review .masked {
+  color: var(--mask);
 }
 
 .review.flagged {
