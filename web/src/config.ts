@@ -6,6 +6,7 @@ export type Field = {
   look?: Look;
   placeholder?: string;
   primary?: boolean;
+  values?: Record<string, string>;
 };
 
 export type Kind = "number" | "text" | "time";
@@ -25,6 +26,8 @@ export const DETAIL = {
   time: "occurred_at_ms",
 };
 
+export const SOURCES: Record<string, string> = { dingtalk: "钉钉", imap: "邮箱" };
+
 export const FIELDS: Record<string, Field> = {
   occurred_at_ms: { kind: "time", label: "时间", primary: true },
   conversation_id: { label: "会话", look: "badge", primary: true },
@@ -33,8 +36,8 @@ export const FIELDS: Record<string, Field> = {
   key: { hidden: true, label: "key" },
   received_at_ms: { hidden: true, kind: "time", label: "接收时间" },
   sender_id: { hidden: true, label: "发送人 ID" },
-  source: { hidden: true, label: "来源" },
-  account: { hidden: true, label: "账号" },
+  source: { label: "来源", values: SOURCES },
+  account: { label: "账号" },
   priority: { kind: "number", label: "优先级" },
   analysis: { hidden: true, label: "分析" },
   topic: { hidden: true, label: "话题" },
@@ -46,9 +49,19 @@ export const MD_LIMIT = 20000;
 
 export const PAGE_LIMIT = 200;
 
-export const PIN = [DETAIL.conversation, DETAIL.sender];
+export const PIN = [DETAIL.conversation, DETAIL.sender, "source", "account"];
 
 export const PLAIN_LIMIT = 600;
+
+export const PROMPTS: Record<string, { hint: string; label: string }> = {
+  session: { hint: "话题第一次交给 codex 分析时的完整提示", label: "分析提示词（首次）" },
+  followup: { hint: "同一话题续写时只发新增消息的提示", label: "分析提示词（续写）" },
+  urgent: { hint: "决策接口对每条消息提的是非问题", label: "紧急判断问题" },
+  topic: { hint: "决策接口对每个会话段提的话题归属问题", label: "话题归属问题" },
+  screen: { hint: "本地模型复核脱敏的系统提示", label: "本地筛查指令" },
+};
+
+export const PROMPTS_HASH = "#prompts";
 
 export const PRESETS: Preset[] = [
   { label: "全部" },
@@ -79,6 +92,7 @@ export const TEXT = {
   copied: "已复制",
   copy: "复制",
   copyFailed: "复制失败",
+  dirty: "未保存",
   draw: "审核",
   drawn: (count: number) => `已取 ${count} 条，筛查完成后刷新。`,
   counts: (shown: number, loaded: number) => `显示 ${shown}／已加载 ${loaded} 条。`,
@@ -97,13 +111,18 @@ export const TEXT = {
   panel: "筛选",
   partial: "还有更早的消息未加载，筛选与排序只含已加载的行。",
   pending: (count: number) => `待审 ${count} 条`,
+  promptNote: "保存后下一次调用生效；文件在 cli/prompts/，改动需自行提交。",
+  prompts: "提示词",
   range: "时间范围",
   rangeInvalid: "起止时间无效",
   reasonPick: "拒绝原因",
   refresh: "刷新",
   reject: "拒绝",
   resend: "重发",
+  revert: "撤销修改",
   reviews: "审核",
+  save: "保存",
+  saved: "已保存",
   search: "搜索全部字段",
   since: "起",
   span: (text: string) => `时间范围：${text}。`,

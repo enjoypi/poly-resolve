@@ -3,16 +3,18 @@ use serde_json::json;
 
 use crate::support::{Fixture, local};
 
-static ROUTES: [Bound; 7] = [
+static ROUTES: [Bound; 9] = [
     ("batches", "list", "get", "/api/batches"),
     ("batches", "update", "patch", "/api/batches/{batch_id}"),
     ("health", "check", "get", "/api/health"),
     ("messages", "list", "get", "/api/messages"),
+    ("prompts", "list", "get", "/api/prompts"),
+    ("prompts", "update", "patch", "/api/prompts/{name}"),
     ("review", "draw", "patch", "/api/reviews"),
     ("review", "list", "get", "/api/reviews"),
     ("review", "update", "patch", "/api/reviews/{key}"),
 ];
-static SCHEMAS: [&str; 20] = [
+static SCHEMAS: [&str; 25] = [
     "BatchItem",
     "BatchKey",
     "BatchListRequest",
@@ -24,6 +26,11 @@ static SCHEMAS: [&str; 20] = [
     "MessagesListItem",
     "MessagesListRequest",
     "MessagesListResponse",
+    "PromptsKey",
+    "PromptsListItem",
+    "PromptsListResponse",
+    "PromptsNameResponse",
+    "PromptsUpdateRequest",
     "ReviewDrawRequest",
     "ReviewDrawResponse",
     "ReviewItem",
@@ -66,7 +73,7 @@ fn describes_health_route() {
 #[test]
 fn describes_review_draw_route() {
     let listing = build();
-    let entry = listing.entries().get(4).unwrap();
+    let entry = listing.entries().get(6).unwrap();
     assert_eq!(entry.params(), None);
     assert_eq!(
         entry.body(),
@@ -81,7 +88,7 @@ fn describes_review_draw_route() {
 #[test]
 fn describes_review_update_route() {
     let listing = build();
-    let entry = listing.entries().get(6).unwrap();
+    let entry = listing.entries().get(8).unwrap();
     assert_eq!(
         entry.params(),
         Some(&json!({"$ref": "#/components/schemas/ReviewKey"}))
@@ -116,7 +123,7 @@ fn lists_failures_per_route() {
             )
         })
         .collect();
-    let (head, tail) = failing.split_at(4);
+    let (head, tail) = failing.split_at(6);
     assert_eq!(
         head,
         [
@@ -124,6 +131,8 @@ fn lists_failures_per_route() {
             ("batches", vec![400, 404, 409, 503]),
             ("health", vec![]),
             ("messages", vec![400, 503]),
+            ("prompts", vec![503]),
+            ("prompts", vec![400, 404, 422, 503]),
         ]
     );
     assert_eq!(

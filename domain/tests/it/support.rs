@@ -1,6 +1,7 @@
 use domain::batches::{Item as Batch, Roster};
 use domain::features::{Call, Context, Origin, Ports, Rules, Target, dispatch};
 use domain::inbox::{Paging, Query, Reader, Row};
+use domain::prompts::Library;
 use domain::review::{Docket, Draw, Drawn, Item, Listing, Pick, Reason, Ruling};
 use domain::{AppError, Errors};
 use serde_json::{Error, from_str, from_value, json};
@@ -95,6 +96,7 @@ impl Docket for Dock {
             .take(limit)
             .map(|entry| {
                 from_value(json!({
+                    "account": "default",
                     "batch_id": BATCH,
                     "conversation_id": "c1",
                     "flag": "",
@@ -102,6 +104,7 @@ impl Docket for Dock {
                     "occurred_at_ms": STAMP,
                     "reason": "",
                     "sender": "alice",
+                    "source": "dingtalk",
                     "state": entry.state,
                     "text": LEAKED,
                 }))
@@ -161,6 +164,18 @@ impl Fixture {
             .with_draw(&self.draw)
             .with_placeholders(&self.placeholders);
         dispatch(&Context::new(&self.errors, rules, ports), call)
+    }
+
+    pub(crate) fn dispatch_prompts(
+        &self,
+        library: &dyn Library,
+        call: &Call<'_>,
+    ) -> Result<String, AppError> {
+        let (reader, docket, roster) = (Rows::default(), Dock::default(), Pool::default());
+        self.dispatch_both(
+            Ports::new(&reader, &docket, &roster).with_library(library),
+            call,
+        )
     }
 
     pub(crate) fn dispatch_review(

@@ -1,12 +1,12 @@
 use super::{
     Http, Route, Trace, asked, bare, batches, changed, fallible, health, ingest, keyed, listed,
-    messages, posted, review, sent, triage, typed,
+    messages, posted, prompts, review, sent, triage, typed,
 };
 use serde_json::to_string;
 
 use crate::AppError;
 
-pub(super) static ROUTES: [Route; 24] = [
+pub(super) static ROUTES: [Route; 27] = [
     Route {
         action: "list",
         call: |call, context| listed(call.params, context, batches::list),
@@ -117,6 +117,41 @@ pub(super) static ROUTES: [Route; 24] = [
             "get",
             "/api/messages",
             asked::<messages::ListRequest, messages::ListResponse>,
+        ),
+        trace: Trace::Redacted,
+    },
+    Route {
+        action: "check",
+        call: |call, _context| fallible(call.request, prompts::check),
+        failures: &[],
+        feature: "prompts",
+        http: Http::Hidden,
+        trace: Trace::Redacted,
+    },
+    Route {
+        action: "list",
+        call: |_call, context| {
+            prompts::list(context).map(|resp| to_string(&resp).unwrap_or_default())
+        },
+        failures: &[AppError::Storage],
+        feature: "prompts",
+        http: Http::Bound("get", "/api/prompts", bare::<prompts::ListResponse>),
+        trace: Trace::Redacted,
+    },
+    Route {
+        action: "update",
+        call: |call, context| keyed(call, context, prompts::update),
+        failures: &[
+            AppError::BadRequest,
+            AppError::NotFound,
+            AppError::Unprocessable,
+            AppError::Storage,
+        ],
+        feature: "prompts",
+        http: Http::Bound(
+            "patch",
+            "/api/prompts/{name}",
+            changed::<prompts::Key, prompts::UpdateRequest, prompts::NameResponse>,
         ),
         trace: Trace::Redacted,
     },

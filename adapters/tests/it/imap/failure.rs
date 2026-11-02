@@ -1,3 +1,5 @@
+use core::time::Duration;
+
 use adapters::store::Archive;
 use rusqlite::Connection;
 use serde_json::json;
@@ -7,9 +9,13 @@ use super::{FIRST, after, settings, source, whole};
 use crate::support::{FAILURE, REFUSE_INSERT, Sandbox, run_logged};
 
 const BRIEF: u64 = 50;
+const CLIMB: u64 = 4_000;
+const FAILURES: usize = 5;
+const GAP: Duration = Duration::from_millis(600);
 const IDLE: u64 = 100;
 const NARROW: u32 = 64;
 const QUICK: u64 = 200;
+const RESET: u64 = 3_000;
 const SHORT: u64 = 1_500;
 const STOP_IDLE: u64 = 60_000;
 const WATERMARK: &str = "CREATE TABLE messages (key TEXT PRIMARY KEY, source TEXT, account TEXT, occurred_at_ms TEXT); INSERT INTO messages VALUES ('k', 'imap', 'work', 'abc');";
@@ -32,6 +38,36 @@ async fn busy_store_backs_off() {
     holder.execute_batch("ROLLBACK").unwrap();
     assert_eq!(code, 0);
     assert!(logs.contains("store busy"));
+    drop(fake.finish());
+}
+
+#[tokio::test]
+async fn finished_round_resets_backoff() {
+    let sandbox = Sandbox::new("imap-round-reset").unwrap();
+    let mut sessions = vec![vec![after("", "* NO busy\r\n")]; FAILURES];
+    let mut idle = hello("IDLE");
+    idle.extend(vec![
+        after("UID SEARCH", "* SEARCH\r\n<tag> OK\r\n"),
+        after("IDLE", "+ idling\r\n"),
+        after("DONE", "<tag> OK\r\n"),
+        after("UID FETCH 8:*", "<tag> OK\r\n"),
+    ]);
+    sessions.push(idle);
+    sessions.push(vec![after("", "* NO busy\r\n")]);
+    let fake = serve(sessions).unwrap();
+    let shared = json!({"backoff_initial_ms": BRIEF, "backoff_max_ms": CLIMB});
+    let imap = source(&fake.url(), &json!({"idle_ms": IDLE}));
+    let config = whole(&sandbox, &imap, &shared).unwrap();
+    let (_code, logs) = run_logged(&config, RESET).await.unwrap();
+    let spans = fake.timed(FAILURES + 2);
+    let &[.., before, round, after] = spans.as_slice() else {
+        panic!("{spans:?}");
+    };
+    assert!(logs.contains("\"rounds\":1"), "{logs}");
+    let climbed = round.0.duration_since(before.1);
+    let reset = after.0.duration_since(round.1);
+    assert!(climbed >= GAP, "{climbed:?}");
+    assert!(reset < GAP, "{reset:?}");
     drop(fake.finish());
 }
 

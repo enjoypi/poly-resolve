@@ -62,6 +62,13 @@ const PARALLEL: u32 = 1;
 const PARALLEL_LIMIT: u32 = 2;
 const POLL: u64 = 20;
 const PROFILE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/it/fixtures/fake.sb");
+const PROMPTS: [(&str, &str); 5] = [
+    ("followup", "next:{messages}"),
+    ("screen", "judge"),
+    ("session", "ctx:{messages}"),
+    ("topic", "which {segment}"),
+    ("urgent", "urgent {line}"),
+];
 const QUOTA: u32 = 100;
 pub(crate) const REFUSE_INSERT: &str =
     "CREATE TRIGGER refuse BEFORE INSERT ON messages BEGIN SELECT RAISE(ABORT, 'refused'); END;";
@@ -175,6 +182,17 @@ impl Sandbox {
         &self.outside
     }
 
+    pub(crate) fn prompts(&self) -> io::Result<PathBuf> {
+        let dir = self.dir.join("prompts");
+        if !dir.exists() {
+            fs::create_dir_all(&dir)?;
+            for (name, text) in PROMPTS {
+                fs::write(dir.join(format!("{name}.md")), text)?;
+            }
+        }
+        Ok(dir)
+    }
+
     pub(crate) fn read(&self, file: &str) -> io::Result<String> {
         fs::read_to_string(self.dir.join(file))
     }
@@ -183,7 +201,6 @@ impl Sandbox {
         let mut patch = json!({
             "screen": {
                 "http": self.http(CHAT),
-                "instructions": "judge",
                 "model": "local",
                 "placeholder": "[s]",
             },
@@ -268,15 +285,15 @@ impl Sandbox {
             "notice": "[{probability}] {topic}|{analysis}",
             "notify": self.exec("send"),
             "notify_target": "${CARGO_PKG_VERSION}",
+            "prompts_dir": self.prompts()?,
             "questions": {
                 "threshold": THRESHOLD,
                 "topic": {
-                    "instructions": "which {segment}",
                     "min_confidence": MIN_CONFIDENCE,
                     "name": "topic",
                     "new_label": "new topic",
                 },
-                "urgent": {"instructions": "urgent {line}", "name": "urgent"},
+                "urgent": {"name": "urgent"},
             },
             "review": {
                 "learn_min_chars": LEARN_MIN,
@@ -417,9 +434,7 @@ pub(crate) fn stored(key: &str, occurred_at_ms: u64, text: &str) -> String {
 fn text_settings() -> Value {
     json!({
         "session": {
-            "followup": "next:{messages}",
             "fresh": ["-"],
-            "prompt": "ctx:{messages}",
             "resume": ["resume", "{thread}", "-"],
         },
         "sizes": {

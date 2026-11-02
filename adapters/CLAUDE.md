@@ -32,7 +32,8 @@
 - `imap/wire.rs`：`Conn`（递增标签 `A<n>`、缓冲、读行上限 `line_bytes`、`{n}` 字面量上限 `message_bytes`、遇 `* BYE` 即失败）、`Reply::checked`、`quoted`（拒非 ASCII 与控制字符，转义 `\` 与 `"`）；`imap/config.rs`：`url` 为带 `${NAME}` 的 `imaps://` 或本机明文 `imap://127.0.0.1|[::1]`（明文不得配代理），字段不超过 16 个
 - `net.rs`：`Dial`（主机、端口、`Layer::Plain|Tls`、代理、测试用根证书）→ `open` 得 `Link`（`read`、`write_all`）；`Wire` 包 tokio `TcpStream`，同步 `Read`/`Write` 内部用 `try_read`/`try_write` 并记下所需就绪方向，`WouldBlock` 时等 `ready(want)`，空闲不轮询；`SslStream<Wire>` 与 `Wire` 经 `Stream` trait 取回 `Wire`；`net/tunnel.rs`：HTTP `CONNECT`（逐字节读响应头到空行，上限 8 KiB，只认 2xx）与 SOCKS5（无认证、域名由代理解析，方法被拒 `proxy:method`、REP 非 0 `proxy:<码>`、主机超 255 字节 `proxy:host`）；`loopback`、`proxied`（`http://` 或 `socks5://` 加回环主机与端口原样）供各配置校验
 - `http.rs`：异步 HTTP/1.1 JSON POST，连接经 `net::open`；证书按目标主机校验；不读环境代理变量、不跟随重定向、代理失败不回退直连；超时按所处阶段报 `timeout:connect|proxy|tls|send|read`；响应头无法解析时立即结束读取；支持 Content-Length、chunked 与连接关闭响应；错误不携带 URL、密钥或正文
-- `triage/desk.rs`：调 domain `triage` feature；`Desk::rules` 为库里学到的规则在前、配置的在后
+- `triage/desk.rs`：调 domain `triage` feature；`Desk::rules` 为库里学到的规则在前、配置的在后；`Desk::prompt(name)` 每次读文件并经 domain `prompts.check` 校验，读不到记 warn `prompt unreadable`、不合规记 warn `prompt rejected`（只带名字与长度），都返回 `None`：`brief` 为 `None` 时该话题本轮不 claim、留在 `pending`；`pack` 为 `None` 时不封批、已封批的重打包失败；筛查为 `None` 时整批 `deferred`
+- `triage/prompts.rs`：`Folder`（`Settings::prompts()` 构造，目录为 `triage.prompts_dir`，名字为 `followup`、`session`、`topic`、`urgent`，配了 `screen` 再加 `screen`，文件名 `<名字>.md`）实现 domain `prompts::Library`；路径只由白名单名字拼出，不取自请求；`save` 先写同目录 `<名字>.md.tmp` 再 `rename`，rename 失败删掉临时文件；读写失败记 warn `prompt storage failed` 并返回 `Storage`
 - `triage/intake.rs`：入库、成批、重新脱敏；`triage/screen.rs`：本地模型筛查；`triage/batch.rs`：封批、发送、落结果；`triage/alert.rs`：分析、通知；三者是以 `&Shift` 为参数的自由函数（`multiple_inherent_impl` 禁止给 `Shift` 再写 impl）
 - 外发的话题选项：`OPEN_TOPICS` 带出话题最早一条已通过行的原文 `first` 与 `created_at_ms`，domain 按当前规则先脱敏再截断生成说明，存库的 label 只供页面；hints 收窄时保留 `created_at_ms` 晚于该段最早一行入库时间的话题，hints 全不匹配开放话题时不收窄
 - `ledger.rs`：`lines`、`batches`、`answers`、`topics`、`placements`、`alerts`、`learned_rules` 的读写；参数打成一个 JSON 对象经 `json_extract(?1, …)` 取值（绕开参数个数限制），读返回 `json_group_array`，失败只记 warn 并返回空或 0；`Ledger::apply` 是唯一的多语句事务（`BEGIN IMMEDIATE` … `COMMIT`，任一步失败则 `ROLLBACK`）
@@ -48,7 +49,8 @@
 - 转发消息：envelope 带 `lookup` 时，实时事件在 `unsealed` 后经 `assembled`、补拉在 `absorb` 里经 `assemble` 统一处理：收集 ID，按 `lookup_batch` 分批调 `Dws::lookup`，`dws::children` 取 `messages[].forwarded[]` 的 `{sender, text}`，再经 domain `ingest.assemble` 重组；查询失败、无子消息按原样入库
 - 解密或查询期间收到停机信号：该事件或整页不入库，补拉会补回
 - 退出：停机信号 → 0；`dws` 退出码落在 `manual_exit_codes` → `manual_exit_code`；存储错误 → `failure_exit_code`
-- 退避：从 `backoff_initial_ms` 起逐次翻倍到 `backoff_max_ms`；曾收到消息的一轮结束后复位
+- 退避：从 `backoff_initial_ms` 起逐次翻倍到 `backoff_max_ms`；钉钉曾收到消息的一轮结束后复位；IMAP 会话以 `Tally{received,rounds}` 计数，收到过邮件或完成过一轮等待（IDLE 正常结束或一次 `poll_ms` 睡眠）即复位，登录或 SELECT 后立刻断开仍递增
+- IMAP 加密连接（security-framework）把对端重置当作正常关闭，读到 `Ok(0)`，故生产日志只有 `imap:eof`，区分不出重置与关闭；不为此改 `net.rs`
 - 写库遇 `DatabaseBusy`、`DatabaseLocked`（`Halt::Busy`）记 warn `store busy`，本轮按失败退避，补拉补回；其余存储错误致命
 - 解密并发：补拉页的 `unseal` 与 `heal` 经 `decrypted` 用 `buffered(dws.parallel)` 解密，保持顺序，整组外包一次 `race`，被打断整页或整组不入库；实时事件仍逐条（水位与补拉重叠的前提）；钉钉工具并发解密未验证，配置保持 1
 
@@ -75,7 +77,7 @@
   - 成功先把分析、会话 ID 与游标写库，再推进 `analyzed`；推进失败下轮重放已存分析，不重跑 Codex。失败 `attempts + 1` 并把 `thread_at_ms` 归零，让下次新建会话
 - `deliver`：用 `triage.notice` 渲染，dws 发送（参数末尾追加 `notify_target` 与 `--idempotency-key=<话题>@<批号>`）→ `sent`；失败达 `max_attempts` 转 `failed`；阶段推进（`ADVANCE_ALERT … WHERE state = from`）把 `attempts` 与 `updated_at_ms` 归零，故发送失败只重试发送
 - 审核：`lines.state` 即审核状态，裁决由 cli 的 `PATCH /api/reviews/{key}` 经 domain `review.update` 调 `Shelf`；`rejected` 是终态，`leaked` 经 `rerender` 回到 `pending`；审核没有期限
-- `validate(setup)`：先检查 `batch ≤ 200`、`topics_max_open + batch ≤ 254`（决策接口 `questions ≤ 400`、`choices ≤ 255`），再校验决策与本地模型 URL，最后用空文本调 domain `redact`，规则无效即 `Err`；cli 启动自检用它
+- `validate(setup)`：先检查 `batch ≤ 200`、`topics_max_open + batch ≤ 254`（决策接口 `questions ≤ 400`、`choices ≤ 255`），再校验决策与本地模型 URL，再用空文本调 domain `redact`，规则无效即 `Err`，最后逐个 `Desk::prompt`，任一为 `None` 报 `triage.prompts_dir: <名字>: unusable`；cli 启动自检用它
 - 外发内容（决策请求体、codex 提示词）只能来自 domain 渲染后的结果，adapters 不做文本替换
 - 防自循环：domain 的 `line` 跳过本人发出的与通知会话的消息；本人与通知会话按消息的 `source:account` 取对应数据源的 `Profile`，取不到（无此概念的源）则不判定；通知以本人身份发出，补拉可能再收到，靠这两条切断
 - 停机：在途子进程被打断并 kill，状态不改，下次启动续做（至少一次，发送靠幂等键去重）

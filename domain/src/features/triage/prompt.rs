@@ -6,7 +6,7 @@ use super::transcript::{Row, Style, fit};
 use crate::AppError;
 
 const ANALYSIS: &str = "{analysis}";
-const MESSAGES: &str = "{messages}";
+pub(crate) const MESSAGES: &str = "{messages}";
 const PROBABILITY: &str = "{probability}";
 const TOPIC: &str = "{topic}";
 

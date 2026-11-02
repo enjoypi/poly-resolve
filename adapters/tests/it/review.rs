@@ -8,6 +8,7 @@ use serde_json::{Value, to_value};
 use crate::support::{BUSY, Fallible, Sandbox};
 
 const LIMIT: u32 = 2;
+const ORIGIN: &str = "INSERT INTO messages (key, source, account, conversation_id, sender_id, sender_name, text, occurred_at_ms, received_at_ms, raw) VALUES ('b', 'imap', 'hf', 'c1', 's', 'alice', 'text b', 1, 1, '');";
 const ROWS: &str = "INSERT INTO lines (key, conversation_id, occurred_at_ms, sender, text, state, reason, reviewer, flag, hints, rules_rev, batch_id, created_at_ms, updated_at_ms) VALUES ('a', 'c1', 3, 'alice', 'text a secret-abc', 'pending', '', '', '', '[]', 0, 1, 3, 3), ('b', 'c1', 1, 'alice', 'text b', 'pending', '', '', '', '[]', 0, 1, 1, 1), ('c', 'c1', 2, 'alice', 'text c', 'pending', '', '', '', '[]', 0, 1, 2, 2), ('d', 'c1', 4, 'bob', 'text d', 'approved', '', 'bob', '', '[]', 0, 1, 4, 5), ('e', 'c1', 5, 'bob', 'text e', 'queued', '', '', '', '[]', 0, 0, 5, 5);";
 
 fn field(sandbox: &Sandbox, key: &str, column: &str) -> Fallible<String> {
@@ -43,7 +44,7 @@ fn list_fails_on_missing_database() {
 fn list_fails_on_undecodable_row() {
     let sandbox = Sandbox::new("review-list-undecodable").unwrap();
     sandbox
-        .seed("CREATE TABLE lines (key TEXT, conversation_id TEXT, occurred_at_ms INTEGER, sender TEXT, text TEXT, state TEXT, reason TEXT, reviewer TEXT, flag TEXT, batch_id TEXT); INSERT INTO lines VALUES ('k', 'c', 1, 's', 't', 'pending', '', '', '', 'abc');")
+        .seed("CREATE TABLE lines (key TEXT, conversation_id TEXT, occurred_at_ms INTEGER, sender TEXT, text TEXT, state TEXT, reason TEXT, reviewer TEXT, flag TEXT, batch_id TEXT); INSERT INTO lines VALUES ('k', 'c', 1, 's', 't', 'pending', '', '', '', 'abc'); CREATE TABLE messages (key TEXT, source TEXT, account TEXT);")
         .unwrap();
     let path = sandbox.database();
     let shelf = Shelf::new(&path, BUSY);
@@ -66,10 +67,18 @@ fn list_returns_oldest_first_within_limit() {
     let sandbox = Sandbox::new("review-list").unwrap();
     drop(Archive::open(&sandbox.database(), BUSY).unwrap());
     sandbox.seed(ROWS).unwrap();
+    sandbox.seed(ORIGIN).unwrap();
     let path = sandbox.database();
     let shelf = Shelf::new(&path, BUSY);
     let pending = shelf.list(&Listing::new("pending", LIMIT)).unwrap();
     assert_eq!(keys(&pending), ["b", "c"]);
+    assert_eq!(
+        origins(&pending),
+        [
+            ("imap".to_owned(), "hf".to_owned()),
+            (String::new(), String::new())
+        ]
+    );
     let approved = shelf.list(&Listing::new("approved", LIMIT)).unwrap();
     assert_eq!(keys(&approved), ["d"]);
     assert!(
@@ -78,6 +87,17 @@ fn list_returns_oldest_first_within_limit() {
             .unwrap()
             .is_empty()
     );
+}
+
+fn origins(items: &[Item]) -> Vec<(String, String)> {
+    items
+        .iter()
+        .filter_map(|item| {
+            let value = to_value(item).ok()?;
+            let pick = |name: &str| value.get(name).and_then(Value::as_str).map(str::to_owned);
+            Some((pick("source")?, pick("account")?))
+        })
+        .collect()
 }
 
 #[test]

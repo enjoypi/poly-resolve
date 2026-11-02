@@ -5,6 +5,7 @@ mod endpoint;
 mod hold;
 mod mailbox;
 mod policy;
+mod prompts;
 mod review;
 mod revive;
 mod rig;

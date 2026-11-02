@@ -53,7 +53,8 @@ fn defer(shift: &Shift<'_>, lines: &[Value]) {
     tracing::warn!(deferred, "screening failed");
 }
 
-fn request(shift: &Shift<'_>, setup: &Screen, lines: &[Value]) -> Prepared {
+fn request(shift: &Shift<'_>, setup: &Screen, lines: &[Value]) -> Option<Prepared> {
+    let instructions = shift.desk.prompt("screen")?;
     let triage = shift.triage;
     let topics = shift.ledger.open_topics(&json!({
         "limit": triage.topics_max_open(),
@@ -64,16 +65,16 @@ fn request(shift: &Shift<'_>, setup: &Screen, lines: &[Value]) -> Prepared {
         .map(|line| json!({"key": text(line, "key"), "text": text(line, "text")}))
         .collect();
     let body = shift.desk.screen(&json!({
-        "instructions": setup.instructions(),
+        "instructions": instructions,
         "lines": candidates,
         "model": setup.model(),
         "topics": topics,
     }));
-    Prepared {
+    Some(Prepared {
         body,
         candidates,
         topics,
-    }
+    })
 }
 
 pub(super) async fn screen(shift: &mut Shift<'_>) -> Option<()> {
@@ -89,13 +90,10 @@ pub(super) async fn screen(shift: &mut Shift<'_>) -> Option<()> {
     if lines.is_empty() {
         return Some(());
     }
-    let prepared = request(shift, setup, &lines);
-    let url = match setup.http().local_url() {
-        Ok(url) => url,
-        Err(_err) => {
-            defer(shift, &lines);
-            return Some(());
-        }
+    let (Some(prepared), Ok(url)) = (request(shift, setup, &lines), setup.http().local_url())
+    else {
+        defer(shift, &lines);
+        return Some(());
     };
     let key = setup.http().key();
     let call = Call::new(&url, &prepared.body, setup.http().timeout_ms()).with_key(key.as_deref());

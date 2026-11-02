@@ -3,6 +3,7 @@ pub mod catalog;
 mod health;
 mod ingest;
 mod messages;
+mod prompts;
 mod review;
 mod routes;
 pub(crate) mod triage;
@@ -18,10 +19,12 @@ use serde_urlencoded::from_str as from_query;
 use self::routes::ROUTES;
 use crate::batches::Roster;
 use crate::inbox::{Paging, Reader};
+use crate::prompts::{Library, Vacant};
 use crate::review::{Docket, Draw, Reason};
 use crate::{AppError, Errors};
 
 const OFF: Draw = Draw::off();
+static VACANT: Vacant = Vacant;
 
 type Binding = (&'static str, &'static str, Describer);
 
@@ -72,6 +75,10 @@ impl<'ctx> Context<'ctx> {
 
     const fn learn_min_chars(&self) -> u32 {
         self.rules.learn_min_chars
+    }
+
+    const fn library(&self) -> &dyn Library {
+        self.ports.library
     }
 
     #[must_use = "上下文需交给 dispatch"]
@@ -152,6 +159,7 @@ impl<'call> Origin<'call> {
 #[derive(Clone, Copy, Debug)]
 pub struct Ports<'ports> {
     docket: &'ports dyn Docket,
+    library: &'ports dyn Library,
     reader: &'ports dyn Reader,
     roster: &'ports dyn Roster,
 }
@@ -165,9 +173,15 @@ impl<'ports> Ports<'ports> {
     ) -> Self {
         Self {
             docket,
+            library: &VACANT,
             reader,
             roster,
         }
+    }
+
+    #[must_use = "端口需交给 Context"]
+    pub const fn with_library(self, library: &'ports dyn Library) -> Self {
+        Self { library, ..self }
     }
 }
 

@@ -57,6 +57,8 @@ fn spec_declares_statuses_per_operation() {
             "/api/batches/{batch_id}",
             "/api/health",
             "/api/messages",
+            "/api/prompts",
+            "/api/prompts/{name}",
             "/api/reviews",
             "/api/reviews/{key}"
         ]

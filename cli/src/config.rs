@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use adapters::config::Settings as Ingest;
 use adapters::store::Shelf;
 use adapters::triage::config::Settings as Triage;
+use adapters::triage::prompts::Folder;
 use domain::Errors;
 use domain::features::{Context, Ports, Rules};
 use domain::inbox::Paging;
@@ -43,6 +44,7 @@ pub(crate) struct Settings {
     log: Dispatch,
     marks: Vec<String>,
     messages: Paging,
+    prompts: Folder,
     sandbox_exit_code: u8,
     serve_exit_code: u8,
     shutdown_timeout_exit_code: u8,
@@ -66,7 +68,7 @@ impl Settings {
             )
             .with_draw(&self.draw)
             .with_placeholders(self.marks.as_slice()),
-            Ports::new(reader, reader, reader),
+            Ports::new(reader, reader, reader).with_library(&self.prompts),
         )
     }
 
@@ -132,6 +134,7 @@ pub(crate) fn load(path: &Path) -> Result<Settings, String> {
         log: log::dispatch(level, Redactor::new(&file.triage.patterns()).ok()),
         marks: file.triage.marks(),
         messages: file.messages,
+        prompts: file.triage.prompts(),
         sandbox_exit_code: file.sandbox_exit_code.get(),
         serve_exit_code: file.serve_exit_code.get(),
         shutdown_timeout_exit_code: file.shutdown_timeout_exit_code.get(),

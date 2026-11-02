@@ -495,3 +495,27 @@ test("列菜单按钮展开与 Esc 收起", async () => {
   menu?.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "a" }));
   expect(menu?.hidden).toBe(true);
 });
+
+test("点击来源与账号按显示值精确筛选，再点移除", async () => {
+  const { root } = await mount([
+    page([
+      item("a", { account: "hf", source: "imap" }),
+      item("b", { account: "default", source: "dingtalk" }),
+      item("c", { account: "t4f", source: "imap" }),
+    ]),
+  ]);
+  document.body.append(root);
+  const cell = (key: string, index: number) =>
+    root.querySelectorAll<HTMLElement>(`tbody td[data-col="${key}"]`)[index];
+  expect(cell("source", 0)?.textContent).toBe("邮箱");
+  expect(cell("source", 0)?.classList.contains("pick")).toBe(true);
+  cell("source", 0)?.click();
+  expect(filter(root, "source")).toBe('"邮箱"');
+  expect(column(root, "text")).toEqual(["text-a", "text-c"]);
+  cell("account", 1)?.click();
+  expect(filter(root, "account")).toBe('"t4f"');
+  expect(column(root, "text")).toEqual(["text-c"]);
+  cell("source", 0)?.click();
+  expect(filter(root, "source")).toBe("");
+  expect(column(root, "text")).toEqual(["text-c"]);
+});

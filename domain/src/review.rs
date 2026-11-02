@@ -84,6 +84,7 @@ impl Drawn {
 #[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
 #[schemars(rename = "ReviewItem")]
 pub struct Item {
+    account: String,
     batch_id: u64,
     conversation_id: String,
     flag: String,
@@ -91,6 +92,7 @@ pub struct Item {
     occurred_at_ms: u64,
     reason: String,
     sender: String,
+    source: String,
     state: String,
     text: String,
 }

@@ -9,6 +9,7 @@ use crate::config::Settings as Ingest;
 use crate::ingest::label;
 
 const FEATURE: &str = "triage";
+const PROMPTS: &str = "prompts";
 const RESUME: &str = "resume";
 const TRANSPORT: &str = "adapters";
 
@@ -45,25 +46,29 @@ pub(crate) struct Desk<'desk> {
 }
 
 impl<'desk> Desk<'desk> {
+    fn ask(&self, target: Target<'_>, request: &Value) -> Result<String, AppError> {
+        dispatch(
+            self.context,
+            &Call::new(
+                Origin::new(TRANSPORT, None, None),
+                target,
+                &request.to_string(),
+            ),
+        )
+    }
+
     pub(crate) fn brief(&self, parts: &Value) -> Option<Brief> {
         let extra = json!({
-            "followup": self.triage.followup(),
+            "followup": self.prompt("followup")?,
             "max_chars": self.triage.context_max_chars(),
-            "template": self.triage.prompt(),
+            "template": self.prompt("session")?,
         });
         self.call("brief", &merged(parts, &extra))
             .map_or_default(|reply| from_str(&reply).ok())
     }
 
     fn call(&self, action: &str, request: &Value) -> Result<String, AppError> {
-        dispatch(
-            self.context,
-            &Call::new(
-                Origin::new(TRANSPORT, None, None),
-                Target::new(FEATURE, action),
-                &request.to_string(),
-            ),
-        )
+        self.ask(Target::new(FEATURE, action), request)
     }
 
     pub(crate) fn line(&self, message: &Value, rules: &Value) -> Option<Line> {
@@ -138,17 +143,26 @@ impl<'desk> Desk<'desk> {
             "new_label": questions.topic().new_label(),
             "questions": {
                 "topic": {
-                    "instructions": questions.topic().instructions(),
+                    "instructions": self.prompt("topic")?,
                     "name": questions.topic().name(),
                 },
                 "urgent": {
-                    "instructions": questions.urgent().instructions(),
+                    "instructions": self.prompt("urgent")?,
                     "name": questions.urgent().name(),
                 },
             },
         });
         self.call("pack", &merged(parts, &extra))
             .map_or_default(|reply| from_str(&reply).ok())
+    }
+
+    pub(crate) fn prompt(&self, name: &str) -> Option<String> {
+        let text = self.triage.prompts().read(name)?;
+        let request = json!({"name": name, "text": text});
+        self.ask(Target::new(PROMPTS, "check"), &request)
+            .map_err(|_err| tracing::warn!(name, len = text.len(), "prompt rejected"))
+            .ok()
+            .map(|_reply| text)
     }
 
     pub(crate) fn redact(&self, rules: &Value, text: &str) -> Result<String, AppError> {

@@ -25,7 +25,7 @@ const LIST: &str = "SELECT json_group_array(json_object('account', account, 'ana
 const NEXT_BATCH: &str = "SELECT CASE WHEN EXISTS (SELECT 1 FROM lines a WHERE a.batch_id > 0 AND a.state IN ('screening', 'pending', 'leaked') AND NOT EXISTS (SELECT 1 FROM batches b WHERE b.id = a.batch_id)) THEN -1 ELSE COALESCE(MAX(batch_id), 0) + 1 END FROM lines";
 const PRESENT: &str = "SELECT COUNT(*) FROM pragma_table_info(?1) WHERE name = ?2";
 const REPLACE: &str = "UPDATE messages SET text = json_extract(?2, '$.text') WHERE key = json_extract(?2, '$.key') AND text = json_extract(?1, '$.text')";
-const REVIEWS: &str = "SELECT json_group_array(json_object('batch_id', batch_id, 'conversation_id', conversation_id, 'flag', flag, 'key', key, 'occurred_at_ms', occurred_at_ms, 'reason', reason, 'sender', sender, 'state', state, 'text', text)) FROM (SELECT * FROM lines WHERE state = ?1 AND batch_id > 0 ORDER BY flag = '', batch_id, occurred_at_ms, key LIMIT ?2)";
+const REVIEWS: &str = "SELECT json_group_array(json_object('account', account, 'batch_id', batch_id, 'conversation_id', conversation_id, 'flag', flag, 'key', key, 'occurred_at_ms', occurred_at_ms, 'reason', reason, 'sender', sender, 'source', source, 'state', state, 'text', text)) FROM (SELECT l.*, COALESCE(m.source, '') AS source, COALESCE(m.account, '') AS account FROM lines l LEFT JOIN messages m ON m.key = l.key WHERE l.state = ?1 AND l.batch_id > 0 ORDER BY l.flag = '', l.batch_id, l.occurred_at_ms, l.key LIMIT ?2)";
 const REVIVALS: Column = Column {
     alter: "ALTER TABLE batches ADD COLUMN revivals INTEGER NOT NULL DEFAULT 0; UPDATE batches SET revivals = -1 WHERE state = 'failed'",
     name: "revivals",

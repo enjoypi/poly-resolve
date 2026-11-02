@@ -4,6 +4,7 @@ pub mod config;
 mod desk;
 pub(crate) mod endpoint;
 mod intake;
+pub mod prompts;
 mod screen;
 
 use alloc::collections::BTreeMap;
@@ -256,5 +257,13 @@ pub fn validate(setup: Setup<'_>) -> Result<(), String> {
     let desk = Desk::new(setup.context, setup.ingest, triage);
     desk.redact(&desk.rules(&[]), "")
         .map(drop)
-        .map_err(|_err| "triage.redact.patterns: invalid pattern".to_owned())
+        .map_err(|_err| "triage.redact.patterns: invalid pattern".to_owned())?;
+    triage
+        .prompts()
+        .names()
+        .iter()
+        .find(|name| desk.prompt(name).is_none())
+        .map_or(Ok(()), |name| {
+            Err(format!("triage.prompts_dir: {name}: unusable"))
+        })
 }

@@ -38,7 +38,7 @@ fn analysis_jobs(shift: &Shift<'_>, alerts: &[Value]) -> Vec<Analysis> {
                 return None;
             }
             let now = now_ms();
-            let brief = brief(shift, alert, now);
+            let brief = brief(shift, alert, now)?;
             let args = if brief.resumed() {
                 shift.triage.resume_args(text(alert, "thread_id"))
             } else {
@@ -108,24 +108,21 @@ fn analyze(shift: &Shift<'_>, job: &Analysis, done: &io::Result<Output>) {
     }
 }
 
-fn brief(shift: &Shift<'_>, alert: &Value, now: u64) -> Brief {
+fn brief(shift: &Shift<'_>, alert: &Value, now: u64) -> Option<Brief> {
     let reusable = !text(alert, "thread_id").is_empty()
         && number(alert, "thread_at_ms") >= now.saturating_sub(shift.triage.session_max_ms());
     let rows = shift
         .ledger
         .topic_lines(&json!({"topic_id": text(alert, "topic_id")}));
     let (rules, _rev) = current(shift);
-    shift
-        .desk
-        .brief(&json!({
-            "resume": reusable.then(|| json!({
-                "until": number(alert, "until_ms"),
-                "until_key": text(alert, "until_key"),
-            })),
-            "rows": rows,
-            "rules": rules,
-        }))
-        .unwrap_or_default()
+    shift.desk.brief(&json!({
+        "resume": reusable.then(|| json!({
+            "until": number(alert, "until_ms"),
+            "until_key": text(alert, "until_key"),
+        })),
+        "rows": rows,
+        "rules": rules,
+    }))
 }
 
 fn claim_of(shift: &Shift<'_>, key: &str, state: &str) -> Value {

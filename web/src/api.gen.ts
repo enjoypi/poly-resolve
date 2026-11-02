@@ -255,6 +255,144 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/prompts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: {
+            parameters: {
+                query?: never;
+                header?: {
+                    "x-session-id"?: string;
+                    "x-user"?: string;
+                };
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["PromptsListResponse"];
+                    };
+                };
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ErrorBody"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/prompts/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch: {
+            parameters: {
+                query?: never;
+                header?: {
+                    "x-session-id"?: string;
+                    "x-user"?: string;
+                };
+                path: {
+                    name: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["PromptsUpdateRequest"];
+                };
+            };
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["PromptsNameResponse"];
+                    };
+                };
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ErrorBody"];
+                    };
+                };
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ErrorBody"];
+                    };
+                };
+                415: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ErrorBody"];
+                    };
+                };
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ErrorBody"];
+                    };
+                };
+            };
+        };
+        trace?: never;
+    };
     "/api/reviews": {
         parameters: {
             query?: never;
@@ -531,6 +669,23 @@ export interface components {
             items: components["schemas"]["MessagesListItem"][];
             next_cursor?: string | null;
         };
+        PromptsKey: {
+            name: string;
+        };
+        PromptsListItem: {
+            name: string;
+            required: string[];
+            text: string;
+        };
+        PromptsListResponse: {
+            items: components["schemas"]["PromptsListItem"][];
+        };
+        PromptsNameResponse: {
+            name: string;
+        };
+        PromptsUpdateRequest: {
+            text: string;
+        };
         ReviewDrawRequest: {
             state: "pending";
         };
@@ -540,6 +695,7 @@ export interface components {
             state: string;
         };
         ReviewItem: {
+            account: string;
             batch_id: number;
             conversation_id: string;
             flag: string;
@@ -547,6 +703,7 @@ export interface components {
             occurred_at_ms: number;
             reason: string;
             sender: string;
+            source: string;
             state: string;
             text: string;
         };

@@ -1,6 +1,6 @@
 import type { components } from "./api.gen";
 import type { connect } from "./client";
-import { REVIEW_LIMIT, TEXT } from "./config";
+import { REVIEW_LIMIT, SOURCES, TEXT } from "./config";
 import { area, button } from "./dom";
 import { stamp } from "./stamp";
 
@@ -72,7 +72,7 @@ class Queue {
       area(
         "p",
         "meta",
-        `${TEXT.batch(item.batch_id)} · ${item.conversation_id} · ${item.sender} · ${stamp(item.occurred_at_ms, this.timeZone)}${flag}`,
+        `${TEXT.batch(item.batch_id)} · ${SOURCES[item.source] ?? item.source} ${item.account} · ${item.conversation_id} · ${item.sender} · ${stamp(item.occurred_at_ms, this.timeZone)}${flag}`,
       ),
       text,
       area(

@@ -8,9 +8,9 @@ use super::redact::{Mask, Rule};
 use super::transcript::{Row, Style};
 use crate::AppError;
 
-const LINE: &str = "{line}";
+pub(crate) const LINE: &str = "{line}";
 pub(super) const NEW: &str = "new";
-const SEGMENT: &str = "{segment}";
+pub(crate) const SEGMENT: &str = "{segment}";
 
 #[derive(Deserialize, JsonSchema)]
 #[schemars(rename = "TriageAttach")]

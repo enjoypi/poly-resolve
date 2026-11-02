@@ -20,6 +20,7 @@ type Reply = { body: unknown; status?: number };
 
 function item(key: string, patch: Record<string, unknown> = {}) {
   return {
+    account: "hf",
     batch_id: 1,
     conversation_id: "c1",
     flag: "",
@@ -27,6 +28,7 @@ function item(key: string, patch: Record<string, unknown> = {}) {
     occurred_at_ms: NOW,
     reason: "",
     sender: "alice",
+    source: "imap",
     state: "pending",
     text: `text-${key}`,
     ...patch,
@@ -92,7 +94,7 @@ test("渲染待审行：正文只作文本，批、会话、发送人、时间�
   expect(cards(root)).toHaveLength(2);
   expect(root.querySelector(".count")?.textContent).toBe(TEXT.pending(2));
   const meta = root.querySelector(".meta")?.textContent ?? "";
-  for (const part of [TEXT.batch(1), "c1", "alice", "2026-10-28 01:20:09"]) expect(meta).toContain(part);
+  for (const part of [TEXT.batch(1), "邮箱 hf", "c1", "alice", "2026-10-28 01:20:09"]) expect(meta).toContain(part);
   expect(root.querySelectorAll(".payload")[1]?.textContent).toBe("<script>alert(1)</script>");
   expect(cards(root)[0]?.className).toBe("review");
   expect(cards(root)[1]?.className).toBe("review flagged");

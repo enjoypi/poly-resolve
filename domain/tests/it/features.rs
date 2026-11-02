@@ -3,6 +3,7 @@ mod health;
 mod ingest;
 mod mail;
 mod messages;
+mod prompts;
 mod review;
 mod triage;
 

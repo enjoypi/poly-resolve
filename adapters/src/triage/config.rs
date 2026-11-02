@@ -2,6 +2,7 @@ use alloc::collections::BTreeMap;
 use core::iter::once;
 use core::num::{NonZeroU32, NonZeroU64};
 use std::env;
+use std::path::PathBuf;
 
 use domain::redact::marks;
 use domain::review::{Draw, Reason, Rule as Pattern};
@@ -9,6 +10,7 @@ use futures_util::future::join_all;
 use serde::{Deserialize, Serialize};
 
 use super::endpoint::Http;
+use super::prompts::Folder;
 
 use crate::pipe::probe;
 use crate::seatbelt::Sandbox;
@@ -98,15 +100,10 @@ enum Mode {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Question {
-    instructions: String,
     name: String,
 }
 
 impl Question {
-    pub(crate) fn instructions(&self) -> &str {
-        &self.instructions
-    }
-
     pub(crate) fn name(&self) -> &str {
         &self.name
     }
@@ -160,7 +157,6 @@ pub(crate) struct Rule {
 #[serde(deny_unknown_fields)]
 pub struct Screen {
     http: Http,
-    instructions: String,
     model: String,
     placeholder: String,
 }
@@ -168,10 +164,6 @@ pub struct Screen {
 impl Screen {
     pub(crate) const fn http(&self) -> &Http {
         &self.http
-    }
-
-    pub(crate) fn instructions(&self) -> &str {
-        &self.instructions
     }
 
     pub(crate) fn model(&self) -> &str {
@@ -186,9 +178,7 @@ impl Screen {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Session {
-    followup: String,
     fresh: Vec<String>,
-    prompt: String,
     resume: Vec<String>,
 }
 
@@ -203,6 +193,7 @@ pub struct Settings {
     notice: String,
     notify: Exec,
     notify_target: Var,
+    prompts_dir: PathBuf,
     questions: Questions,
     redact: Redact,
     review: Review,
@@ -253,10 +244,6 @@ impl Settings {
     #[must_use = "开关需用于决定是否运行"]
     pub fn enabled(&self) -> bool {
         self.mode == Mode::Enabled
-    }
-
-    pub(crate) fn followup(&self) -> &str {
-        &self.session.followup
     }
 
     pub(crate) fn fresh_args(&self) -> Vec<String> {
@@ -361,8 +348,9 @@ impl Settings {
         self.limits.poll_ms.get()
     }
 
-    pub(crate) fn prompt(&self) -> &str {
-        &self.session.prompt
+    #[must_use = "提示词存储需交给 Ports"]
+    pub fn prompts(&self) -> Folder {
+        Folder::new(self.prompts_dir.clone(), self.screen.as_ref())
     }
 
     pub(crate) const fn questions(&self) -> &Questions {
@@ -433,17 +421,12 @@ struct Sizes {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Topic {
-    instructions: String,
     min_confidence: f64,
     name: String,
     new_label: String,
 }
 
 impl Topic {
-    pub(crate) fn instructions(&self) -> &str {
-        &self.instructions
-    }
-
     pub(crate) const fn min_confidence(&self) -> f64 {
         self.min_confidence
     }

@@ -19,6 +19,12 @@ const PROFILE: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../adapters/tests/it/fixtures/fake.sb"
 );
+const PROMPTS: [(&str, &str); 4] = [
+    ("followup", "f {messages}"),
+    ("session", "p {messages}"),
+    ("topic", "t {segment}"),
+    ("urgent", "i {line}"),
+];
 pub(crate) const TRIAGE: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../adapters/tests/it/fixtures/fake-triage.sh"
@@ -67,14 +73,15 @@ triage:
   notice: n
   notify: {args: [x], bin: /nonexistent/triage, env: {FAKE_DIR: /nonexistent}, sandbox: *fence, timeout_ms: 1000, vars: {PATH: \"${PATH}\"}}
   notify_target: \"${HOME}\"
-  questions: {threshold: 0.8, topic: {instructions: t, min_confidence: 0.6, name: topic, new_label: n}, urgent: {instructions: i, name: urgent}}
+  prompts_dir: /nonexistent/prompts
+  questions: {threshold: 0.8, topic: {min_confidence: 0.6, name: topic, new_label: n}, urgent: {name: urgent}}
   redact:
     patterns:
       - pattern: \"[0-9]{11,}\"
         placeholder: \"[num]\"
     unknown_sender: unknown
   review: {learn_min_chars: 4, mode: manual, reasons: [{code: leak, label: Leaked, placeholder: \"[x]\"}, {code: noise, label: Noise}]}
-  session: {followup: f, fresh: [\"-\"], prompt: p, resume: [resume, \"{thread}\", \"-\"]}
+  session: {fresh: [\"-\"], resume: [resume, \"{thread}\", \"-\"]}
   sizes:
     context_max_chars: 1000
     label_chars: 10
@@ -153,7 +160,9 @@ pub(crate) fn decisions() -> String {
 }
 
 pub(crate) fn live(dir: &str) -> String {
-    YAML.replace("localhost:15801", &decisions())
+    drop(prompts(dir));
+    YAML.replace("/nonexistent/prompts", &format!("{dir}/prompts"))
+        .replace("localhost:15801", &decisions())
         .replace("/nonexistent/dws", FAKE)
         .replace("/nonexistent/triage", TRIAGE)
         .replace("/nonexistent/fake.sb", PROFILE)
@@ -165,6 +174,15 @@ pub(crate) fn live(dir: &str) -> String {
 
 pub(crate) async fn load(config: &str) -> ExitCode {
     run(&["cli", "ingest", "--config", config]).await
+}
+
+fn prompts(dir: &str) -> io::Result<()> {
+    let folder = format!("{dir}/prompts");
+    fs::create_dir_all(&folder)?;
+    for (name, text) in PROMPTS {
+        fs::write(format!("{folder}/{name}.md"), text)?;
+    }
+    Ok(())
 }
 
 pub(crate) async fn run(args: &[&str]) -> ExitCode {

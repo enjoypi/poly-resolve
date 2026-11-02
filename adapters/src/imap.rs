@@ -87,6 +87,12 @@ impl Run<'_> {
     }
 }
 
+#[derive(Default)]
+struct Tally {
+    received: u64,
+    rounds: u64,
+}
+
 struct Worker<'run> {
     config: &'run Settings,
     context: &'run Context<'run>,
@@ -137,7 +143,7 @@ impl Worker<'_> {
         Ok(saved)
     }
 
-    async fn follow(&self, received: &mut u64) -> Result<Infallible, Cut> {
+    async fn follow(&self, tally: &mut Tally) -> Result<Infallible, Cut> {
         let mut mailbox = self.open().await?;
         let date = self.since()?;
         let found = mailbox
@@ -163,14 +169,15 @@ impl Worker<'_> {
         {
             let set: Vec<String> = chunk.iter().map(ToString::to_string).collect();
             let saved = self.fetch(&mut mailbox, &set.join(",")).await?;
-            *received = received.saturating_add(saved);
+            tally.received = tally.received.saturating_add(saved);
         }
         mailbox.seen = mailbox.seen.max(base);
         loop {
             self.wait(&mut mailbox).await?;
+            tally.rounds = tally.rounds.saturating_add(1);
             let set = format!("{}:*", mailbox.seen.saturating_add(1));
             let saved = self.fetch(&mut mailbox, &set).await?;
-            *received = received.saturating_add(saved);
+            tally.received = tally.received.saturating_add(saved);
         }
     }
 
@@ -288,8 +295,8 @@ impl Worker<'_> {
     }
 
     async fn session(&self) -> Result<Retry, Halt> {
-        let mut received = 0;
-        let Err(cut) = self.follow(&mut received).await;
+        let mut tally = Tally::default();
+        let Err(cut) = self.follow(&mut tally).await;
         let account = self.config.account();
         match cut {
             Cut::Halt(halt) => Err(halt),
@@ -298,8 +305,10 @@ impl Worker<'_> {
                 Ok(Retry::Stalled)
             }
             Cut::Net(reason) => {
-                tracing::warn!(account, reason, received, "imap session ended");
-                Ok(if received > 0 {
+                let received = tally.received;
+                let rounds = tally.rounds;
+                tracing::warn!(account, reason, received, rounds, "imap session ended");
+                Ok(if received > 0 || rounds > 0 {
                     Retry::Progress
                 } else {
                     Retry::Failed

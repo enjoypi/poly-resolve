@@ -692,6 +692,35 @@ td.pick:hover .badge {
   min-height: 3em;
 }
 
+.prompt .title {
+  font-size: var(--fs-3);
+  margin: 0 0 4px;
+}
+
+.prompt .hint {
+  color: var(--dim);
+  font-size: var(--fs-1);
+  margin: 0 0 6px;
+}
+
+.prompt .mark {
+  font-family: var(--mono);
+  margin-right: 8px;
+}
+
+.prompt .mark.missing {
+  color: var(--mask);
+}
+
+.prompt .text {
+  box-sizing: border-box;
+  font-family: var(--mono);
+  margin: 0 0 8px;
+  min-height: 8em;
+  resize: vertical;
+  width: 100%;
+}
+
 .review .verdict {
   align-items: center;
   display: flex;

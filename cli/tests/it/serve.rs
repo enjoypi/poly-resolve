@@ -1,6 +1,7 @@
 mod assets;
 mod host;
 mod messages;
+mod prompts;
 mod reviews;
 
 use core::ops::{Deref, DerefMut};

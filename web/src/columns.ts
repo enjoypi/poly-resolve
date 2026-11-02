@@ -25,7 +25,8 @@ function render(value: unknown, kind: Kind, timeZone?: string): string {
 export function content(row: Row, column: Column, timeZone?: string): string {
   const own = row[column.key];
   const empty = own === undefined || own === null || own === "";
-  return render(empty && column.fallback ? row[column.fallback] : own, column.kind, timeZone);
+  const text = render(empty && column.fallback ? row[column.fallback] : own, column.kind, timeZone);
+  return column.values?.[text] ?? text;
 }
 
 export function display(row: Row, column: Column, timeZone?: string): string {

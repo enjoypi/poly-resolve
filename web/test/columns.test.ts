@@ -30,8 +30,6 @@ test("没有数据时仍给出全部已知列，默认隐藏的列带标记", ()
     "key",
     "received_at_ms",
     "sender_id",
-    "source",
-    "account",
     "analysis",
     "topic",
   ]);
@@ -78,4 +76,11 @@ test("显示值：时间带格式、发送人回退、占位、对象转 JSON、
   expect(show({ priority: 0.95 }, "priority")).toBe("0.95");
   expect(show({ priority: null }, "priority")).toBe("");
   expect(show({ analysis: "建议回复" }, "analysis")).toBe("建议回复");
+});
+
+test("来源按类型显示中文，未登记的类型原样显示", () => {
+  const source = find(inferColumns([]), "source");
+  expect(display({ source: "dingtalk" }, source)).toBe("钉钉");
+  expect(display({ source: "imap" }, source)).toBe("邮箱");
+  expect(display({ source: "rss" }, source)).toBe("rss");
 });

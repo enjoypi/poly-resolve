@@ -3,15 +3,18 @@ use std::io::{self, BufRead as _, BufReader, Write as _};
 use std::net::{TcpListener, TcpStream};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::thread::{JoinHandle, sleep, spawn};
+use std::time::Instant;
 
 const DONE: &str = "DONE";
 const PAUSE: char = '\u{0}';
 const STEP: Duration = Duration::from_millis(150);
 const TAG: &str = "<tag>";
+const WAIT: Duration = Duration::from_secs(1);
 
 pub(crate) struct Fake {
     port: u16,
     seen: Receiver<String>,
+    spans: Receiver<Span>,
     worker: JoinHandle<()>,
 }
 
@@ -26,12 +29,20 @@ impl Fake {
         self.port
     }
 
+    pub(crate) fn timed(&self, count: usize) -> Vec<Span> {
+        (0..count)
+            .filter_map(|_| self.spans.recv_timeout(WAIT).ok())
+            .collect()
+    }
+
     pub(crate) fn url(&self) -> String {
         format!("imap://127.0.0.1:{}", self.port)
     }
 }
 
 pub(crate) type Script = Vec<Step>;
+
+pub(crate) type Span = (Instant, Instant);
 
 pub(crate) type Step = (&'static str, String);
 
@@ -92,13 +103,21 @@ pub(crate) fn serve(sessions: Vec<Script>) -> io::Result<Fake> {
     let listener = TcpListener::bind("127.0.0.1:0")?;
     let port = listener.local_addr()?.port();
     let (sender, seen) = channel();
+    let (timer, spans) = channel();
     let count = sessions.len();
     let worker = spawn(move || {
         for (stream, script) in listener.incoming().take(count).flatten().zip(sessions) {
+            let start = Instant::now();
             drop(converse(stream, &script, &sender));
+            timer.send((start, Instant::now())).unwrap_or_default();
         }
     });
-    Ok(Fake { port, seen, worker })
+    Ok(Fake {
+        port,
+        seen,
+        spans,
+        worker,
+    })
 }
 
 fn speak(writer: &mut TcpStream, reply: &str, tag: &str) -> io::Result<()> {
