@@ -72,7 +72,7 @@
   - 成功先把应答写进 `answers`，写不进就不调用 `apply`；再经 `Ledger::apply` 一个事务写结果；`next_batch` 带出已存的应答，有则直接重放、不再外发，故 `apply` 失败不会重复调用决策接口
   - `apply` 事务：写 `placements`；写 `topics`（`ON CONFLICT` 取概率最大值与最近时间）；对 `urgent` 且含新行（`created_at_ms - occurred_at_ms ≤ lookback_ms`）的话题开 `alerts`（键 `<话题>@<批号>`，初始 `waiting`，同话题等待项合并），只含积压行的话题不转交；批置 `sent` 且 `attempts` 归零；崩溃发生在存应答前则整批重发
 - `analyze`：取当前可转交的 `pending` 项（按 `calls` 检查小时额度与同话题冷却），话题的已通过行（`Ledger::topic_lines`）交 domain `triage.brief`
-  - 话题 ID 与 Codex 会话 ID 相同。首次返回 `thread_id` 时，事务内迁移临时话题 ID 并级联 `placements/alerts/calls`，并在 `topic_aliases` 记下旧 ID（先把指向旧 ID 的别名改指新 ID，保持一跳）；`MIGRATE` 同样写别名；`PLACE`、`TOPICS`、`OPEN_ALERT` 与 `BATCH_LINES` 的 hints 经别名解析，旧 layout 与旧提示写回时落到新 ID；`thread_at_ms` 在 `session_max_ms` 内则续写：`followup` 模板、只含 `(until_ms, until_key)` 之后的行、命令追加 `session.resume`；否则新建：`prompt` 模板、追加 `session.fresh`
+  - 话题 ID 与 Codex 会话 ID 相同。首次返回 `thread_id` 时，事务内迁移临时话题 ID 并级联 `placements/alerts/calls`，并在 `topic_aliases` 记下旧 ID（先把指向旧 ID 的别名改指新 ID，保持一跳）；`MIGRATE` 同样写别名；`PLACE`、`TOPICS`、`OPEN_ALERT` 与 `BATCH_LINES` 的 hints 经别名解析，旧 layout 与旧提示写回时落到新 ID；`thread_at_ms` 在 `session_max_ms` 内则续写：`followup.md` 模板、只含 `(until_ms, until_key)` 之后的行、命令追加 `session.resume`；否则新建：`session.md` 模板、追加 `session.fresh`
   - codex 的 stdin 传提示词，stdout 是 `--json` 事件流，经 domain `triage.reply` 取会话 ID 与最终回复；退出非 0、输出无法解析、回复为空都算失败，空输出的 `reason` 为 `exit:0`
   - 成功先把分析、会话 ID 与游标写库，再推进 `analyzed`；推进失败下轮重放已存分析，不重跑 Codex。失败 `attempts + 1` 并把 `thread_at_ms` 归零，让下次新建会话
 - `deliver`：用 `triage.notice` 渲染，dws 发送（参数末尾追加 `notify_target` 与 `--idempotency-key=<话题>@<批号>`）→ `sent`；失败达 `max_attempts` 转 `failed`；阶段推进（`ADVANCE_ALERT … WHERE state = from`）把 `attempts` 与 `updated_at_ms` 归零，故发送失败只重试发送

@@ -35,7 +35,7 @@ YAML 文件，各项均必填（注明可选的除外），不允许其他字段
 | errors.<错误>.code | 该错误的响应体 code；<错误> 取 bad_request、conflict、not_found、storage、unknown_action、unprocessable，见“返回码” |
 | ingest.store_path | SQLite 文件路径，文件不存在则创建，所在目录须已存在；内含消息正文，须限制目录权限；启用 WAL，同目录另有 `-wal`、`-shm` 文件，备份用 `sqlite3 <库> ".backup <目标>"`，勿单独拷贝或删除主文件 |
 | ingest.busy_timeout_ms | 等待数据库写锁的最长毫秒数，至少 1；收集等锁超时则退避后重试，不退出 |
-| ingest.backoff_initial_ms / backoff_max_ms | 数据源中断后重启的等待毫秒数，逐次翻倍直到上限，至少 1 |
+| ingest.backoff_initial_ms / backoff_max_ms | 数据源中断后重启的等待毫秒数，逐次翻倍直到上限，至少 1；钉钉收到过消息、邮箱收到过邮件或完整等过一轮新信后复位 |
 | ingest.failure_exit_code | 存储失败时的退出码，1 至 255 |
 | ingest.manual_exit_code | 数据源提示登录失效或需授权、须人工处理时的退出码，1 至 255 |
 | ingest.sources | 数据源列表，至少 1 项；每项是单键映射，键为类型（`dingtalk` 或 `imap`），同类型的 account 不得重复；各数据源并行收集，任一须人工处理或存储失败时全部停止，服务以对应退出码退出 |
