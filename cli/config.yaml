@@ -272,7 +272,7 @@ ingest:
             bin: dws
             sandbox: *dws_sandbox
           manual_exit_codes: [2, 4]
-          parallel: 1
+          parallel: 4
           pull:
             args: [chat, message, list-all, --limit, "100", --page-all, --page-limit, "20", --no-reactions, -f, json]
             bin: dws

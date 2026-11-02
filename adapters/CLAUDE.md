@@ -52,7 +52,7 @@
 - 退避：从 `backoff_initial_ms` 起逐次翻倍到 `backoff_max_ms`；钉钉曾收到消息的一轮结束后复位；IMAP 会话以 `Tally{received,rounds}` 计数，收到过邮件或完成过一轮等待（IDLE 正常结束或一次 `poll_ms` 睡眠）即复位，登录或 SELECT 后立刻断开仍递增
 - IMAP 加密连接（security-framework）把对端重置当作正常关闭，读到 `Ok(0)`，故生产日志只有 `imap:eof`，区分不出重置与关闭；不为此改 `net.rs`
 - 写库遇 `DatabaseBusy`、`DatabaseLocked`（`Halt::Busy`）记 warn `store busy`，本轮按失败退避，补拉补回；其余存储错误致命
-- 解密并发：补拉页的 `unseal` 与 `heal` 经 `decrypted` 用 `buffered(dws.parallel)` 解密，保持顺序，整组外包一次 `race`，被打断整页或整组不入库；实时事件仍逐条（水位与补拉重叠的前提）；钉钉工具并发解密未验证，配置保持 1
+- 解密并发：补拉页的 `unseal` 与 `heal` 经 `decrypted` 用 `buffered(dws.parallel)` 解密，保持顺序，整组外包一次 `race`，被打断整页或整组不入库；实时事件仍逐条（水位与补拉重叠的前提）；钉钉工具并发解密已用真实密文实测（1 至 16 路、跨令牌刷新点均无报错，锁文件不被改写；8 路起总耗时近线性增长），配置取 4
 
 ## 分级与转交
 

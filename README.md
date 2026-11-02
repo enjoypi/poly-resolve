@@ -51,7 +51,7 @@ YAML 文件，各项均必填（注明可选的除外），不允许其他字段
 | ingest.sources[].dingtalk.dws.env / vars | 传给钉钉工具的环境变量：env 为字面量，应含 `DO_NOT_TRACK` 以关闭其遥测；vars 为 `${NAME}` 写法，运行时读同名环境变量（HOME、PATH 等）；子进程环境先清空再只放这两类 |
 | ingest.sources[].dingtalk.dws.listen / pull / decrypt / lookup | 实时监听、补拉、解密、查询转发详情所用命令：bin 为可执行文件，args 为参数，sandbox 见“子进程沙箱”；程序自动追加参数：pull 追加 `--start`、`--end`，decrypt 追加 `--text=<密文>`（标准输出须为含 `plaintext` 的 JSON），lookup 追加 `--msg-ids=<消息 ID,…>`（标准输出须为含 `messages[].forwarded[]` 的 JSON） |
 | ingest.sources[].dingtalk.dws.manual_exit_codes | 钉钉工具退出码落在此列表时视为须人工处理 |
-| ingest.sources[].dingtalk.dws.parallel | 补拉与启动自愈时同时解密的条数，至少 1；钉钉工具并发解密未经验证，保持 1 |
+| ingest.sources[].dingtalk.dws.parallel | 补拉与启动自愈时同时解密的条数，至少 1；实测 4 即接近钉钉工具的吞吐上限，更大只增加排队 |
 | ingest.sources[].dingtalk.dws.timeout_ms | 补拉、解密、查询转发详情单次执行的最长毫秒数，超时按失败处理，至少 1 |
 | ingest.sources[].imap.account / mailbox | 账号标识（自定义，写入每条消息记录，与类型一起不得重复）、收取的文件夹（如 `INBOX`）；一项只收一个文件夹，不收发件箱 |
 | ingest.sources[].imap.url | `imaps://<主机>[:端口]`（默认 993，须写成 `${NAME}`），或仅限本机明文 `imap://127.0.0.1:<端口>`、`imap://[::1]:<端口>`（本机桥接用，不得配代理）；不支持 STARTTLS 与 OAuth2，只用密码或应用专用密码登录 |
