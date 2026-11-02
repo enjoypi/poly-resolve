@@ -6,12 +6,13 @@ use std::time::Instant;
 use futures_util::future::join_all;
 use serde_json::{Value, json};
 
+use super::TRIAGE;
 use super::desk::Brief;
-use super::trace::{Outcome, external};
 use super::{ANALYZED, HOUR_MS, PENDING, SENT, Shift, current, failure, number, text};
 use crate::ingest::now_ms;
 use crate::pipe::{Job, feed};
 use crate::race::race;
+use crate::trace::{Outcome, external, finished};
 
 struct Analysis {
     alert: Value,
@@ -198,13 +199,9 @@ fn failed_of(claim: &Value, reason: &str) -> Value {
     })
 }
 
-fn outcome(done: &io::Result<Output>, started: Instant, attempt: u64) -> Outcome {
+fn outcome(done: &io::Result<Output>, started: Instant, attempt: u64) -> Outcome<'static> {
     let elapsed = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
-    let status = if done.as_ref().is_ok_and(|output| output.status.success()) {
-        "success".to_owned()
-    } else {
-        failure(done)
-    };
+    let status = finished(done);
     let code = done
         .as_ref()
         .ok()
@@ -212,6 +209,7 @@ fn outcome(done: &io::Result<Output>, started: Instant, attempt: u64) -> Outcome
         .and_then(|code| u16::try_from(code).ok());
     let response = done.as_ref().map_or(0, |output| output.stdout.len());
     Outcome::new(response, status, elapsed)
+        .within(TRIAGE)
         .code(code)
         .attempt(attempt)
 }
@@ -286,7 +284,9 @@ pub(super) async fn run(
     Some(())
 }
 
-fn stopped(started: Instant, attempt: u64) -> Outcome {
+fn stopped(started: Instant, attempt: u64) -> Outcome<'static> {
     let elapsed = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
-    Outcome::new(0, "stopped".to_owned(), elapsed).attempt(attempt)
+    Outcome::new(0, "stopped".to_owned(), elapsed)
+        .within(TRIAGE)
+        .attempt(attempt)
 }

@@ -1,10 +1,10 @@
-use core::net::IpAddr;
 use core::num::NonZeroU64;
 
 use http::Uri;
 use serde::Deserialize;
 
 use super::config::Var;
+use crate::net::{loopback, proxied};
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -89,20 +89,20 @@ impl Http {
 
 #[derive(Debug, Deserialize)]
 #[serde(try_from = "String")]
-struct Location {
+pub(crate) struct Location {
     source: String,
     var: Option<Var>,
 }
 
 impl Location {
-    fn value(&self) -> Option<String> {
+    pub(crate) fn value(&self) -> Option<String> {
         self.var
             .as_ref()
             .and_then(Var::value)
             .or_else(|| Some(self.source.clone()))
     }
 
-    const fn var(&self) -> Option<&Var> {
+    pub(crate) const fn var(&self) -> Option<&Var> {
         self.var.as_ref()
     }
 }
@@ -114,29 +114,4 @@ impl TryFrom<String> for Location {
         let var = Var::try_from(value.clone()).ok();
         Ok(Self { source: value, var })
     }
-}
-
-fn loopback(url: &Uri) -> bool {
-    url.host().is_some_and(|host| {
-        host == "localhost"
-            || host
-                .trim_start_matches('[')
-                .trim_end_matches(']')
-                .parse::<IpAddr>()
-                .is_ok_and(|address| address.is_loopback())
-    })
-}
-
-fn proxied(text: &str) -> Result<Uri, String> {
-    text.parse::<Uri>()
-        .ok()
-        .filter(|url| {
-            loopback(url)
-                && format!(
-                    "http://{}:{}",
-                    url.host().unwrap_or_default(),
-                    url.port_u16().unwrap_or_default()
-                ) == text
-        })
-        .ok_or_else(|| "proxy must be http://<loopback>:<port>".to_owned())
 }

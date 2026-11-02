@@ -2,11 +2,12 @@ use std::time::Instant;
 
 use serde_json::{Value, from_str, json};
 
+use super::TRIAGE;
 use super::desk::{Packed, Sorted};
-use super::trace::{Outcome, external};
-use super::{HOUR_MS, NONE, Shift, current, number, retry_before, text};
+use super::{HOUR_MS, NONE, Shift, current, number, retry_before, spread, text};
 use crate::http::Call;
 use crate::ingest::now_ms;
+use crate::trace::{Outcome, external};
 
 const READY: &str = "ready";
 const SENT: &str = "sent";
@@ -174,7 +175,9 @@ async fn request(shift: &mut Shift<'_>, batch: &Value) -> Option<Option<Result<S
         external(
             "decide",
             text(batch, "payload").len(),
-            &Outcome::new(0, "stopped".to_owned(), elapsed).attempt(attempt),
+            &Outcome::new(0, "stopped".to_owned(), elapsed)
+                .within(TRIAGE)
+                .attempt(attempt),
         );
         let released = shift.ledger.release_batch(&claim);
         tracing::debug!(released, "batch claim released");
@@ -182,9 +185,10 @@ async fn request(shift: &mut Shift<'_>, batch: &Value) -> Option<Option<Result<S
     };
     let elapsed = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
     let outcome = done.as_ref().map_or_else(
-        |reason| Outcome::new(0, reason.clone(), elapsed),
+        |reason| Outcome::new(0, reason.clone(), elapsed).within(TRIAGE),
         |reply| {
             Outcome::new(reply.body().len(), "success".to_owned(), elapsed)
+                .within(TRIAGE)
                 .code(Some(reply.status()))
         },
     );
@@ -200,6 +204,7 @@ fn revive(shift: &Shift<'_>) {
     let revived = shift.ledger.revive(&json!({
         "max_revivals": shift.triage.max_revivals(),
         "retry_before_ms": retry_before(shift),
+        "spread_ms": spread(shift),
     }));
     if revived > 0 {
         tracing::info!(revived, "failed batch revived");
@@ -255,6 +260,7 @@ pub(super) async fn send(shift: &mut Shift<'_>) -> Option<()> {
     let due = shift.ledger.next_batch(&json!({
         "max_attempts": shift.triage.max_attempts(),
         "retry_before_ms": retry_before(shift),
+        "spread_ms": spread(shift),
     }));
     for batch in &due {
         let stored = batch.get("answer").and_then(Value::as_str);

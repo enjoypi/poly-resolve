@@ -5,7 +5,7 @@ mod ingest;
 mod messages;
 mod review;
 mod routes;
-mod triage;
+pub(crate) mod triage;
 
 use std::time::Instant;
 

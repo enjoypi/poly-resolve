@@ -3,6 +3,7 @@ mod batch;
 mod claim;
 mod endpoint;
 mod hold;
+mod mailbox;
 mod review;
 mod revive;
 mod rig;

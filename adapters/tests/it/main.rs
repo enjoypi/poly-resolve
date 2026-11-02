@@ -1,6 +1,7 @@
 mod capture;
 mod feeds;
 mod http;
+mod imap;
 mod ingest;
 mod review;
 mod sandbox;

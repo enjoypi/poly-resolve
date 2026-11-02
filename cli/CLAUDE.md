@@ -22,7 +22,8 @@
 
 ## 日志
 
-- 日志写 stderr，`spec` 写 stdout；subscriber 不设全局，用 `dispatcher::with_default` 绑定 `Settings::log()`；跨 await 用 `with_subscriber(settings.log().clone())`（`with_default` 只管同步闭包）；任务只经 `Crew::launch` 起，`with_subscriber` 范围外不打日志
+- 所有日志在写出口统一脱敏：`log.rs` 的 `Scrub` 把每行 JSON 解析后，除 `addr`、`level`、`target`、`timestamp` 外的字符串字段逐个经 `domain::redact::Redactor`（`triage.redact.patterns`，加载配置时编译一次）替换；规则无效时这些字段一律写 `[hidden]`（随后启动自检报错退出）；数字、布尔原样；tracing 的 JSON 字段不含数组，数组原样
+- 日志写 stderr，`spec` 写 stdout；`verify`（启动自检，内含 dispatch）也须在 `with_subscriber` 内执行：tracing 只有一个 dispatcher 时，首次在无订阅处命中的 callsite 会被缓存为不记录，之后全程丢失；subscriber 不设全局，用 `dispatcher::with_default` 绑定 `Settings::log()`；跨 await 用 `with_subscriber(settings.log().clone())`（`with_default` 只管同步闭包）；任务只经 `Crew::launch` 起，`with_subscriber` 范围外不打日志
 
 ## HTTP
 

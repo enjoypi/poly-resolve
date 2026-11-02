@@ -17,7 +17,7 @@ fn body(message: &Value) -> Value {
         "message": message,
         "notify_conversation_id": NOTICE,
         "rules": [],
-        "self_sender_id": OWN,
+        "self_sender_ids": [OWN],
         "unknown_sender": UNKNOWN,
     })
 }
@@ -123,13 +123,10 @@ fn line_without_identity_skips_nothing_by_source() {
         "text": format!("{BODY}||2||1||196"),
     });
     let mut request = body(&message);
-    for field in [
-        "cipher_min_length",
-        "notify_conversation_id",
-        "self_sender_id",
-    ] {
+    for field in ["cipher_min_length", "notify_conversation_id"] {
         request = patched(request, field, &Value::Null);
     }
+    request = patched(request, "self_sender_ids", &json!([]));
     let reply = call("line", &request.to_string()).unwrap().unwrap();
     assert_eq!(reply.get("skip"), Some(&Value::Null));
 }

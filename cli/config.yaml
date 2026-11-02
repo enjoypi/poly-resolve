@@ -302,4 +302,37 @@ ingest:
         reconcile_overlap_ms: 300000
         self_sender_id: "${SELF_SENDER_ID}"
         utc_offset_minutes: 480
+    - imap:
+        account: t4f
+        idle_ms: 300000
+        initial_backfill_ms: 86400000
+        limits: &imap_limits {chars: 4000, depth: 16, fetch_batch: 20, line_bytes: 65536, message_bytes: 262144, parts: 64, search_max: 500}
+        mailbox: INBOX
+        password: "${IMAP_T4F_PASSWORD}"
+        poll_ms: 60000
+        proxy: "${IMAP_T4F_PROXY}"
+        reconcile_overlap_ms: 3600000
+        self_sender_ids: ["${IMAP_T4F_USER}"]
+        style: &imap_style
+          attachment: "[附件 {type} {name}]"
+          quote_ends: ["wrote:", "写道：", "写道:"]
+          quote_starts: ["-----Original Message-----", "------------------ 原始邮件 ------------------", "------------------ Original ------------------"]
+        timeout_ms: 30000
+        url: "${IMAP_T4F_URL}"
+        user: "${IMAP_T4F_USER}"
+    - imap:
+        account: hf
+        idle_ms: 300000
+        initial_backfill_ms: 86400000
+        limits: *imap_limits
+        mailbox: INBOX
+        password: "${IMAP_HF_PASSWORD}"
+        poll_ms: 60000
+        proxy: "${IMAP_HF_PROXY}"
+        reconcile_overlap_ms: 3600000
+        self_sender_ids: ["${IMAP_HF_USER}"]
+        style: *imap_style
+        timeout_ms: 30000
+        url: "${IMAP_HF_URL}"
+        user: "${IMAP_HF_USER}"
   store_path: .debug/poly-resolve.db

@@ -1,4 +1,5 @@
-mod proxy;
+pub(crate) mod proxy;
+mod socks;
 
 use core::time::Duration;
 use std::io::{self, Read, Write};
@@ -158,6 +159,18 @@ async fn https_rejects_untrusted_certificate() {
         .await
         .unwrap_err();
     assert_eq!(error, "tls");
+    stub.finish();
+}
+
+#[tokio::test]
+async fn https_waits_for_a_slow_response() {
+    let stub = serve_tls_after(LAG.checked_div(2).unwrap_or(LAG)).unwrap();
+    let cert = SecCertificate::from_der(include_bytes!("fixtures/tls/cert.der")).unwrap();
+    let reply = Client::with_anchor(cert)
+        .post(&Call::new(&stub.url, BODY, TIMEOUT_MS))
+        .await
+        .unwrap();
+    assert_eq!(reply.status(), STATUS_OK_BODY);
     stub.finish();
 }
 
@@ -356,6 +369,10 @@ fn serve_reset() -> io::Result<Stub> {
 }
 
 fn serve_tls() -> io::Result<Stub> {
+    serve_tls_after(Duration::ZERO)
+}
+
+fn serve_tls_after(delay: Duration) -> io::Result<Stub> {
     let listener = TcpListener::bind("127.0.0.1:0")?;
     let address = listener.local_addr()?;
     drop(listener);
@@ -389,8 +406,9 @@ fn serve_tls() -> io::Result<Stub> {
         .stdin
         .take()
         .ok_or_else(|| io::Error::new(io::ErrorKind::BrokenPipe, "stdin"))?;
-    input.write_all(OK_BODY.as_bytes())?;
     let worker = spawn(move || {
+        sleep(delay);
+        let _written = input.write_all(OK_BODY.as_bytes());
         let _status = child.wait();
         drop(input);
     });

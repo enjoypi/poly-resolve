@@ -77,7 +77,7 @@ impl<'desk> Desk<'desk> {
             "message": message,
             "notify_conversation_id": profile.notify_conversation_id(),
             "rules": rules,
-            "self_sender_id": profile.self_sender_id(),
+            "self_sender_ids": profile.self_sender_ids(),
             "unknown_sender": triage.unknown_sender(),
         });
         self.call("line", &request)

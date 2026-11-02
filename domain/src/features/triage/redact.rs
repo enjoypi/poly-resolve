@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::AppError;
 
+#[derive(Debug)]
 pub(crate) struct Mask {
     steps: Vec<Step>,
 }
@@ -52,6 +53,16 @@ pub(crate) struct Rule {
     placeholder: String,
 }
 
+impl Rule {
+    pub(crate) fn new(pattern: &str, placeholder: &str) -> Self {
+        Self {
+            pattern: pattern.to_owned(),
+            placeholder: placeholder.to_owned(),
+        }
+    }
+}
+
+#[derive(Debug)]
 struct Step {
     pattern: Regex,
     placeholder: String,

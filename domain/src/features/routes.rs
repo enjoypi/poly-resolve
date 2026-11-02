@@ -6,7 +6,7 @@ use serde_json::to_string;
 
 use crate::AppError;
 
-pub(super) static ROUTES: [Route; 21] = [
+pub(super) static ROUTES: [Route; 23] = [
     Route {
         action: "list",
         call: |call, context| listed(call.params, context, batches::list),
@@ -69,6 +69,14 @@ pub(super) static ROUTES: [Route; 21] = [
         trace: Trace::Redacted,
     },
     Route {
+        action: "parse_mail",
+        call: |call, _context| fallible(call.request, ingest::mail::parse_mail),
+        failures: &[],
+        feature: "ingest",
+        http: Http::Hidden,
+        trace: Trace::Redacted,
+    },
+    Route {
         action: "parse_page",
         call: |call, _context| fallible(call.request, ingest::parse_page),
         failures: &[],
@@ -83,6 +91,14 @@ pub(super) static ROUTES: [Route; 21] = [
         feature: "ingest",
         http: Http::Hidden,
         trace: Trace::Redacted,
+    },
+    Route {
+        action: "since",
+        call: |call, _context| typed(call.request, ingest::mail::since),
+        failures: &[],
+        feature: "ingest",
+        http: Http::Hidden,
+        trace: Trace::Full,
     },
     Route {
         action: "window",

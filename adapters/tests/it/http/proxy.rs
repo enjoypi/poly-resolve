@@ -69,7 +69,7 @@ async fn https_tunnels_through_the_proxy() {
     drop(relay.worker.join());
 }
 
-fn pipe(client: TcpStream, target: &str) -> io::Result<()> {
+pub(crate) fn pipe(client: TcpStream, target: &str) -> io::Result<()> {
     let upstream = TcpStream::connect(target)?;
     let mut back_from = upstream.try_clone()?;
     let mut back_to = client.try_clone()?;

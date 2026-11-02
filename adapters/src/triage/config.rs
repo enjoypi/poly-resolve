@@ -3,7 +3,7 @@ use core::iter::once;
 use core::num::{NonZeroU32, NonZeroU64};
 use std::env;
 
-use domain::review::Reason;
+use domain::review::{Reason, Rule as Pattern};
 use futures_util::future::join_all;
 use serde::{Deserialize, Serialize};
 
@@ -321,6 +321,15 @@ impl Settings {
 
     pub(crate) const fn parallel(&self) -> u32 {
         self.limits.parallel.get()
+    }
+
+    #[must_use = "规则需交给日志脱敏"]
+    pub fn patterns(&self) -> Vec<Pattern> {
+        self.redact
+            .patterns
+            .iter()
+            .map(|rule| Pattern::new(rule.pattern.clone(), rule.placeholder.clone()))
+            .collect()
     }
 
     pub(crate) const fn poll_ms(&self) -> u64 {

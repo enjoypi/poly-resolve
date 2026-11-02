@@ -6,7 +6,7 @@
 
 ## 调用
 
-- 业务只经 `features::dispatch(&Context, &Call)` 调用；`Call` 由 `Origin`（transport、session_id、user）、`Target`（feature、action）与 request（JSON 请求体）经各自的 `new` 构造，HTTP 的路径与查询参数经 `with_params` 以 urlencoded 字符串传入
+- 业务只经 `features::dispatch(&Context, &Call)` 调用（唯一例外：`redact::Redactor::new(&[review::Rule])`、`apply(text)` 供 cli 的日志写出口脱敏，与 `triage.redact` 共用 `Mask`；日志写出口不能走 dispatch，否则 dispatch 自身的日志会递归）；`Call` 由 `Origin`（transport、session_id、user）、`Target`（feature、action）与 request（JSON 请求体）经各自的 `new` 构造，HTTP 的路径与查询参数经 `with_params` 以 urlencoded 字符串传入
 - `Context::new(errors, Rules, Ports)` 由调用方（cli、adapters）构造：`Rules::new(&Paging, &[Reason], learn_min_chars)`；`Ports::new(reader, docket, roster)`，`reader` 是 `inbox::Reader`（存储读取），`docket` 是 `review::Docket`（审核台读写），`roster` 是 `batches::Roster`（失败批读写），均由 adapters 实现
 - handler 包装：`typed`（`fn(Req) -> Resp`）、`fallible`（`fn(&Req) -> Result`）解 JSON 请求体，供内部动作；`listed`（`fn(&Params, &Context) -> Result`）只解 params；`keyed`（`fn(&Params, Req, &Context) -> Result`）解 params 与请求体；JSON 共用 `decode`，urlencoded 共用 `params`（`serde_urlencoded`）；health 不解码；`Route.call` 为 `fn(&Call, &Context)`，不需要上下文的路由闭包忽略第二个参数
 - `route` 的 `&&` 两侧都要有用例：功能不存在、功能存在而动作不存在、两者都存在
@@ -32,7 +32,7 @@
 
 ## ingest
 
-- `ingest` feature 是钉钉格式；新数据源另建 feature，产出同样的 envelope
+- `ingest` feature 含钉钉格式与邮件（`ingest/mail.rs`）；新数据源产出同样的 envelope
 - `parse_event`（钉钉实时事件一行）、`parse_page`（补拉一页）→ `IngestEnvelope`，请求共用 `IngestParseRequest`：account、source、body、received_at_ms（调用方给，保持纯函数）、utc_offset_minutes、cipher_min_length；`window` 把毫秒区间转成补拉用的 `YYYY-MM-DD HH:MM:SS`（按偏移）
 - 字段名按候选列表取首个有值的（`pick`），不用 serde alias：补拉消息可同时含 `messageId` 与 `openMessageId`，alias 会报重复字段
 - 时间 `create_time` 或 `createTime`：数字当 UTC 毫秒，字符串先试 RFC3339，再试无时区的 `%Y-%m-%d %H:%M:%S`（按偏移换算）；早于 1970 取 0
@@ -43,6 +43,8 @@
 - `fragments`（`ingest/cipher.rs`）：正文任一行（trim 后）整行只含字母数字与 `+/=` 且不短于 `cipher_min_length`，即视为留有密文片段；`parse_event`、`parse_page` 据此给 envelope 填 `lookup`（消息 ID，否则空）
 - `assemble`（`typed`）：`{envelope, children: [{sender, text}]}`，正文重组为“原正文首行 + 每条子消息的 `sender:text`”，`lookup` 置空；子消息由 adapters 向钉钉工具查询
 - `cipher`、`reveal`、`assemble` 标 `Trace::Redacted`
+- `parse_mail`（`fallible`，`Trace::Redacted`）：`{account, source, raw: 字节数组, internal, uid, uid_validity, received_at_ms, limits{chars,depth,parts}, style{attachment,quote_starts,quote_ends}}` → `{envelope, skip}`；用 mail-parser（`full_encoding`，GBK 等）；`occurred_at_ms` 取 `internal`（`%d-%b-%Y %H:%M:%S %z`），解析不了用 `received_at_ms`；`key` 为 `<source>:<account>:<Message-ID>`，无则 `uid:<uid_validity>:<uid>`；`conversation_id` 为 `mail:<account>:<小写发件地址>`；正文为主题 + `body_text(0)`（只有 html 时转文字），删 `>` 行，遇 `quote_starts` 前缀或 `quote_ends` 结尾的行截断，附件按模板追加，去控制字符后截断到 `chars`；`skip`：首个 `Authentication-Results` 含 `dmarc=fail` 为 `dmarc`，`Auto-Submitted` 非 `no` 为 `auto`，有 `List-Id` 或 `Precedence` 为 bulk、junk、list 为 `list`；`raw` 只存标识、日期、发件地址、主题、回复关系、`internal`、大小与 UID；邮件解析失败为 `BadRequest`
+- `since`（`typed`）：`{at_ms}` → `{date}`，IMAP `SEARCH SINCE` 用的 `%-d-%b-%Y`（UTC）
 
 ## messages
 
@@ -56,7 +58,7 @@
 ## triage
 
 - 九个路由，请求都带消息内容，均标 `Trace::Redacted`；`notice`、`screen` 为 `typed`，其余为 `fallible`；`notice` 按值收请求以满足 `needless_pass_by_value`，用解构消耗
-- `line`（`triage/line.rs`）：`{message{conversation_id,sender_id,sender_name,text}, rules, max_chars, unknown_sender, self_sender_id, notify_conversation_id, cipher_min_length}` → `{sender, text, skip}`；后三项可为 null（数据源无此概念），为 null 即不做该项判定；依次判本人发送（`own`）、通知会话（`notice`）、空正文（`empty`）、仍是密文（`sealed`）则只给 `skip`（此时不编译规则），否则发送人与正文过 `redact::Mask`，正文按 `max_chars` 截断
+- `line`（`triage/line.rs`）：`{message{conversation_id,sender_id,sender_name,text}, rules, max_chars, unknown_sender, self_sender_ids, notify_conversation_id, cipher_min_length}` → `{sender, text, skip}`；`self_sender_ids` 为空、后两项为 null（数据源无此概念）即不做该项判定；依次判本人发送（`own`，与列表任一项不区分大小写相等）、通知会话（`notice`）、空正文（`empty`）、仍是密文（`sealed`）则只给 `skip`（此时不编译规则），否则发送人与正文过 `redact::Mask`，正文按 `max_chars` 截断
 - `pack`（`triage/pack.rs`）：`{lines[{key,conversation_id,occurred_at_ms,sender,text,hints?}], attach[{conversation_id,last_ms,probability?,topic_id}], topics[{topic,label,probability?}], batch_id, gap_ms, label_chars, max_chars, model, new_label, questions{urgent,topic}, rules}` → `{body, layout}`
   - 行按会话、时间切段（相邻间隔 `<= gap_ms`），再按首行时间排序
   - 每行一个 `predicate`（`name` 为 `<urgent.name>_<行号>`）

@@ -1,4 +1,5 @@
 pub(super) mod cipher;
+pub(super) mod mail;
 mod stamp;
 
 use core::iter::once;

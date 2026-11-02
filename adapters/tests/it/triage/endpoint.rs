@@ -35,7 +35,7 @@ async fn invalid_decision_url_keeps_the_batch_unsent() {
     assert_eq!(calls(&proxied, "decide").unwrap(), 0);
     assert_eq!(
         table(&proxied, BATCHES).unwrap(),
-        ["1|ready|0|proxy must be http://<loopback>:<port>"]
+        ["1|ready|0|proxy must be http:// or socks5://<loopback>:<port>"]
     );
 }
 
@@ -141,6 +141,7 @@ fn validate_checks_proxies() {
     for (proxy, reason) in [
         ("${POLY_RESOLVE_TEST_PROXY}", "proxy requires https url"),
         ("${POLY_RESOLVE_TEST_BAD_PROXY}", "proxy must be"),
+        ("${POLY_RESOLVE_TEST_FTP_PROXY}", "proxy must be"),
         ("${HOME}", "proxy must be"),
         ("${POLY_RESOLVE_UNSET_FOR_TEST}", "proxy must be"),
     ] {
@@ -152,6 +153,11 @@ fn validate_checks_proxies() {
         "url": "https://localhost/decisions",
     }});
     assert!(checked(&https).unwrap_err().contains("must use"));
+    let socks = json!({"decide": {
+        "proxy": "${POLY_RESOLVE_TEST_SOCKS}",
+        "url": "https://localhost/decisions",
+    }});
+    assert!(checked(&socks).unwrap_err().contains("must use"));
     let mut proxied = sandbox.screen("");
     if let Some(http) = proxied
         .pointer_mut("/screen/http")

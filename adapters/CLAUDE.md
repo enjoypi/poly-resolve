@@ -8,13 +8,15 @@
 ## 模块
 
 - `config.rs`：`Settings`（cli 配置的 `ingest` 段，`deny_unknown_fields`）：共享项与 `sources`；`verify`（非空、无无类型项、标签不重复，cli 加载时调用）、`check`（各源自检并发）、`missing`、`profile(标签)`、`prepare`（建库建表开 WAL，cli 起任务前同步调一次，免得多连接同时首次切 WAL 互锁成 `database is locked`）
-- `ingest.rs`：`Source`（每个可选字段一种类型，目前只有 `dingtalk`；不用枚举，因引用上 match 枚举撞 `pattern_type_mismatch`，取值一律 `Option` 组合子）、`Site`（`Settings` 与 `&Context` 打包）、`Profile`（本人、通知会话、密文长度，均可空，供 triage 按消息来源判定）、`label(来源, 账号)`、`run(site, source, stop)` 按类型分派
+- `ingest.rs`：`Source`（每个可选字段一种类型：`dingtalk`、`imap`；不用枚举，因引用上 match 枚举撞 `pattern_type_mismatch`，取值一律 `Option` 组合子）、`Site`（`Settings` 与 `&Context` 打包）、`Profile`（本人地址列表、通知会话、密文长度，均可空，供 triage 按消息来源判定）、`label(来源, 账号)`、`run(site, source, stop)` 按类型分派
 - `store.rs`：
   - `connect(path, busy_ms)`：`busy_timeout`、`journal_mode = WAL`、`synchronous = NORMAL` 与 `SCHEMA`，`Archive::open`、`Ledger::open`、`Settings::prepare` 共用；旧库缺列由 `ensure(conn, Column)` 补（`topics.until_key`；`batches.revivals`，补列时把已有 `failed` 批的 `revivals` 置 -1，表示不自动重来、只等人工重发）
   - `Shelf`：`inbox::Reader`、`review::Docket` 与 `batches::Roster` 的 SQLite 实现，`Settings::shelf()` 构造；每次调用才打开（删库造 503 的用例依赖它，不改成长连接）并设 `busy_timeout`，`page`、`list`、`source` 只读（`SQLITE_OPEN_READ_ONLY`），`settle`、`revive` 读写，都不建库不建表；`revive` 只把 `failed` 且当前没有 `ready` 批的批置回 `ready`，`revivals` 取 `MAX(revivals, 0) + 1`，返回该批当前状态
   - `page`：单条 SQL 用 `json_group_array(json_object(…))` 取回再反序列化成 `Row`，不按来源过滤，行值比较 `(occurred_at_ms, key) < (游标)` 翻页，叠加 `Query` 的时间范围 `[since, until)`（走 `messages_by_when` 索引）；失败记 warn 并返回 `AppError::Storage`
   - `settle`：`Transaction::new_unchecked(Immediate)` 一个事务里先写 `learned_rules`（`INSERT OR IGNORE`，仅当该行仍是 `pending`），再 `UPDATE … WHERE state = 'pending'`，最后读回当前状态
   - `Archive`：`INSERT OR IGNORE … json_each` 直接吃 domain 返回的 JSON（`save_event` 包成数组，`save_page` 取 `$.envelopes`）；水位取 `MAX(occurred_at_ms)`，不另建表；错误装箱
+- `ingest/cycle.rs`：各数据源共用的 `Halt`（`Busy`、`Exit`）、`Retry`（`Failed`、`Progress`、`Stalled` 取上限）、`fault`（SQLite 忙为 `Busy`，其余为 `failure_exit_code`）与 `Backoff`（翻倍到上限，实际等待经 `jitter::spread` 随机取 ±1/4，下一轮仍按未抖动的值翻倍）
+- `jitter.rs`：`spread(wait)` 在 `[wait - wait/4, wait + wait/4]` 内随机取值（`RandomState` 哈希，无额外依赖），供数据源重连的 `Backoff`；triage 的决策、筛查、分析、通知与失败批自动重来，在 SQL 里以 `updated_at_ms + updated_at_ms % (2 * spread_ms + 1) - spread_ms <= retry_before_ms` 筛选（±1/4），`spread_ms` 为 `retry_after_ms >> 2`，每条记录的抖动由其失败时间推出、固定不变，改小 `retry_after_ms` 即时生效
 - `dingtalk.rs`：钉钉采集 `Run`，`run(site, config, stop)` 返回退出码；`dingtalk/config.rs` 为每源配置（含 `Dws`、`Process`、本人与通知会话的 `Var`）
 - `dingtalk/bridge.rs`：持有 `&Context`，构造请求调 domain 的 `ingest` feature；`Page` 是 `parse_page` 结果的可改写副本（`envelopes_mut`、`render`），保存的是改写后的页面
 - `dingtalk/dws.rs`：`Dws`（`listen` 起监听子进程，stdin、stdout 管道，stderr 继承；`pull` 一次性执行并收 stdout；`decrypt` 一次性执行，追加 `--text=<密文>`；`lookup` 一次性执行，追加 `--msg-ids=<ID,…>`；三个一次性命令共用 `output`，超过 `dws.timeout_ms` 返回 `TimedOut` 并经 `kill_on_drop` 杀掉子进程，调用方按失败处理）、`Listener`（`next_line`、`stop`）；`plaintext(&Output)` 从解密命令的 JSON 取 `plaintext`，缺失或非 JSON 为 `None`
@@ -25,8 +27,11 @@
   - `check(probe, name)` 同时跑 `canary`（须非 0）与 `probe`（须 0），错误是字符串；`Dws::check`、triage 的 `check` 用 `join_all` 并发，报错按声明顺序取第一个
   - 钉钉源 `dws` 的 4 个 `Process`、triage 的 `codex` 与 `notify` 各带一份 `sandbox`，命令一律经 `command` 起，不得绕过；`Dws::check`、`triage::config::Settings::check` 供 cli 启动自检。决策与本地模型使用进程内 HTTP，不经 Seatbelt
 - `triage.rs`：`Setup`、`Lane`、`run`、`validate`
-- `triage/config.rs`：`Settings`、`Exec`、`Var`；`triage/endpoint.rs`：HTTP 地址、可选密钥与代理、超时与本机／外部地址校验；代理须为 `http://<回环主机>:<端口>` 原样（无结尾 `/`），只配给 HTTPS 决策地址，本地模型配代理即拒绝
-- `http.rs`：异步 HTTP/1.1 JSON POST；直连 TCP，或经 `Call::with_proxy` 的代理先发 `CONNECT host:port`（逐字节读响应头到空行，上限 8 KiB，只认 2xx）再在同一 TCP 上握手；HTTPS 用 Security Framework 非阻塞 `SslStream` 与 tokio 就绪事件，证书按目标主机校验；不读环境代理变量、不跟随重定向、代理失败不回退直连；超时按所处阶段报 `timeout:connect|proxy|tls|send|read`；响应头无法解析时立即结束读取；支持 Content-Length、chunked 与连接关闭响应；错误不携带 URL、密钥或正文
+- `triage/config.rs`：`Settings`、`Exec`、`Var`；`triage/endpoint.rs`：HTTP 地址、可选密钥与代理、超时与本机／外部地址校验；`Location`（字面量或 `${NAME}`）也供 IMAP；代理只配给 HTTPS 决策地址，本地模型配代理即拒绝
+- `imap.rs`：邮箱采集。`Run` 用 `race` 包住整轮 `Worker::session`，被打断即退出码 0；`Worker` 持 `Mutex<Archive>`（异步方法收 `&self` 时 future 须 `Send`）；`login`：`open` → 问候须 `* OK` → `CAPABILITY` →（有 `ID` 能力）`ID` → `LOGIN`；`follow`：`SELECT` 取 `UIDVALIDITY`、`UIDNEXT - 1` 为已见 → 按水位经 domain `ingest.since` 得日期 `UID SEARCH SINCE` → 只取最新 `search_max` 个、每批 `fetch_batch` 个 `UID FETCH (UID INTERNALDATE BODY.PEEK[]<0.message_bytes>)` → 循环：有 `IDLE` 能力则 `IDLE` 等 `EXISTS` 或 `idle_ms` 到期后 `DONE`，否则睡 `poll_ms`，再取 `<已见+1>:*` 并滤掉不大于已见的；每封交 domain `ingest.parse_mail`，`skip` 非空不入库，`save_event` 入库；失败原因 `imap:auth`（带 `[AUTHENTICATIONFAILED]` 等码的 NO，记 ERROR、`Retry::Stalled`）、`imap:<状态>`、`imap:bye`、`imap:eof`、`imap:greeting`、`imap:idle`、`imap:line`、`imap:literal`、`imap:credential`、`timeout:<阶段>`；写失败不立即报错，由随后的读取暴露；`check` 供启动自检（登录后 `LOGOUT`）
+- `imap/wire.rs`：`Conn`（递增标签 `A<n>`、缓冲、读行上限 `line_bytes`、`{n}` 字面量上限 `message_bytes`、遇 `* BYE` 即失败）、`Reply::checked`、`quoted`（拒非 ASCII 与控制字符，转义 `\` 与 `"`）；`imap/config.rs`：`url` 为带 `${NAME}` 的 `imaps://` 或本机明文 `imap://127.0.0.1|[::1]`（明文不得配代理），字段不超过 16 个
+- `net.rs`：`Dial`（主机、端口、`Layer::Plain|Tls`、代理、测试用根证书）→ `open` 得 `Link`（`read`、`write_all`）；`Wire` 包 tokio `TcpStream`，同步 `Read`/`Write` 内部用 `try_read`/`try_write` 并记下所需就绪方向，`WouldBlock` 时等 `ready(want)`，空闲不轮询；`SslStream<Wire>` 与 `Wire` 经 `Stream` trait 取回 `Wire`；`net/tunnel.rs`：HTTP `CONNECT`（逐字节读响应头到空行，上限 8 KiB，只认 2xx）与 SOCKS5（无认证、域名由代理解析，方法被拒 `proxy:method`、REP 非 0 `proxy:<码>`、主机超 255 字节 `proxy:host`）；`loopback`、`proxied`（`http://` 或 `socks5://` 加回环主机与端口原样）供各配置校验
+- `http.rs`：异步 HTTP/1.1 JSON POST，连接经 `net::open`；证书按目标主机校验；不读环境代理变量、不跟随重定向、代理失败不回退直连；超时按所处阶段报 `timeout:connect|proxy|tls|send|read`；响应头无法解析时立即结束读取；支持 Content-Length、chunked 与连接关闭响应；错误不携带 URL、密钥或正文
 - `triage/desk.rs`：调 domain `triage` feature；`Desk::rules` 为库里学到的规则在前、配置的在后
 - `triage/intake.rs`：入库、成批、重新脱敏；`triage/screen.rs`：本地模型筛查；`triage/batch.rs`：封批、发送、落结果；`triage/alert.rs`：分析、通知；三者是以 `&Shift` 为参数的自由函数（`multiple_inherent_impl` 禁止给 `Shift` 再写 impl）
 - 外发的话题选项：`OPEN_TOPICS` 带出话题最早一条已通过行的原文 `first` 与 `created_at_ms`，domain 按当前规则先脱敏再截断生成说明，存库的 label 只供页面；hints 收窄时保留 `created_at_ms` 晚于该段最早一行入库时间的话题，hints 全不匹配开放话题时不收窄
@@ -93,7 +98,11 @@
 - 单写者（一个线程独占写连接、各任务经 channel 提交）暂不做；日志频繁出现 `store busy`，或某源要求 `synchronous = FULL` 且写入达每秒数百条时再评估
 - 需确认语义的数据源（消息队列 ack、邮件已读标记）只在 `save_*` 返回 Ok 后确认，`Halt::Busy` 不确认；写库与确认之间不可被停机打断
 - 不清账本表：清 `lines` 会重新外发；清 `alerts` 会让幂等键 `<话题>@<批号>` 复用，通知被 dws 当作重复吞掉；`learned_rules` 始终保留
-- 日志只记行数、数量、标识、状态、次数、长度、退出码，不含消息正文、提示词、分析、响应与规则。`triage/trace.rs` 统一外部调用的 `transport/session_id/user/feature/action/params/request/response/ok/elapsed_us/attempt/code/status`；request、response 只记 `redacted:<字节数>`，HTTP 错误不输出 URL 或原始错误文本
+- 日志只记行数、数量、标识、状态、次数、长度、退出码，不含消息正文、提示词、分析、响应、规则、地址、账号与密码。所有外部交互经 `trace.rs` 的 `external(action, request, &Outcome)` 记一条 debug：字段 `transport/session_id/user/feature/action/params/request/response/ok/elapsed_us/attempt/code/status`，request、response 只记 `redacted:<字节数>`，`ok` 即 `status == "success"`，status 只取 `success` 或固定原因串（不放服务器原文），字段值在宏外算好；来源经 `Caller::new(transport, feature, user).session(id)`：
+  - triage：`external`/`triage`，action 为 `decide`、`screen`、`analyze`、`notify`
+  - IMAP：`imap`/`imap`/account，`session_id` 为 `<account>#<进程内连接序号>`；action 为 `connect`（params `tls|plain+direct|http|socks5`）、命令动词（`CAPABILITY`、`ID`、`LOGIN`、`SELECT`、`UID SEARCH`、`UID FETCH`、`LOGOUT`，`UID` 类 params 为参数，request、response 为本条命令的读写字节）、`IDLE`（status `exists` 为服务器推送、`refresh` 为 `idle_ms` 到期，`elapsed_us` 为整轮时长）、`mail`（params `<UIDVALIDITY>:<UID>`，status `success`/`skip:<原因>`/`rejected`）；`parse_mail` 的 dispatch 带同一 session_id；不记 Message-ID
+  - dws：`dws`/`dingtalk`/account，action 为 `pull`（params 起止时间）、`decrypt`、`lookup`（`code` 为退出码，status 经 `finished`：`success`、`exit:<码>`、`io:<种类>`）、`listen`（params `start`、`stop`）；listen 的 stderr 改为管道，`next_line` 每次先取完已到的错误行，各记一条 info `dws stderr`（`account`、`line`），写出时由 cli 统一脱敏；被停机打断的调用不记
+- HTTP 错误不输出 URL 或原始错误文本
 - 子进程环境一律 `env_clear` 后只放配置的 env 与 vars；命令用 `PATH` 找程序时 `vars` 须含 `PATH`；dws 的 env 应含 `DO_NOT_TRACK=1` 关闭遥测
 - `triage::config::Settings` 的字段不得超过 16 个：`derive(Debug)` 会生成 `&[&dyn Debug; N]`，N 为 17 时超过 256 字节触发 `large_stack_arrays`；新增配置并入 `session`、`review`、`redact` 等子结构
 - 停机先丢子进程 stdin（dws 视 EOF 为优雅退出并取消订阅），超过 `child_exit_timeout_ms` 才 kill；kill -9 会泄漏服务端订阅（再启报已存在、重复投递）
@@ -129,7 +138,7 @@
 - 监听输入每行须以换行结尾（`feed`），否则 `next_line` 要到 EOF 才返回最后一行
 - tracing 宏的字段表达式只在有 subscriber 时求值：经 `run_logged` 装 subscriber（`tests/it/capture.rs` 的 `Capture::dispatch`，先确保常驻 `ANCHOR`，原因见 domain/CLAUDE.md），否则字段里的表达式覆盖不到
 - 假 dws `tests/it/fixtures/fake-dws.sh`，行为由钉钉源配置的 `dws.env` 控制：
-  - `FAKE_LISTEN`（exit、hang，默认等 stdin 结束）、`FAKE_CODE`，输入取 `FAKE_DIR` 下的 `listen.txt`
+  - listen 先往 stderr 打一行 `source state: connected`；`FAKE_LISTEN`（exit、hang，默认等 stdin 结束）、`FAKE_CODE`，输入取 `FAKE_DIR` 下的 `listen.txt`
   - `FAKE_PULL`（fail、slow，默认输出 `pull.json`），参数写入 `pull-args.txt`
   - `FAKE_LOOKUP`（fail、junk、slow，默认输出 `lookup.json`），参数逐行追加到 `lookup-args.txt`
   - `FAKE_DECRYPT`（fail、junk、slow，默认输出 `{"ok":true,"plaintext":"CLEARTEXT"}`），参数写入 `decrypt-args.txt` 并逐行追加到 `decrypt-calls.txt`（并发解密用例按行数断言）
@@ -138,6 +147,7 @@
   - codex：`FAKE_CODEX`（fail、empty、junk、resume_fail、escape、slow）；默认输出 `thread.started`（会话 ID 取 `FAKE_THREAD`，默认 T1）与含 `ANALYSIS` 的 `agent_message` 两行 JSONL
   - send：`FAKE_SEND`（fail、slow）
 - 决策与本地模型用 `tests/it/triage/stub.rs` 的本机动态端口 HTTP stub；每个 `Sandbox` 独立端口。请求写入 `<角色>-calls.txt`（JSONL：方法、路径、头）与 `<角色>-body.txt`；行为由目录内 `decide-stub.json`、`screen-stub.json` 的 `mode`（fail、junk、slow）与概率、话题、置信度字段控制，`screen.json` 可整包覆盖响应。补丁顶层 `stub.decide`、`stub.screen` 由 `rig::behave` 写成这些文件，不进生产配置
+- 假 IMAP 在 `tests/it/imap/fake.rs`：std 线程按会话脚本 `[(命令前缀, 回包)]` 应答，回包里 `<tag>` 换成本条命令的标签、`\u{0}` 处暂停 150 ms；`DONE` 沿用 IDLE 的标签；命令不匹配或脚本用完即断开，结尾加永不匹配的步骤可让服务器一直挂着；收到的命令经 channel 供断言；凭据取 `.cargo/config.toml` 的 `POLY_RESOLVE_TEST_IMAP_*`；SOCKS5 用例在 `tests/it/http/socks.rs`
 - 代理用例在 `tests/it/http/proxy.rs`：线程 stub 读到空行后按设定回包或经 `pipe` 双向转发；可用代理与格式不合规的代理分别取 `.cargo/config.toml` 的 `POLY_RESOLVE_TEST_PROXY`、`POLY_RESOLVE_TEST_BAD_PROXY`（测试不能 `set_var`）
 - HTTPS 用例由 `openssl s_server -quiet` 从 stdin 回写固定响应（`-www` 不回应 POST）；`fixtures/tls` 为 P-256 自签叶证书，须 `CA:FALSE`、`extendedKeyUsage=serverAuth`、SAN `DNS:localhost`、有效期不超过 825 天，否则 Security Framework 拒绝：`openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -days 825 -nodes -subj /CN=localhost -addext subjectAltName=DNS:localhost -addext extendedKeyUsage=serverAuth -addext basicConstraints=critical,CA:FALSE -keyout key.pem -outform DER -out cert.der`
 - 存储故障注入：
@@ -158,4 +168,5 @@
   - `tests/it/sources.rs`：数据源列表的校验、缺失变量、无类型项
   - `tests/it/triage.rs` 及 `tests/it/triage/` 下：`batch.rs`（成批、掩码、逐条优先级、回溯）、`review.rs`（manual 全流程、漏脱敏学规则后重审、拒绝关批）、`topic.rs`（并入已有话题、同会话续接、长停顿分段、低置信度、合并本批的段）、`thread.rs`（会话绑定、续写、超龄、续写失败、输出无法解析）、`screen.rs`（本地模型筛查）、`claim.rs`（先记账再调用、两条 lane 互不阻塞）；`rig.rs` 放共用的播种（`seed` 等）与读取（`calls`、`decided`、`logged` 等）
   - `tests/it/review.rs` 测 `Shelf` 的 `Docket`
+  - `tests/it/imap.rs` 及 `tests/it/imap/`：`settings(sandbox, url, patch)` 生成只有一个邮箱源的配置，`whole` 另可改共享项；`failure.rs`（协议与存储失败、停机）、`target.rs`（启动自检与地址校验）
   - 话题 ID 在测试里是 `t<批号>-<段序号>`；同一库跨多次 `start` 运行时用 `seed_from`、`seed_stamped` 给后来的消息更晚的时间

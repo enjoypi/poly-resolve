@@ -14,6 +14,8 @@ use serde_saphyr::from_str;
 use tracing::Dispatch;
 use tracing_subscriber::filter::LevelFilter;
 
+use domain::redact::Redactor;
+
 use crate::log;
 
 #[derive(Deserialize)]
@@ -121,7 +123,7 @@ pub(crate) fn load(path: &Path) -> Result<Settings, String> {
         addr: file.addr,
         errors: file.errors,
         ingest: file.ingest,
-        log: log::dispatch(level),
+        log: log::dispatch(level, Redactor::new(&file.triage.patterns()).ok()),
         messages: file.messages,
         sandbox_exit_code: file.sandbox_exit_code.get(),
         serve_exit_code: file.serve_exit_code.get(),

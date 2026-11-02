@@ -18,6 +18,7 @@ use std::process::ExitCode;
 use adapters::triage::{Setup, reach, validate};
 use clap::Parser as _;
 use tokio::net::TcpListener;
+use tracing::instrument::WithSubscriber as _;
 
 use crate::args::Command;
 use crate::config::Settings;
@@ -47,7 +48,10 @@ fn fail(code: u8, err: &dyn Display) -> ExitCode {
 }
 
 async fn ingest(settings: Settings) -> ExitCode {
-    if let Err(err) = verify(&settings).await {
+    if let Err(err) = verify(&settings)
+        .with_subscriber(settings.log().clone())
+        .await
+    {
         return fail(settings.sandbox_exit_code(), &err);
     }
     let code = service::collect(Arc::new(settings)).await;
@@ -78,7 +82,10 @@ async fn serve(settings: Settings) -> ExitCode {
             &format!("triage: missing environment variables: {names}"),
         );
     }
-    if let Err(err) = verify(&settings).await {
+    if let Err(err) = verify(&settings)
+        .with_subscriber(settings.log().clone())
+        .await
+    {
         return fail(settings.sandbox_exit_code(), &err);
     }
     match TcpListener::bind(settings.addr()).await {

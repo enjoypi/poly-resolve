@@ -1,6 +1,7 @@
 #!/bin/sh
 case "$1" in
 listen)
+  echo "source state: connected 13812345678" >&2
   if [ -f "$FAKE_DIR/listen.txt" ]; then cat "$FAKE_DIR/listen.txt"; fi
   case "$FAKE_LISTEN" in
     exit) exit "${FAKE_CODE:-0}" ;;

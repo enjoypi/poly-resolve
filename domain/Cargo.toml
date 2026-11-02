@@ -11,6 +11,7 @@ doctest = false
 
 [dependencies]
 chrono.workspace = true
+mail-parser.workspace = true
 regex.workspace = true
 schemars.workspace = true
 serde.workspace = true

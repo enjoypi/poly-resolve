@@ -306,6 +306,14 @@ async fn sealed_event_is_decrypted_before_storing() {
     assert!(logs.contains("message decrypted"));
     assert!(!logs.contains(SEALED));
     assert!(!logs.contains("CLEARTEXT"));
+    for part in [
+        "\"action\":\"decrypt\"",
+        "\"action\":\"pull\"",
+        "\"params\":\"stop\"",
+        "source state: connected",
+    ] {
+        assert!(logs.contains(part), "{part}");
+    }
 }
 
 #[tokio::test]

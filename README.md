@@ -38,7 +38,7 @@ YAML 文件，各项均必填（注明可选的除外），不允许其他字段
 | ingest.backoff_initial_ms / backoff_max_ms | 数据源中断后重启的等待毫秒数，逐次翻倍直到上限，至少 1 |
 | ingest.failure_exit_code | 存储失败时的退出码，1 至 255 |
 | ingest.manual_exit_code | 数据源提示登录失效或需授权、须人工处理时的退出码，1 至 255 |
-| ingest.sources | 数据源列表，至少 1 项；每项是单键映射，键为类型（目前只有 `dingtalk`），同类型的 account 不得重复；各数据源并行收集，任一须人工处理或存储失败时全部停止，服务以对应退出码退出 |
+| ingest.sources | 数据源列表，至少 1 项；每项是单键映射，键为类型（`dingtalk` 或 `imap`），同类型的 account 不得重复；各数据源并行收集，任一须人工处理或存储失败时全部停止，服务以对应退出码退出 |
 | ingest.sources[].dingtalk.account | 账号标识，与类型一起写入每条消息记录 |
 | ingest.sources[].dingtalk.utc_offset_minutes | 钉钉返回的无时区时间所属时区相对 UTC 的分钟数，北京时间为 480 |
 | ingest.sources[].dingtalk.initial_backfill_ms | 库内无记录时，首次补拉回溯的毫秒数 |
@@ -53,6 +53,15 @@ YAML 文件，各项均必填（注明可选的除外），不允许其他字段
 | ingest.sources[].dingtalk.dws.manual_exit_codes | 钉钉工具退出码落在此列表时视为须人工处理 |
 | ingest.sources[].dingtalk.dws.parallel | 补拉与启动自愈时同时解密的条数，至少 1；钉钉工具并发解密未经验证，保持 1 |
 | ingest.sources[].dingtalk.dws.timeout_ms | 补拉、解密、查询转发详情单次执行的最长毫秒数，超时按失败处理，至少 1 |
+| ingest.sources[].imap.account / mailbox | 账号标识（自定义，写入每条消息记录，与类型一起不得重复）、收取的文件夹（如 `INBOX`）；一项只收一个文件夹，不收发件箱 |
+| ingest.sources[].imap.url | `imaps://<主机>[:端口]`（默认 993，须写成 `${NAME}`），或仅限本机明文 `imap://127.0.0.1:<端口>`、`imap://[::1]:<端口>`（本机桥接用，不得配代理）；不支持 STARTTLS 与 OAuth2，只用密码或应用专用密码登录 |
+| ingest.sources[].imap.user / password | 登录名与密码，写成 `${NAME}`；只允许 ASCII 可打印字符 |
+| ingest.sources[].imap.proxy | 可选，`http://<回环主机>:<端口>` 或 `socks5://<回环主机>:<端口>`（域名由代理解析），只配给 `imaps` |
+| ingest.sources[].imap.self_sender_ids | 本人地址与别名列表，写成 `${NAME}`，不区分大小写；这些地址发出的邮件不参与决策 |
+| ingest.sources[].imap.idle_ms / poll_ms / timeout_ms | 长连接每轮等待新信的最长毫秒数（建议 300000：到期即刷新连接，无声断线最长约 5 分钟加一次命令超时后发现，推送迟到的新信也在此时取到）、服务器不支持 IDLE 时的轮询间隔、单条命令的超时 |
+| ingest.sources[].imap.initial_backfill_ms / reconcile_overlap_ms | 无记录时首次补拉回溯的毫秒数、补拉从最新邮件时间再往前回溯的毫秒数；服务器按日期检索，实际再多回溯 1 天 |
+| ingest.sources[].imap.limits | chars 正文与发件人名字数上限；depth、parts MIME 嵌套层数与分段数上限；message_bytes 每封只取前多少字节；line_bytes 单行上限；fetch_batch 补拉每批取几封；search_max 补拉最多取最新的多少封 |
+| ingest.sources[].imap.style | attachment 附件说明模板（`{type}`、`{name}`）；quote_starts、quote_ends 引用历史的起始行前缀与结尾（如 `-----Original Message-----`、`wrote:`），从该行起截断 |
 | triage.mode | disabled 或 enabled；enabled 时 `serve` 启动即检查所需环境变量，缺失则以退出码 2 退出并列出变量名 |
 | triage.model | 决策接口的模型名 |
 | triage.questions | urgent：每条消息一问的优先级问题（`{line}` 换成消息别名）；topic：每个新会话段一问的话题归属问题（`{segment}` 换成段别名；`min_confidence` 低于它按新话题；`new_label` 是“新话题”选项的说明）；threshold：概率不低于它即高优先级，大于 1 则只打分不转交 |
@@ -162,6 +171,30 @@ cd web && bun install --frozen-lockfile && bun run build && cd ..
 
 3. 建 codex 专用目录：`mkdir -p .debug/codex-home .debug/codex-work`
 4. 把 `cli/config.yaml` 的 `triage.mode` 改为 `enabled`
+
+### 邮箱数据源
+
+示例（多个邮箱各写一项，共用部分可用 YAML 锚点）：
+
+```yaml
+    - imap:
+        account: work
+        idle_ms: 300000
+        initial_backfill_ms: 86400000
+        limits: {chars: 4000, depth: 16, fetch_batch: 20, line_bytes: 65536, message_bytes: 262144, parts: 64, search_max: 500}
+        mailbox: INBOX
+        password: "${IMAP_WORK_PASSWORD}"
+        poll_ms: 60000
+        proxy: "${IMAP_WORK_PROXY}"
+        reconcile_overlap_ms: 3600000
+        self_sender_ids: ["${IMAP_WORK_USER}"]
+        style: {attachment: "[附件 {type} {name}]", quote_ends: ["wrote:", "写道："], quote_starts: ["-----Original Message-----", "------------------ 原始邮件"]}
+        timeout_ms: 30000
+        url: "${IMAP_WORK_URL}"
+        user: "${IMAP_WORK_USER}"
+```
+
+启动时对每个邮箱登录再登出做自检，失败则以 sandbox_exit_code 退出，stderr 写明账号与阶段。运行中密码被拒不退出，按 backoff_max_ms 重试并记 ERROR `imap login refused`。同一服务器的并发连接数有上限（如 Gmail 约 15），多个文件夹各占一个连接。
 
 ### 启动
 

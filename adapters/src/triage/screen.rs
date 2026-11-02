@@ -2,12 +2,13 @@ use std::time::Instant;
 
 use serde_json::{Value, json, to_string};
 
+use super::TRIAGE;
 use super::config::Screen;
 use super::desk::Screened;
-use super::trace::{Outcome, external};
-use super::{Shift, retry_before, text};
+use super::{Shift, retry_before, spread, text};
 use crate::http::Call;
 use crate::ingest::now_ms;
+use crate::trace::{Outcome, external};
 
 const APPROVED: &str = "approved";
 const AUTO: &str = "auto";
@@ -44,6 +45,14 @@ fn apply(shift: &Shift<'_>, verdicts: &[Screened], now: u64) {
     }
 }
 
+fn defer(shift: &Shift<'_>, lines: &[Value]) {
+    let keys: Vec<&str> = lines.iter().map(|line| text(line, "key")).collect();
+    let deferred = shift
+        .ledger
+        .defer(&json!({"at_ms": now_ms(), "keys": keys}));
+    tracing::warn!(deferred, "screening failed");
+}
+
 fn request(shift: &Shift<'_>, setup: &Screen, lines: &[Value]) -> Prepared {
     let triage = shift.triage;
     let topics = shift.ledger.open_topics(&json!({
@@ -75,6 +84,7 @@ pub(super) async fn screen(shift: &mut Shift<'_>) -> Option<()> {
     let lines = shift.ledger.screening(&json!({
         "limit": triage.batch(),
         "retry_before_ms": retry_before(shift),
+        "spread_ms": spread(shift),
     }));
     if lines.is_empty() {
         return Some(());
@@ -83,11 +93,7 @@ pub(super) async fn screen(shift: &mut Shift<'_>) -> Option<()> {
     let url = match setup.http().local_url() {
         Ok(url) => url,
         Err(_err) => {
-            let keys: Vec<&str> = lines.iter().map(|line| text(line, "key")).collect();
-            let deferred = shift
-                .ledger
-                .defer(&json!({"at_ms": now_ms(), "keys": keys}));
-            tracing::warn!(deferred, "screening failed");
+            defer(shift, &lines);
             return Some(());
         }
     };
@@ -99,15 +105,16 @@ pub(super) async fn screen(shift: &mut Shift<'_>) -> Option<()> {
         external(
             "screen",
             prepared.body.len(),
-            &Outcome::new(0, "stopped".to_owned(), elapsed),
+            &Outcome::new(0, "stopped".to_owned(), elapsed).within(TRIAGE),
         );
         return None;
     };
     let elapsed = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
     let outcome = done.as_ref().map_or_else(
-        |reason| Outcome::new(0, reason.clone(), elapsed),
+        |reason| Outcome::new(0, reason.clone(), elapsed).within(TRIAGE),
         |reply| {
             Outcome::new(reply.body().len(), "success".to_owned(), elapsed)
+                .within(TRIAGE)
                 .code(Some(reply.status()))
         },
     );
@@ -125,9 +132,7 @@ pub(super) async fn screen(shift: &mut Shift<'_>) -> Option<()> {
     if let Some(verdicts) = found {
         apply(shift, &verdicts, now);
     } else {
-        let keys: Vec<&str> = lines.iter().map(|line| text(line, "key")).collect();
-        let deferred = shift.ledger.defer(&json!({"at_ms": now, "keys": keys}));
-        tracing::warn!(deferred, "screening failed");
+        defer(shift, &lines);
     }
     Some(())
 }

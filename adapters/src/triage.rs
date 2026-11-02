@@ -2,17 +2,14 @@ mod alert;
 mod batch;
 pub mod config;
 mod desk;
-mod endpoint;
+pub(crate) mod endpoint;
 mod intake;
 mod screen;
-mod trace;
 
 use alloc::collections::BTreeMap;
 use core::cell::RefCell;
 use core::pin::pin;
 use core::time::Duration;
-use std::io;
-use std::process::Output;
 
 use domain::features::Context;
 use serde_json::{Value, json};
@@ -30,6 +27,7 @@ use crate::http::{Call, Client as HttpClient, Reply};
 use crate::ingest::now_ms;
 use crate::ledger::Ledger;
 use crate::race::{Stop, race};
+use crate::trace::{Caller, failure};
 
 const ANALYZED: &str = "analyzed";
 const HOUR_MS: u64 = 3_600_000;
@@ -38,6 +36,7 @@ const MAX_CHOICES: u32 = 254;
 pub(super) const NONE: u64 = 0;
 const PENDING: &str = "pending";
 const SENT: &str = "sent";
+pub(super) const TRIAGE: Caller<'static> = Caller::new("external", "triage", "");
 
 #[derive(Clone, Copy, Debug)]
 #[non_exhaustive]
@@ -88,6 +87,7 @@ impl Shift<'_> {
             "max_per_hour": self.triage.max_handoffs_per_hour(),
             "parallel": self.triage.parallel(),
             "retry_before_ms": retry_before(self),
+            "spread_ms": spread(self),
             "state": state,
         })
     }
@@ -118,7 +118,9 @@ impl Shift<'_> {
 
     async fn relay(&mut self) -> Option<()> {
         let woken = self.ledger.wake_alerts();
-        tracing::debug!(woken, "alerts activated");
+        if woken > 0 {
+            tracing::debug!(woken, "alerts activated");
+        }
         let held = self.ledger.held(&self.gate(PENDING));
         let first = held.first();
         let reason = first.map_or("", |row| text(row, "reason"));
@@ -165,13 +167,6 @@ fn current(shift: &Shift<'_>) -> (Value, u64) {
         .max()
         .unwrap_or_default();
     (shift.desk.rules(&learned), rev)
-}
-
-fn failure(done: &io::Result<Output>) -> String {
-    done.as_ref().map_or_else(
-        |err| format!("io:{:?}", err.kind()),
-        |output| format!("exit:{}", output.status.code().unwrap_or_default()),
-    )
 }
 
 async fn knock(client: &HttpClient, http: &Http) -> Result<(), String> {
@@ -226,6 +221,10 @@ pub async fn run(setup: Setup<'_>, lane: Lane, stop: Stop<'_>) {
         }
         Err(err) => tracing::error!(error = %err, "triage ledger open failed"),
     }
+}
+
+const fn spread(shift: &Shift<'_>) -> u64 {
+    shift.triage.retry_after_ms() >> 2
 }
 
 fn text<'row>(row: &'row Value, key: &str) -> &'row str {

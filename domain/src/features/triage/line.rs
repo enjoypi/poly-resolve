@@ -13,7 +13,7 @@ pub(crate) struct LineRequest {
     message: Subject,
     notify_conversation_id: Option<String>,
     rules: Vec<Rule>,
-    self_sender_id: Option<String>,
+    self_sender_ids: Vec<String>,
     unknown_sender: String,
 }
 
@@ -69,7 +69,11 @@ pub(crate) fn line(req: &LineRequest) -> Result<LineResponse, AppError> {
 
 fn reason(req: &LineRequest) -> Option<Skip> {
     let message = &req.message;
-    if req.self_sender_id.as_deref() == Some(message.sender_id.as_str()) {
+    if req
+        .self_sender_ids
+        .iter()
+        .any(|own| own.eq_ignore_ascii_case(&message.sender_id))
+    {
         Some(Skip::Own)
     } else if req.notify_conversation_id.as_deref() == Some(message.conversation_id.as_str()) {
         Some(Skip::Notice)

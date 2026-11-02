@@ -4,6 +4,9 @@ use std::fs;
 use serde_json::{Value, from_str as parse, json};
 use serde_saphyr::from_str;
 
+use domain::redact::Redactor;
+use domain::review::Rule;
+
 use crate::support::{Fixture, local};
 
 const CONFIG: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../cli/config.yaml");
@@ -24,6 +27,18 @@ fn keys_blocks_are_replaced_whole() {
         "PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAA"
     );
     assert!(!redact(cut).unwrap().contains("b3BlbnNz"));
+}
+
+#[test]
+fn log_redactor_applies_rules_in_order() {
+    let rules = [
+        Rule::new("[0-9]{4}".to_owned(), "[n]".to_owned()),
+        Rule::new("n".to_owned(), "x".to_owned()),
+    ];
+    let redactor = Redactor::new(&rules).unwrap();
+    assert_eq!(redactor.apply("pin 1234"), "pix [x]");
+    let broken = [Rule::new("(".to_owned(), String::new())];
+    assert_eq!(Redactor::new(&broken).unwrap_err().status(), 400);
 }
 
 #[test]

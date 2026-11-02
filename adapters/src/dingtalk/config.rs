@@ -103,7 +103,7 @@ impl Settings {
     }
 
     pub(crate) async fn check(&self) -> Result<(), String> {
-        Runner::new(&self.dws).check().await
+        Runner::new(&self.dws, &self.account).check().await
     }
 
     pub(crate) const fn child_exit_timeout_ms(&self) -> u64 {

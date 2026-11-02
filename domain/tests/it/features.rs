@@ -1,6 +1,7 @@
 mod batches;
 mod health;
 mod ingest;
+mod mail;
 mod messages;
 mod review;
 mod triage;
@@ -150,7 +151,7 @@ fn dispatch_redacts_triage_payloads() {
         },
         "notify_conversation_id": "n1",
         "rules": [],
-        "self_sender_id": "me",
+        "self_sender_ids": ["me"],
         "unknown_sender": "unknown",
     })
     .to_string();

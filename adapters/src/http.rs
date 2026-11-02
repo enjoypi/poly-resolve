@@ -1,17 +1,11 @@
 use core::str::from_utf8;
 use core::time::Duration;
-use std::io::{self, ErrorKind, Read, Write};
-use std::net::TcpStream as StdStream;
 
 use http::Uri;
 use security_framework::certificate::SecCertificate;
-use security_framework::secure_transport::{ClientBuilder, ClientHandshakeError, SslStream};
-use tokio::net::TcpStream;
-use tokio::time::{sleep, timeout};
+use tokio::time::timeout;
 
-const PROXY_HEAD_MAX: usize = 0x2000;
-
-type Attempt = Result<SslStream<StdStream>, ClientHandshakeError<StdStream>>;
+use crate::net::{Dial, Layer, Link, code, open};
 
 #[derive(Clone, Copy, Debug)]
 pub struct Call<'call> {
@@ -52,43 +46,27 @@ pub struct Client {
 }
 
 impl Client {
-    async fn connect(
-        &self,
-        call: &Call<'_>,
-        stage: &mut &'static str,
-    ) -> Result<Box<dyn Duplex>, String> {
+    async fn connect(&self, call: &Call<'_>, stage: &mut &'static str) -> Result<Link, String> {
         let url = call.url;
         let host = url.host().ok_or_else(|| "connect".to_owned())?;
         let secure = url.scheme_str() == Some("https");
         let port = url.port_u16().unwrap_or(if secure { 443 } else { 80 });
-        let tcp = match call.proxy {
-            Some(proxy) => {
-                *stage = "proxy";
-                tunnel(proxy, &format!("{host}:{port}")).await?
-            }
-            None => dial(host, port)
-                .await
-                .map_err(|_err| "connect".to_owned())?,
-        };
-        if secure {
-            *stage = "tls";
-            let mut builder = ClientBuilder::new();
-            let _anchored = builder.anchor_certificates(&self.anchors);
-            Ok(Box::new(handshake(builder.handshake(host, tcp)).await?))
-        } else {
-            Ok(Box::new(tcp))
-        }
+        let layer = if secure { Layer::Tls } else { Layer::Plain };
+        let dial = Dial::new(host, port, layer)
+            .with_anchors(&self.anchors)
+            .with_proxy(call.proxy);
+        open(&dial, stage).await
     }
 
     async fn exchange(&self, call: &Call<'_>, stage: &mut &'static str) -> Result<Reply, String> {
-        let mut stream = self.connect(call, stage).await?;
+        let mut link = self.connect(call, stage).await?;
         *stage = "send";
-        send(stream.as_mut(), request(call).as_bytes()).await?;
+        link.write_all(request(call).as_bytes()).await?;
         *stage = "read";
         let mut bytes = Vec::new();
         loop {
             let mut buffer = vec![u8::default(); 0x2000];
-            let size = receive(stream.as_mut(), &mut buffer).await?;
+            let size = link.read(&mut buffer).await?;
             if size == 0 {
                 return reply(&bytes);
             }
@@ -138,8 +116,6 @@ impl Client {
     }
 }
 
-trait Duplex: Read + Send + Write {}
-
 #[derive(Clone, Copy)]
 enum Framing {
     Chunked,
@@ -171,8 +147,6 @@ impl Reply {
         self.status
     }
 }
-
-impl<T: Read + Send + Write> Duplex for T {}
 
 fn chunked(mut bytes: &[u8]) -> Result<Vec<u8>, String> {
     let mut output = Vec::new();
@@ -209,25 +183,6 @@ fn complete(bytes: &[u8]) -> Option<usize> {
     }
 }
 
-async fn dial(host: &str, port: u16) -> io::Result<StdStream> {
-    TcpStream::connect((host, port))
-        .await
-        .and_then(TcpStream::into_std)
-}
-
-async fn handshake(mut attempt: Attempt) -> Result<SslStream<StdStream>, String> {
-    loop {
-        match attempt {
-            Ok(tls) => return Ok(tls),
-            Err(ClientHandshakeError::Interrupted(pending)) => {
-                ready().await;
-                attempt = pending.handshake();
-            }
-            Err(ClientHandshakeError::Failure(_err)) => return Err("tls".to_owned()),
-        }
-    }
-}
-
 fn line(bytes: &[u8]) -> Option<Parts<'_>> {
     split(bytes, b"\r\n")
 }
@@ -235,11 +190,7 @@ fn line(bytes: &[u8]) -> Option<Parts<'_>> {
 fn parse_head(bytes: &[u8]) -> Result<Head, String> {
     let text = String::from_utf8_lossy(bytes);
     let mut lines = text.split("\r\n");
-    let status = lines
-        .next()
-        .and_then(|line| line.split_whitespace().nth(1))
-        .and_then(|code| code.parse::<u16>().ok())
-        .ok_or_else(|| "io".to_owned())?;
+    let status = lines.next().and_then(code).ok_or_else(|| "io".to_owned())?;
     let mut framing = Framing::Close;
     for (name, value) in lines.filter_map(|line| line.split_once(':')) {
         if name.eq_ignore_ascii_case("content-length") {
@@ -257,20 +208,6 @@ fn parse_head(bytes: &[u8]) -> Result<Head, String> {
         }
     }
     Ok(Head { framing, status })
-}
-
-async fn ready() {
-    sleep(Duration::from_millis(1)).await;
-}
-
-async fn receive(stream: &mut dyn Duplex, buffer: &mut [u8]) -> Result<usize, String> {
-    loop {
-        match stream.read(buffer) {
-            Ok(size) => return Ok(size),
-            Err(err) if err.kind() == ErrorKind::WouldBlock => ready().await,
-            Err(_err) => return Err("io".to_owned()),
-        }
-    }
 }
 
 fn reply(bytes: &[u8]) -> Result<Reply, String> {
@@ -310,51 +247,10 @@ fn request(call: &Call<'_>) -> String {
     )
 }
 
-async fn send(stream: &mut dyn Duplex, mut bytes: &[u8]) -> Result<(), String> {
-    while !bytes.is_empty() {
-        match stream.write(bytes) {
-            Ok(size) => bytes = bytes.get(size..).unwrap_or_default(),
-            Err(err) if err.kind() == ErrorKind::WouldBlock => ready().await,
-            Err(_err) => return Err("io".to_owned()),
-        }
-    }
-    Ok(())
-}
-
 fn split<'bytes>(bytes: &'bytes [u8], needle: &[u8]) -> Option<Parts<'bytes>> {
     let position = bytes
         .windows(needle.len())
         .position(|window| window == needle)?;
     let (head, tail) = bytes.split_at_checked(position).unwrap_or_default();
     Some((head, tail.get(needle.len()..).unwrap_or_default()))
-}
-
-async fn status(stream: &mut dyn Duplex) -> Result<u16, String> {
-    let mut bytes = Vec::new();
-    while !bytes.ends_with(b"\r\n\r\n") {
-        let mut byte = [u8::default(); 1];
-        let size = receive(stream, &mut byte).await?;
-        if size == 0 || bytes.len() >= PROXY_HEAD_MAX {
-            return Err("io".to_owned());
-        }
-        bytes.extend_from_slice(&byte);
-    }
-    parse_head(&bytes).map(|head| head.status)
-}
-
-async fn tunnel(proxy: &Uri, authority: &str) -> Result<StdStream, String> {
-    let mut tcp = dial(
-        proxy.host().unwrap_or_default(),
-        proxy.port_u16().unwrap_or_default(),
-    )
-    .await
-    .map_err(|_err| "proxy_connect".to_owned())?;
-    let opening = format!("CONNECT {authority} HTTP/1.1\r\nhost: {authority}\r\n\r\n");
-    let sent = send(&mut tcp, opening.as_bytes()).await;
-    let code = sent.and(status(&mut tcp).await)?;
-    if (200..300).contains(&code) {
-        Ok(tcp)
-    } else {
-        Err(format!("proxy:{code}"))
-    }
 }

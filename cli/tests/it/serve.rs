@@ -164,6 +164,8 @@ fn serves_with_triage_enabled() {
         .replace("backlog_max_ms: 1000\n", "backlog_max_ms: 1000000000000\n");
     let path = config("serve-triage.yaml", &yaml).unwrap();
     let mut server = start(&path).unwrap();
+    await_log(&mut server.lines, "\"target\":\"dispatch\"").unwrap();
+    await_log(&mut server.lines, "source state: connected [num]").unwrap();
     await_log(&mut server.lines, "event stored").unwrap();
     await_log(&mut server.lines, "line opened").unwrap();
     let sync = get(&server.addr, "/api/health").unwrap();
@@ -185,8 +187,10 @@ fn start(config: &str) -> io::Result<Server> {
         .ok_or_else(|| io::Error::other("stderr not piped"))?;
     let mut lines = BufReader::new(stderr).lines();
     let started = lines
-        .next()
-        .ok_or_else(|| io::Error::other("no listening log"))??;
+        .by_ref()
+        .map_while(Result::ok)
+        .find(|line| line.contains("\"message\":\"listening\""))
+        .ok_or_else(|| io::Error::other("no listening log"))?;
     let addr = from_str::<Value>(&started)?
         .pointer("/fields/addr")
         .and_then(Value::as_str)

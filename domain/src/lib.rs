@@ -3,6 +3,7 @@ extern crate alloc;
 pub mod batches;
 pub mod features;
 pub mod inbox;
+pub mod redact;
 pub mod review;
 
 use schemars::JsonSchema;

@@ -8,7 +8,6 @@ use core::time::Duration;
 use std::process::Output;
 
 use futures_util::stream::{StreamExt as _, iter};
-use rusqlite::{Error, ErrorCode};
 use serde_json::{Value, from_str};
 use tokio::time::sleep;
 
@@ -17,23 +16,12 @@ use self::config::Settings;
 
 use self::dws::{Dws, Found, Listener, children, plaintext};
 use crate::config::Settings as Shared;
+use crate::ingest::cycle::{Backoff, Halt, Retry, fault};
 use crate::ingest::{Site, now_ms};
 use crate::race::{Stop, race};
 use crate::store::{Archive, Scope};
 
 pub(crate) const SOURCE: &str = "dingtalk";
-
-#[derive(Clone, Copy, Debug)]
-enum Halt {
-    Busy,
-    Exit(u8),
-}
-
-#[derive(Clone, Copy, Debug)]
-enum Retry {
-    Failed,
-    Progress,
-}
 
 struct Run<'run> {
     bridge: Bridge<'run>,
@@ -56,7 +44,7 @@ impl Run<'_> {
         let inserted = self
             .store
             .save_page(&page.render())
-            .map_err(|err| self.fault(&err))?;
+            .map_err(|err| fault(self.shared, &err))?;
         tracing::info!(
             inserted,
             skipped = page.skipped(),
@@ -129,19 +117,6 @@ impl Run<'_> {
         self.pump(listener).await
     }
 
-    fn fault(&self, err: &Error) -> Halt {
-        if matches!(
-            err.sqlite_error_code(),
-            Some(ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked)
-        ) {
-            tracing::warn!(error = %err, "store busy");
-            Halt::Busy
-        } else {
-            tracing::error!(error = %err, "store failed");
-            Halt::Exit(self.shared.failure_exit_code())
-        }
-    }
-
     async fn heal(&mut self) -> Result<(), Halt> {
         let sealed = self
             .store
@@ -149,14 +124,14 @@ impl Run<'_> {
                 Scope::new(SOURCE, self.config.account()),
                 self.config.heal_limit(),
             )
-            .map_err(|err| self.fault(&err))?;
+            .map_err(|err| fault(self.shared, &err))?;
         let opened = self.decrypted(sealed.clone()).await?;
         for (stale, fresh) in sealed.iter().zip(opened) {
             if fresh != *stale {
                 let healed = self
                     .store
                     .replace(stale, &fresh)
-                    .map_err(|err| self.fault(&err))?;
+                    .map_err(|err| fault(self.shared, &err))?;
                 tracing::debug!(healed, "stored message decrypted");
             }
         }
@@ -171,7 +146,7 @@ impl Run<'_> {
                 self.store
                     .save_event(&envelope)
                     .map(|inserted| tracing::debug!(inserted, "event stored"))
-                    .map_err(|err| self.fault(&err))
+                    .map_err(|err| fault(self.shared, &err))
             }
             Err(rejected) => {
                 tracing::warn!(len = line.len(), error = ?rejected, "event rejected");
@@ -246,19 +221,14 @@ impl Run<'_> {
     }
 
     async fn serve(&mut self) -> u8 {
-        let initial = self.shared.backoff_initial_ms();
-        let mut delay = initial;
+        let mut backoff = Backoff::new(self.shared);
         loop {
             let retry = match self.session().await {
                 Ok(retry) => retry,
                 Err(Halt::Busy) => Retry::Failed,
                 Err(Halt::Exit(code)) => return code,
             };
-            let wait = match retry {
-                Retry::Failed => delay,
-                Retry::Progress => initial,
-            };
-            delay = wait.saturating_mul(2).min(self.shared.backoff_max_ms());
+            let wait = backoff.next(self.shared, retry);
             if self.pause(wait).await.is_none() {
                 return 0;
             }
@@ -309,7 +279,7 @@ impl Run<'_> {
         let mark = self
             .store
             .watermark(SOURCE, self.config.account())
-            .map_err(|err| self.fault(&err))?;
+            .map_err(|err| fault(self.shared, &err))?;
         let from_ms = mark.map_or_else(
             || to_ms.saturating_sub(self.config.initial_backfill_ms()),
             |millis| millis.saturating_sub(self.config.reconcile_overlap_ms()),
@@ -350,7 +320,7 @@ pub(crate) async fn run(site: Site<'_>, config: &Settings, stop: Stop<'_>) -> u8
             Run {
                 bridge: Bridge::new(config, site.context()),
                 config,
-                dws: Dws::new(config.dws()),
+                dws: Dws::new(config.dws(), config.account()),
                 shared,
                 stop,
                 store,

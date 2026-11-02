@@ -31,6 +31,7 @@ fn ingest_checks_external_decision_url_from_variable() {
     assert_eq!(output.status.code(), Some(sandbox_failed));
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("invalid pattern"), "{stderr}");
+    assert!(stderr.contains("[hidden]"), "{stderr}");
 }
 
 #[tokio::test]

@@ -359,7 +359,7 @@ pub(crate) fn keys(database: &Path) -> Fallible<Vec<String>> {
     Ok(keys)
 }
 
-fn merge(base: &mut Value, patch: &Value) {
+pub(crate) fn merge(base: &mut Value, patch: &Value) {
     if let (Some(target), Some(source)) = (base.as_object_mut(), patch.as_object()) {
         for (key, value) in source {
             match target.get_mut(key) {

@@ -17,6 +17,7 @@ async fn slow_decrypt_times_out_and_keeps_ciphertext() {
     assert_eq!(code, 0);
     assert_eq!(texts(&sandbox.database()).unwrap(), [SEALED]);
     assert!(logs.contains("message decrypt failed"));
+    assert!(logs.contains("\"status\":\"io:TimedOut\""));
 }
 
 #[tokio::test]
