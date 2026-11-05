@@ -157,7 +157,7 @@ cd web && bun install --frozen-lockfile && bun run build && cd ..
 ### 准备
 
 1. 取得员工授权与企业管理员同意：脱敏后的消息内容会发往决策接口与 codex。
-2. 用 sops 保存变量：执行 `sops ~/.config/poly-resolve/dev.enc.yaml`（开发用）或 `sops secrets/prod.enc.yaml`（release 用），写入扁平 YAML。加密规则取自上级目录的 `.sops.yaml`，私钥在 `~/.config/sops/age/keys.txt`。
+2. 用 sops 保存变量：执行 `sops secrets/dev.enc.yaml`（开发用）或 `sops secrets/prod.enc.yaml`（release 用），写入扁平 YAML。加密规则取自上级目录的 `.sops.yaml`，私钥在 `~/.config/sops/age/keys.txt`。
 
 | 变量 | 含义 |
 |---|---|
