@@ -59,7 +59,8 @@ pub(crate) fn screen(req: ScreenRequest) -> ScreenResponse {
     let body = json!({
         "messages": [
             {"content": instructions, "role": SYSTEM},
-            {"content": json!({"lines": shown, "topics": known}).to_string(), "role": USER},
+            {"content": json!({"topics": known}).to_string(), "role": USER},
+            {"content": json!({"lines": shown}).to_string(), "role": USER},
         ],
         "model": model,
         "response_format": {"type": "json_object"},

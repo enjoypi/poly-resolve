@@ -60,6 +60,7 @@ const OVERLAP: u64 = 1_000;
 const PAGING: &str = r#"{"default":2,"max":3}"#;
 const PARALLEL: u32 = 1;
 const PARALLEL_LIMIT: u32 = 2;
+const PARALLEL_SCREEN: u32 = 2;
 const POLL: u64 = 20;
 const PROFILE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/it/fixtures/fake.sb");
 const PROMPTS: [(&str, &str); 5] = [
@@ -74,6 +75,7 @@ pub(crate) const REFUSE_INSERT: &str =
     "CREATE TRIGGER refuse BEFORE INSERT ON messages BEGIN SELECT RAISE(ABORT, 'refused'); END;";
 pub(crate) const REFUSE_UPDATE: &str =
     "CREATE TRIGGER refuse BEFORE UPDATE ON messages BEGIN SELECT RAISE(ABORT, 'refused'); END;";
+const RETRY_MAX: u64 = 3_600_000;
 const REVIVALS: u32 = 0;
 pub(crate) const SEALED: &str = "QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo0MTIzNDU2||2||1||196";
 const SHARED: [&str; 6] = [
@@ -202,6 +204,7 @@ impl Sandbox {
             "screen": {
                 "http": self.http(CHAT),
                 "model": "local",
+                "parallel": PARALLEL_SCREEN,
                 "placeholder": "[s]",
             },
         });
@@ -279,10 +282,11 @@ impl Sandbox {
                 "parallel": PARALLEL_LIMIT,
                 "poll_ms": POLL,
                 "retry_after_ms": ZERO,
+                "retry_max_ms": RETRY_MAX,
             },
             "mode": "enabled",
             "model": "m",
-            "notice": "[{probability}] {topic}|{analysis}",
+            "notice": "[{probability}] {label} {topic}|{analysis}",
             "notify": self.exec("send"),
             "notify_target": "${CARGO_PKG_VERSION}",
             "prompts_dir": self.prompts()?,

@@ -31,6 +31,7 @@ pub(crate) struct Screened {
     flag: String,
     hints: Vec<String>,
     key: String,
+    spans: Vec<String>,
     text: String,
 }
 
@@ -73,6 +74,7 @@ fn judge(req: &ScreenedRequest, line: &Candidate, verdict: Option<&Verdict>) -> 
             flag: MISSING.to_owned(),
             hints: Vec::new(),
             key: line.key().to_owned(),
+            spans: Vec::new(),
             text: line.text().to_owned(),
         };
     };
@@ -101,6 +103,7 @@ fn judge(req: &ScreenedRequest, line: &Candidate, verdict: Option<&Verdict>) -> 
         },
         hints,
         key: line.key().to_owned(),
+        spans: spans.iter().map(|span| (*span).to_owned()).collect(),
         text,
     }
 }

@@ -64,9 +64,9 @@ fn screened_masks_valid_spans_and_keeps_known_hints_once() {
     assert_eq!(
         reply.get("lines"),
         Some(&json!([
-            {"flag": "", "hints": ["t3-0"], "key": "k1", "text": "token [x] here"},
-            {"flag": "", "hints": ["t4-0"], "key": "k2", "text": "plain words"},
-            {"flag": "", "hints": [], "key": "k3", "text": "more words"},
+            {"flag": "", "hints": ["t3-0"], "key": "k1", "spans": [SECRET], "text": "token [x] here"},
+            {"flag": "", "hints": ["t4-0"], "key": "k2", "spans": [], "text": "plain words"},
+            {"flag": "", "hints": [], "key": "k3", "spans": [], "text": "more words"},
         ]))
     );
 }

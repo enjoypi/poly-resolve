@@ -134,14 +134,14 @@ fn sort_groups_lines_by_topic_with_the_highest_probability() {
     assert_eq!(
         reply.get("topics"),
         Some(&json!([
-            {"label": "first", "last_ms": FIRST_MS, "probability": HIGH, "topic": "t-old", "urgent": "urgent"},
-            {"label": "second", "last_ms": THIRD_MS, "probability": MID, "topic": "t-open", "urgent": "normal"},
+            {"label": "first", "last_ms": FIRST_MS, "probability": HIGH, "score": HIGH, "topic": "t-old", "urgent": "urgent"},
+            {"label": "second", "last_ms": THIRD_MS, "probability": MID, "score": MID, "topic": "t-open", "urgent": "normal"},
         ]))
     );
 }
 
 #[test]
-fn sort_keeps_historical_topic_probability_when_new_lines_score_lower() {
+fn sort_keeps_historical_probability_but_judges_urgency_by_new_lines() {
     let mut historical = layout();
     drop(historical.as_object_mut().unwrap().insert(
         "probabilities".to_owned(),
@@ -164,7 +164,8 @@ fn sort_keeps_historical_topic_probability_when_new_lines_score_lower() {
     let topics = reply.get("topics").and_then(Value::as_array).unwrap();
     for topic in topics {
         assert_eq!(topic.get("probability"), Some(&json!(HIGH)));
-        assert_eq!(topic.get("urgent"), Some(&json!("urgent")));
+        assert_eq!(topic.get("score"), Some(&json!(LOW)));
+        assert_eq!(topic.get("urgent"), Some(&json!("normal")));
     }
 }
 

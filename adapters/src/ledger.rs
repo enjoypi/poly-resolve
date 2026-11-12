@@ -1,9 +1,37 @@
+use core::cell::Cell;
 use std::path::Path;
 
 use rusqlite::{Connection, Error, params_from_iter};
 use serde_json::{Value, from_str};
 
 use crate::store::{Fallible, connect};
+
+macro_rules! due {
+    ($stamp:literal, $tries:literal) => {
+        concat!(
+            $stamp,
+            " + ",
+            wait!($tries),
+            " + ",
+            $stamp,
+            " % (2 * (",
+            wait!($tries),
+            " / 4) + 1) - ",
+            wait!($tries),
+            " / 4 <= json_extract(?1, '$.pace.now_ms')"
+        )
+    };
+}
+
+macro_rules! wait {
+    ($tries:literal) => {
+        concat!(
+            "MIN(json_extract(?1, '$.pace.retry_after_ms') << MIN(MAX(",
+            $tries,
+            " - 1, 0), 20), json_extract(?1, '$.pace.retry_max_ms'))"
+        )
+    };
+}
 
 const ADVANCE_ALERT: &str = "UPDATE alerts SET state = json_extract(?1, '$.state'), analysis = COALESCE(json_extract(?1, '$.analysis'), analysis), reason = '', attempts = 0, updated_at_ms = 0 WHERE key = json_extract(?1, '$.key') AND state = json_extract(?1, '$.from')";
 const ALIAS_CHAIN: &str = "UPDATE topic_aliases SET new = json_extract(?1, '$.thread_id') WHERE new = json_extract(?1, '$.topic_id') AND json_extract(?1, '$.topic_id') <> json_extract(?1, '$.thread_id')";
@@ -14,7 +42,11 @@ const BATCH_CALL_RELEASE: &str = "DELETE FROM calls WHERE kind = 'decision' AND 
 const BATCH_CLAIM: &str = "UPDATE batches SET attempts = attempts + 1, payload = json_extract(?1, '$.payload'), layout = json_extract(?1, '$.layout'), updated_at_ms = json_extract(?1, '$.at_ms') WHERE id = json_extract(?1, '$.id') AND state = 'ready' AND attempts < json_extract(?1, '$.max_attempts') * (revivals + 1) AND NOT EXISTS (SELECT 1 FROM learned_rules WHERE id > json_extract(?1, '$.rev'))";
 const BATCH_FAIL: &str = "UPDATE batches SET reason = json_extract(?1, '$.reason'), updated_at_ms = json_extract(?1, '$.at_ms'), state = CASE WHEN attempts >= json_extract(?1, '$.max_attempts') * (revivals + 1) THEN 'failed' ELSE state END WHERE id = json_extract(?1, '$.id') AND state = 'ready'";
 const BATCH_LINES: &str = "SELECT json_group_array(json_object('conversation_id', conversation_id, 'created_at_ms', created_at_ms, 'hints', json((SELECT json_group_array(COALESCE((SELECT new FROM topic_aliases WHERE old = h.value), h.value)) FROM json_each(b.hints) h)), 'key', key, 'occurred_at_ms', occurred_at_ms, 'sender', sender, 'text', text)) FROM (SELECT * FROM lines WHERE batch_id = json_extract(?1, '$.batch_id') AND state = 'approved' ORDER BY occurred_at_ms, key) b";
-const BATCH_NEXT: &str = "SELECT json_group_array(json_object('answer', answer, 'attempts', attempts, 'id', id, 'layout', layout, 'payload', payload, 'revivals', revivals)) FROM (SELECT a.body AS answer, b.attempts AS attempts, b.id AS id, b.layout AS layout, b.payload AS payload, b.revivals AS revivals FROM batches b LEFT JOIN answers a ON a.batch_id = b.id WHERE b.state = 'ready' AND b.updated_at_ms + b.updated_at_ms % (2 * json_extract(?1, '$.spread_ms') + 1) - json_extract(?1, '$.spread_ms') <= json_extract(?1, '$.retry_before_ms') AND (a.body IS NOT NULL OR b.attempts < json_extract(?1, '$.max_attempts') * (b.revivals + 1)) ORDER BY b.id LIMIT 1)";
+const BATCH_NEXT: &str = concat!(
+    "SELECT json_group_array(json_object('answer', answer, 'attempts', attempts, 'id', id, 'layout', layout, 'payload', payload, 'revivals', revivals)) FROM (SELECT a.body AS answer, b.attempts AS attempts, b.id AS id, b.layout AS layout, b.payload AS payload, b.revivals AS revivals FROM batches b LEFT JOIN answers a ON a.batch_id = b.id WHERE b.state = 'ready' AND ",
+    due!("b.updated_at_ms", "b.attempts"),
+    " AND (a.body IS NOT NULL OR b.attempts < json_extract(?1, '$.max_attempts') * (b.revivals + 1)) ORDER BY b.id LIMIT 1)"
+);
 const BATCH_RELEASE: &str = "UPDATE batches SET attempts = attempts - 1, updated_at_ms = 0 WHERE id = json_extract(?1, '$.id') AND state = 'ready' AND attempts > 0";
 const BATCH_SEAL: &str = "INSERT OR IGNORE INTO batches (id, state, payload, layout, attempts, reason, created_at_ms, updated_at_ms) SELECT json_extract(?1, '$.id'), json_extract(?1, '$.state'), json_extract(?1, '$.payload'), json_extract(?1, '$.layout'), 0, '', json_extract(?1, '$.at_ms'), json_extract(?1, '$.updated_ms') WHERE json_extract(?1, '$.state') <> 'ready' OR NOT EXISTS (SELECT 1 FROM batches WHERE state = 'ready')";
 const BATCH_SENT: &str = "UPDATE batches SET state = 'sent', attempts = 0, reason = '', updated_at_ms = json_extract(?1, '$.at_ms') WHERE id = json_extract(?1, '$.batch_id') AND state = 'ready'";
@@ -22,19 +54,25 @@ const BEGIN: &str = "BEGIN IMMEDIATE";
 const BIND_THREAD: &str = "UPDATE topics SET thread_id = json_extract(?1, '$.thread_id'), until_ms = json_extract(?1, '$.until_ms'), until_key = json_extract(?1, '$.until_key'), thread_at_ms = CASE WHEN thread_at_ms = 0 THEN json_extract(?1, '$.at_ms') ELSE thread_at_ms END WHERE id = json_extract(?1, '$.thread_id')";
 const CALL_ALERT: &str = "INSERT INTO calls (kind, subject, topic_id, attempt, at_ms) SELECT json_extract(?1, '$.kind'), key, topic_id, attempts, json_extract(?1, '$.at_ms') FROM alerts WHERE key = json_extract(?1, '$.key') AND updated_at_ms = json_extract(?1, '$.at_ms')";
 const CALL_BATCH: &str = "INSERT INTO calls (kind, subject, topic_id, attempt, at_ms) SELECT 'decision', CAST(id AS TEXT), '', attempts, json_extract(?1, '$.at_ms') FROM batches WHERE id = json_extract(?1, '$.id') AND updated_at_ms = json_extract(?1, '$.at_ms')";
-const CLAIM_ALERT: &str = "UPDATE alerts SET attempts = attempts + 1, updated_at_ms = json_extract(?1, '$.at_ms') WHERE key = json_extract(?1, '$.key') AND state = json_extract(?1, '$.state') AND attempts < json_extract(?1, '$.max_attempts') AND (state <> 'pending' OR analysis IS NOT NULL OR ((SELECT COUNT(*) FROM calls c WHERE c.kind = 'analysis' AND c.at_ms >= json_extract(?1, '$.hour_since_ms')) < json_extract(?1, '$.max_per_hour') AND NOT EXISTS (SELECT 1 FROM calls c WHERE c.kind = 'analysis' AND c.topic_id = alerts.topic_id AND c.at_ms > json_extract(?1, '$.cooldown_since_ms'))))";
+const CLAIM_ALERT: &str = "UPDATE alerts SET attempts = attempts + 1, updated_at_ms = json_extract(?1, '$.at_ms') WHERE key = json_extract(?1, '$.key') AND state = json_extract(?1, '$.state') AND attempts < json_extract(?1, '$.max_attempts') AND created_at_ms = json_extract(?1, '$.created_at_ms') AND (state <> 'pending' OR analysis IS NOT NULL OR ((SELECT COUNT(*) FROM calls c WHERE c.kind = 'analysis' AND c.at_ms >= json_extract(?1, '$.hour_since_ms')) < json_extract(?1, '$.max_per_hour') AND NOT EXISTS (SELECT 1 FROM calls c WHERE c.kind = 'analysis' AND c.topic_id = alerts.topic_id AND c.at_ms > json_extract(?1, '$.cooldown_since_ms'))))";
 const COMMIT: &str = "COMMIT";
-const DEFER: &str = "UPDATE lines SET reason = 'deferred', updated_at_ms = json_extract(?1, '$.at_ms') WHERE state = 'screening' AND key IN (SELECT value FROM json_each(?1, '$.keys'))";
+const DEFER: &str = "UPDATE lines SET attempts = attempts + 1, reason = 'deferred', updated_at_ms = json_extract(?1, '$.at_ms') WHERE state = 'screening' AND key IN (SELECT value FROM json_each(?1, '$.keys'))";
 const FAIL_ALERT: &str = "UPDATE alerts SET reason = json_extract(?1, '$.reason'), updated_at_ms = json_extract(?1, '$.at_ms'), state = CASE WHEN attempts >= json_extract(?1, '$.max_attempts') THEN 'failed' ELSE state END WHERE key = json_extract(?1, '$.key') AND state = json_extract(?1, '$.state')";
 const FORGET_THREAD: &str =
     "UPDATE topics SET thread_at_ms = 0 WHERE id = json_extract(?1, '$.topic_id')";
 const FORM: &str = "UPDATE lines SET batch_id = (SELECT COALESCE(MAX(batch_id), 0) + 1 FROM lines), state = json_extract(?1, '$.state'), reviewer = json_extract(?1, '$.reviewer'), updated_at_ms = json_extract(?1, '$.at_ms') WHERE key IN (SELECT key FROM lines WHERE state = 'queued' ORDER BY CASE WHEN EXISTS (SELECT 1 FROM lines s WHERE s.state = 'queued' AND s.occurred_at_ms < json_extract(?1, '$.stale_before_ms')) THEN occurred_at_ms ELSE -occurred_at_ms END, key DESC LIMIT json_extract(?1, '$.limit')) AND NOT EXISTS (SELECT 1 FROM lines a WHERE a.batch_id > 0 AND NOT EXISTS (SELECT 1 FROM batches b WHERE b.id = a.batch_id))";
-const HELD: &str = "SELECT json_group_array(json_object('count', total, 'reason', reason)) FROM (SELECT CASE WHEN (SELECT COUNT(*) FROM calls c WHERE c.kind = 'analysis' AND c.at_ms >= json_extract(?1, '$.hour_since_ms')) >= json_extract(?1, '$.max_per_hour') THEN 'quota' ELSE 'cooldown' END AS reason, COUNT(*) AS total FROM alerts a WHERE a.state = 'pending' AND a.analysis IS NULL AND a.attempts < json_extract(?1, '$.max_attempts') AND ((SELECT COUNT(*) FROM calls c WHERE c.kind = 'analysis' AND c.at_ms >= json_extract(?1, '$.hour_since_ms')) >= json_extract(?1, '$.max_per_hour') OR EXISTS (SELECT 1 FROM calls c WHERE c.kind = 'analysis' AND c.topic_id = a.topic_id AND c.at_ms > json_extract(?1, '$.cooldown_since_ms'))) GROUP BY 1)";
+const HELD: &str = "SELECT json_group_array(json_object('count', total, 'reason', reason)) FROM (SELECT CASE WHEN (SELECT COUNT(*) FROM calls c WHERE c.kind = 'analysis' AND c.at_ms >= json_extract(?1, '$.hour_since_ms')) >= json_extract(?1, '$.max_per_hour') THEN 'quota' ELSE 'cooldown' END AS reason, COUNT(*) AS total FROM alerts a WHERE a.state = 'pending' AND a.analysis IS NULL AND a.attempts < json_extract(?1, '$.max_attempts') AND ((SELECT COUNT(*) FROM calls c WHERE c.kind = 'analysis' AND c.at_ms >= json_extract(?1, '$.hour_since_ms')) >= json_extract(?1, '$.max_per_hour') OR EXISTS (SELECT 1 FROM calls c WHERE c.kind = 'analysis' AND c.topic_id = a.topic_id AND c.at_ms > json_extract(?1, '$.cooldown_since_ms'))) AND EXISTS (SELECT 1 FROM topics t WHERE t.id = a.topic_id AND t.last_at_ms >= json_extract(?1, '$.open_since_ms')) GROUP BY 1)";
 const INTAKE_SINCE: &str = "SELECT json_group_array(json_object('since_ms', since_ms)) FROM triage_state WHERE id = 1 AND json_extract(?1, '$.enabled') IS NOT NULL";
 const INTAKE_STATE: &str = "INSERT INTO triage_state (id, enabled, since_ms) VALUES (1, json_extract(?1, '$.enabled'), json_extract(?1, '$.since_ms')) ON CONFLICT(id) DO UPDATE SET since_ms = CASE WHEN triage_state.since_ms = 0 THEN excluded.since_ms ELSE triage_state.since_ms END, enabled = excluded.enabled";
+const MERGE_ALERT: &str = "UPDATE alerts SET created_at_ms = json_extract(?1, '$.at_ms'), score = MAX(COALESCE(score, 0), COALESCE(json_extract(?1, '$.score'), 0)) WHERE topic_id = COALESCE((SELECT new FROM topic_aliases WHERE old = json_extract(?1, '$.topic_id')), json_extract(?1, '$.topic_id')) AND state IN ('waiting', 'pending') AND analysis IS NULL AND attempts = 0";
 const MIGRATE: &str = "BEGIN IMMEDIATE; UPDATE topic_aliases SET new = (SELECT t.thread_id FROM topics t WHERE t.id = topic_aliases.new) WHERE EXISTS (SELECT 1 FROM topics t WHERE t.id = topic_aliases.new AND t.id <> t.thread_id AND t.thread_id <> ''); INSERT OR REPLACE INTO topic_aliases (old, new) SELECT id, thread_id FROM topics WHERE id <> thread_id AND thread_id <> ''; INSERT INTO topics (id, label, probability, thread_id, until_ms, until_key, thread_at_ms, created_at_ms, last_at_ms) SELECT thread_id, label, probability, thread_id, until_ms, until_key, thread_at_ms, created_at_ms, last_at_ms FROM topics WHERE id <> thread_id AND thread_id <> ''; UPDATE placements SET topic_id = (SELECT t.thread_id FROM topics t WHERE t.id = placements.topic_id) WHERE EXISTS (SELECT 1 FROM topics t WHERE t.id = placements.topic_id AND t.id <> t.thread_id AND t.thread_id <> ''); UPDATE alerts SET topic_id = (SELECT t.thread_id FROM topics t WHERE t.id = alerts.topic_id) WHERE EXISTS (SELECT 1 FROM topics t WHERE t.id = alerts.topic_id AND t.id <> t.thread_id AND t.thread_id <> ''); UPDATE calls SET topic_id = (SELECT t.thread_id FROM topics t WHERE t.id = calls.topic_id) WHERE EXISTS (SELECT 1 FROM topics t WHERE t.id = calls.topic_id AND t.id <> t.thread_id AND t.thread_id <> ''); DELETE FROM topics WHERE id <> thread_id AND thread_id <> ''; COMMIT;";
-const NEXT_ALERT: &str = "SELECT json_group_array(json_object('analysis', analysis, 'attempts', attempts, 'key', key, 'probability', probability, 'thread_at_ms', thread_at_ms, 'thread_id', thread_id, 'topic_id', topic_id, 'until_key', until_key, 'until_ms', until_ms)) FROM (SELECT a.analysis AS analysis, a.attempts AS attempts, a.key AS key, t.probability AS probability, t.thread_at_ms AS thread_at_ms, t.thread_id AS thread_id, a.topic_id AS topic_id, t.until_key AS until_key, t.until_ms AS until_ms FROM alerts a JOIN topics t ON t.id = a.topic_id WHERE a.state = json_extract(?1, '$.state') AND a.updated_at_ms + a.updated_at_ms % (2 * json_extract(?1, '$.spread_ms') + 1) - json_extract(?1, '$.spread_ms') <= json_extract(?1, '$.retry_before_ms') AND (a.attempts < json_extract(?1, '$.max_attempts') OR (a.state = 'pending' AND a.analysis IS NOT NULL)) AND (a.state <> 'pending' OR a.analysis IS NOT NULL OR ((SELECT COUNT(*) FROM calls c WHERE c.kind = 'analysis' AND c.at_ms >= json_extract(?1, '$.hour_since_ms')) < json_extract(?1, '$.max_per_hour') AND NOT EXISTS (SELECT 1 FROM calls c WHERE c.kind = 'analysis' AND c.topic_id = a.topic_id AND c.at_ms > json_extract(?1, '$.cooldown_since_ms')))) ORDER BY a.created_at_ms, a.key LIMIT json_extract(?1, '$.parallel'))";
-const OPEN_ALERT: &str = "INSERT OR IGNORE INTO alerts (key, topic_id, state, attempts, analysis, reason, created_at_ms, updated_at_ms) SELECT json_extract(?1, '$.key'), COALESCE((SELECT new FROM topic_aliases WHERE old = json_extract(?1, '$.topic_id')), json_extract(?1, '$.topic_id')), 'waiting', 0, NULL, '', json_extract(?1, '$.at_ms'), 0 WHERE NOT EXISTS (SELECT 1 FROM alerts WHERE topic_id = COALESCE((SELECT new FROM topic_aliases WHERE old = json_extract(?1, '$.topic_id')), json_extract(?1, '$.topic_id')) AND state = 'waiting')";
+const MISS: &str = "INSERT INTO misses (kind, key, text, spans, created_at_ms) SELECT json_extract(?1, '$.kind'), key, text, json_extract(?1, '$.spans'), json_extract(?1, '$.at_ms') FROM lines WHERE key = json_extract(?1, '$.key') AND state = 'screening' AND json_extract(?1, '$.kind') <> ''";
+const NEXT_ALERT: &str = concat!(
+    "SELECT json_group_array(json_object('analysis', analysis, 'attempts', attempts, 'created_at_ms', created_at_ms, 'key', key, 'label', label, 'probability', probability, 'thread_at_ms', thread_at_ms, 'thread_id', thread_id, 'topic_id', topic_id, 'until_key', until_key, 'until_ms', until_ms)) FROM (SELECT a.analysis AS analysis, a.attempts AS attempts, a.created_at_ms AS created_at_ms, a.key AS key, t.label AS label, COALESCE(a.score, t.probability) AS probability, t.thread_at_ms AS thread_at_ms, t.thread_id AS thread_id, a.topic_id AS topic_id, t.until_key AS until_key, t.until_ms AS until_ms FROM alerts a JOIN topics t ON t.id = a.topic_id WHERE a.state = json_extract(?1, '$.state') AND ",
+    due!("a.updated_at_ms", "a.attempts"),
+    " AND (a.attempts < json_extract(?1, '$.max_attempts') OR (a.state = 'pending' AND a.analysis IS NOT NULL)) AND (a.state <> 'pending' OR a.analysis IS NOT NULL OR ((SELECT COUNT(*) FROM calls c WHERE c.kind = 'analysis' AND c.at_ms >= json_extract(?1, '$.hour_since_ms')) < json_extract(?1, '$.max_per_hour') AND NOT EXISTS (SELECT 1 FROM calls c WHERE c.kind = 'analysis' AND c.topic_id = a.topic_id AND c.at_ms > json_extract(?1, '$.cooldown_since_ms')))) AND (a.state <> 'pending' OR a.analysis IS NOT NULL OR t.last_at_ms >= json_extract(?1, '$.open_since_ms')) ORDER BY a.created_at_ms DESC, a.key LIMIT json_extract(?1, '$.parallel'))"
+);
+const OPEN_ALERT: &str = "INSERT OR IGNORE INTO alerts (key, topic_id, state, attempts, analysis, reason, created_at_ms, updated_at_ms, score) SELECT json_extract(?1, '$.key'), COALESCE((SELECT new FROM topic_aliases WHERE old = json_extract(?1, '$.topic_id')), json_extract(?1, '$.topic_id')), 'waiting', 0, NULL, '', json_extract(?1, '$.at_ms'), 0, json_extract(?1, '$.score') WHERE NOT EXISTS (SELECT 1 FROM alerts WHERE topic_id = COALESCE((SELECT new FROM topic_aliases WHERE old = json_extract(?1, '$.topic_id')), json_extract(?1, '$.topic_id')) AND state IN ('waiting', 'pending') AND analysis IS NULL AND attempts = 0)";
 const OPEN_LINE: &str = "INSERT OR IGNORE INTO lines (key, conversation_id, occurred_at_ms, sender, text, state, reason, reviewer, flag, hints, rules_rev, batch_id, created_at_ms, updated_at_ms) VALUES (json_extract(?1, '$.key'), json_extract(?1, '$.conversation_id'), json_extract(?1, '$.occurred_at_ms'), json_extract(?1, '$.sender'), json_extract(?1, '$.text'), json_extract(?1, '$.state'), json_extract(?1, '$.reason'), '', '', '[]', json_extract(?1, '$.rules_rev'), 0, json_extract(?1, '$.at_ms'), json_extract(?1, '$.at_ms'))";
 const OPEN_TOPICS: &str = "SELECT json_group_array(json_object('created_at_ms', created_at_ms, 'first', (SELECT l.text FROM placements p JOIN lines l ON l.key = p.key WHERE p.topic_id = t.id AND l.state = 'approved' ORDER BY l.occurred_at_ms, l.key LIMIT 1), 'label', label, 'probability', probability, 'topic', id)) FROM (SELECT id, label, probability, created_at_ms FROM topics WHERE last_at_ms >= json_extract(?1, '$.since_ms') ORDER BY last_at_ms DESC, id LIMIT json_extract(?1, '$.limit')) t";
 const PLACE: &str = "INSERT OR IGNORE INTO placements (key, topic_id, probability, batch_id) SELECT json_extract(value, '$.key'), COALESCE((SELECT new FROM topic_aliases WHERE old = json_extract(value, '$.topic')), json_extract(value, '$.topic')), json_extract(value, '$.probability'), json_extract(?1, '$.batch_id') FROM json_each(?1, '$.placements')";
@@ -48,11 +86,19 @@ const RENAME_PLACEMENTS: &str = "UPDATE placements SET topic_id = json_extract(?
 const RENAME_TOPIC: &str = "INSERT INTO topics (id, label, probability, thread_id, until_ms, until_key, thread_at_ms, created_at_ms, last_at_ms) SELECT json_extract(?1, '$.thread_id'), label, probability, thread_id, until_ms, until_key, thread_at_ms, created_at_ms, last_at_ms FROM topics WHERE id = json_extract(?1, '$.topic_id') AND id <> json_extract(?1, '$.thread_id')";
 const REQUESTS_SINCE: &str = "SELECT json_group_array(json_object('count', total)) FROM (SELECT COUNT(*) AS total FROM calls WHERE kind = 'decision' AND at_ms >= json_extract(?1, '$.since_ms'))";
 const RESTATE: &str = "UPDATE lines SET text = json_extract(?1, '$.text'), state = CASE WHEN state = 'leaked' THEN 'pending' ELSE state END, rules_rev = json_extract(?1, '$.rev'), updated_at_ms = json_extract(?1, '$.at_ms') WHERE key = json_extract(?1, '$.key') AND state IN ('leaked', 'pending', 'queued', 'screening')";
-const REVIVE: &str = "UPDATE batches SET state = 'ready', revivals = revivals + 1, reason = '', updated_at_ms = 0 WHERE id = (SELECT id FROM batches WHERE state = 'failed' AND revivals >= 0 AND revivals < json_extract(?1, '$.max_revivals') AND updated_at_ms + updated_at_ms % (2 * json_extract(?1, '$.spread_ms') + 1) - json_extract(?1, '$.spread_ms') <= json_extract(?1, '$.retry_before_ms') ORDER BY id LIMIT 1) AND NOT EXISTS (SELECT 1 FROM batches WHERE state = 'ready')";
+const REVIVE: &str = concat!(
+    "UPDATE batches SET state = 'ready', revivals = revivals + 1, reason = '', updated_at_ms = 0 WHERE id = (SELECT id FROM batches WHERE state = 'failed' AND revivals >= 0 AND revivals < json_extract(?1, '$.max_revivals') AND ",
+    due!("updated_at_ms", "revivals + 1"),
+    " ORDER BY id LIMIT 1) AND NOT EXISTS (SELECT 1 FROM batches WHERE state = 'ready')"
+);
 const ROLLBACK: &str = "ROLLBACK";
 const RULES: &str = "SELECT json_group_array(json_object('id', id, 'pattern', pattern, 'placeholder', placeholder)) FROM (SELECT * FROM learned_rules WHERE id > json_extract(?1, '$.after') ORDER BY id)";
 const SCREENED: &str = "UPDATE lines SET text = json_extract(?1, '$.text'), flag = json_extract(?1, '$.flag'), hints = json_extract(?1, '$.hints'), state = json_extract(?1, '$.state'), reason = json_extract(?1, '$.reason'), reviewer = json_extract(?1, '$.reviewer'), updated_at_ms = json_extract(?1, '$.at_ms') WHERE key = json_extract(?1, '$.key') AND state = 'screening'";
-const SCREENING: &str = "SELECT json_group_array(json_object('key', key, 'text', text)) FROM (SELECT key, text FROM lines WHERE state = 'screening' AND batch_id > 0 AND (reason = '' OR updated_at_ms + updated_at_ms % (2 * json_extract(?1, '$.spread_ms') + 1) - json_extract(?1, '$.spread_ms') <= json_extract(?1, '$.retry_before_ms')) ORDER BY occurred_at_ms, key LIMIT json_extract(?1, '$.limit'))";
+const SCREENING: &str = concat!(
+    "SELECT json_group_array(json_object('attempts', attempts, 'key', key, 'text', text)) FROM (SELECT attempts, key, text FROM lines WHERE state = 'screening' AND batch_id > 0 AND (reason = '' OR ",
+    due!("updated_at_ms", "attempts"),
+    ") ORDER BY occurred_at_ms, key LIMIT json_extract(?1, '$.limit'))"
+);
 const SEALABLE: &str = "SELECT json_group_array(json_object('batch_id', batch_id)) FROM (SELECT DISTINCT l.batch_id AS batch_id FROM lines l WHERE l.batch_id > json_extract(?1, '$.after') AND NOT EXISTS (SELECT 1 FROM batches b WHERE b.id = l.batch_id) AND NOT EXISTS (SELECT 1 FROM lines p WHERE p.batch_id = l.batch_id AND p.state IN ('screening', 'pending', 'leaked')) AND (NOT EXISTS (SELECT 1 FROM batches o WHERE o.state NOT IN ('sent', 'failed')) OR NOT EXISTS (SELECT 1 FROM lines a WHERE a.batch_id = l.batch_id AND a.state = 'approved')) ORDER BY l.batch_id LIMIT 1)";
 const STALE: &str = "SELECT json_group_array(json_object('key', key, 'text', text)) FROM (SELECT key, text FROM lines WHERE state IN ('leaked', 'pending', 'queued', 'screening') AND rules_rev < json_extract(?1, '$.rev') ORDER BY state = 'queued', occurred_at_ms DESC, key DESC LIMIT json_extract(?1, '$.limit'))";
 const STUCK: &str = "SELECT json_group_array(json_object('batch_id', batch_id, 'reason', reason)) FROM (SELECT batch_id, reason FROM (SELECT l.batch_id AS batch_id, 'review' AS reason FROM lines l WHERE l.batch_id > json_extract(?1, '$.after') AND l.state IN ('screening', 'pending', 'leaked') AND NOT EXISTS (SELECT 1 FROM batches b WHERE b.id = l.batch_id) UNION ALL SELECT id, 'sending' FROM batches WHERE state = 'ready') ORDER BY batch_id LIMIT 1)";
@@ -64,6 +110,7 @@ const WAKE_ALERTS: &str = "UPDATE alerts SET state = 'pending', updated_at_ms = 
 
 pub(crate) struct Ledger {
     connection: Connection,
+    faults: Cell<u64>,
 }
 
 impl Ledger {
@@ -81,11 +128,12 @@ impl Ledger {
             Step::new(PLACE, Some(args)),
             Step::new(TOPICS, Some(args)),
         ];
-        steps.extend(
-            alerts
-                .iter()
-                .map(|alert| Step::new(OPEN_ALERT, Some(alert))),
-        );
+        steps.extend(alerts.iter().flat_map(|alert| {
+            [
+                Step::new(MERGE_ALERT, Some(alert)),
+                Step::new(OPEN_ALERT, Some(alert)),
+            ]
+        }));
         steps.push(Step::new(BATCH_SENT, Some(args)));
         steps.push(Step::new(COMMIT, None));
         self.committed(&steps)
@@ -120,6 +168,7 @@ impl Ledger {
     fn committed(&self, steps: &[Step]) -> usize {
         self.transact(steps).unwrap_or_else(|err| {
             tracing::warn!(error = %err, "ledger transaction failed");
+            self.fault();
             drop(self.connection.execute_batch(ROLLBACK));
             usize::default()
         })
@@ -142,6 +191,7 @@ impl Ledger {
             .execute(sql, [args.to_string()])
             .unwrap_or_else(|err| {
                 tracing::warn!(error = %err, "ledger write failed");
+                self.fault();
                 0
             })
     }
@@ -152,6 +202,14 @@ impl Ledger {
 
     pub(crate) fn fail_batch(&self, args: &Value) -> usize {
         self.exec(BATCH_FAIL, args)
+    }
+
+    fn fault(&self) {
+        self.faults.set(self.faults.get().saturating_add(1));
+    }
+
+    pub(crate) const fn faults(&self) -> u64 {
+        self.faults.get()
     }
 
     pub(crate) fn forget_thread(&self, args: &Value) -> usize {
@@ -185,6 +243,7 @@ impl Ledger {
     pub(crate) fn open(path: &Path, busy_ms: u64) -> Fallible<Self> {
         let ledger = Self {
             connection: connect(path, busy_ms)?,
+            faults: Cell::new(0),
         };
         ledger.connection.execute_batch(MIGRATE).map_err(Box::new)?;
         Ok(ledger)
@@ -254,6 +313,7 @@ impl Ledger {
         found.map_or_else(
             |err| {
                 tracing::warn!(error = %err, "ledger read failed");
+                self.fault();
                 Vec::new()
             },
             |json| from_str(&json).unwrap_or_default(),
@@ -265,7 +325,12 @@ impl Ledger {
     }
 
     pub(crate) fn screened(&self, args: &Value) -> usize {
-        self.exec(SCREENED, args)
+        self.committed(&[
+            Step::new(BEGIN, None),
+            Step::new(MISS, Some(args)),
+            Step::new(SCREENED, Some(args)),
+            Step::new(COMMIT, None),
+        ])
     }
 
     pub(crate) fn screening(&self, args: &Value) -> Vec<Value> {
@@ -297,7 +362,7 @@ impl Ledger {
             self.connection
                 .execute(step.sql, params_from_iter(step.args.iter()))
                 .map_err(Box::new)
-                .map(|changed| rows.saturating_add(changed))
+                .map(|changed| rows.saturating_add(step.counted(changed)))
         })
     }
 
@@ -316,6 +381,10 @@ struct Step {
 }
 
 impl Step {
+    const fn counted(&self, changed: usize) -> usize {
+        if self.args.is_empty() { 0 } else { changed }
+    }
+
     fn new(sql: &'static str, args: Option<&Value>) -> Self {
         Self {
             args: args.map(Value::to_string).into_iter().collect(),

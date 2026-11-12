@@ -19,6 +19,23 @@ fn ids(rows: &[Row]) -> Vec<&str> {
 }
 
 #[test]
+fn open_adds_attempts_to_existing_lines() {
+    let sandbox = Sandbox::new("store-attempts-migration").unwrap();
+    sandbox
+        .seed("CREATE TABLE lines (key TEXT PRIMARY KEY NOT NULL, conversation_id TEXT NOT NULL, occurred_at_ms INTEGER NOT NULL, sender TEXT NOT NULL, text TEXT NOT NULL, state TEXT NOT NULL, reason TEXT NOT NULL, reviewer TEXT NOT NULL, flag TEXT NOT NULL, hints TEXT NOT NULL, rules_rev INTEGER NOT NULL, batch_id INTEGER NOT NULL, created_at_ms INTEGER NOT NULL, updated_at_ms INTEGER NOT NULL) WITHOUT ROWID;")
+        .unwrap();
+    drop(Archive::open(&sandbox.database(), BUSY).unwrap());
+    let count: Result<i64, Box<Error>> = Connection::open(sandbox.database())
+        .unwrap()
+        .query_row_and_then(
+            "SELECT COUNT(*) FROM pragma_table_info('lines') WHERE name = 'attempts'",
+            [],
+            |row| row.get(0).map_err(Box::new),
+        );
+    assert_eq!(count.unwrap(), 1);
+}
+
+#[test]
 fn open_adds_cursor_key_to_existing_topics() {
     let sandbox = Sandbox::new("store-cursor-migration").unwrap();
     sandbox
@@ -29,6 +46,23 @@ fn open_adds_cursor_key_to_existing_topics() {
         .unwrap()
         .query_row_and_then(
             "SELECT COUNT(*) FROM pragma_table_info('topics') WHERE name = 'until_key'",
+            [],
+            |row| row.get(0).map_err(Box::new),
+        );
+    assert_eq!(count.unwrap(), 1);
+}
+
+#[test]
+fn open_adds_score_to_existing_alerts() {
+    let sandbox = Sandbox::new("store-score-migration").unwrap();
+    sandbox
+        .seed("CREATE TABLE alerts (key TEXT PRIMARY KEY NOT NULL, topic_id TEXT NOT NULL, state TEXT NOT NULL, attempts INTEGER NOT NULL, analysis TEXT, reason TEXT NOT NULL, created_at_ms INTEGER NOT NULL, updated_at_ms INTEGER NOT NULL) WITHOUT ROWID;")
+        .unwrap();
+    drop(Archive::open(&sandbox.database(), BUSY).unwrap());
+    let count: Result<i64, Box<Error>> = Connection::open(sandbox.database())
+        .unwrap()
+        .query_row_and_then(
+            "SELECT COUNT(*) FROM pragma_table_info('alerts') WHERE name = 'score'",
             [],
             |row| row.get(0).map_err(Box::new),
         );
@@ -249,7 +283,7 @@ fn shelf_joins_priority_and_analysis() {
         assert_eq!(store.save_event(&envelope(key, NOON)).unwrap(), 1);
     }
     sandbox
-        .seed("INSERT INTO placements VALUES ('k1', 't1-0', 0.5, 1); INSERT INTO alerts VALUES ('t1-0@1', 't1-0', 'sent', 0, 'mulled', '', 1, 0);")
+        .seed("INSERT INTO placements VALUES ('k1', 't1-0', 0.5, 1); INSERT INTO alerts VALUES ('t1-0@1', 't1-0', 'sent', 0, 'mulled', '', 1, 0, NULL);")
         .unwrap();
     let path = sandbox.database();
     let rows = Shelf::new(&path, BUSY)

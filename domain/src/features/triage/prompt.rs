@@ -6,6 +6,7 @@ use super::transcript::{Row, Style, fit};
 use crate::AppError;
 
 const ANALYSIS: &str = "{analysis}";
+const LABEL: &str = "{label}";
 pub(crate) const MESSAGES: &str = "{messages}";
 const PROBABILITY: &str = "{probability}";
 const TOPIC: &str = "{topic}";
@@ -34,6 +35,7 @@ pub(crate) struct BriefResponse {
 #[schemars(rename = "TriageNoticeRequest")]
 pub(crate) struct NoticeRequest {
     analysis: String,
+    label: String,
     max_chars: u32,
     probability: f64,
     template: String,
@@ -97,6 +99,7 @@ pub(crate) fn brief(req: &BriefRequest) -> Result<BriefResponse, AppError> {
 pub(crate) fn notice(req: NoticeRequest) -> NoticeResponse {
     let NoticeRequest {
         analysis,
+        label,
         max_chars,
         probability,
         template,
@@ -108,6 +111,7 @@ pub(crate) fn notice(req: NoticeRequest) -> NoticeResponse {
         text: template
             .replace(TOPIC, &topic_id)
             .replace(PROBABILITY, &format!("{probability:.2}"))
+            .replace(LABEL, &label)
             .replacen(ANALYSIS, &excerpt, 1),
     }
 }

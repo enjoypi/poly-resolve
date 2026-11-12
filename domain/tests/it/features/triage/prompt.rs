@@ -187,6 +187,7 @@ fn line(sender: &str, text: &str, time: &str) -> Value {
 fn notice(analysis: &str, max_chars: u32, template: &str) -> Result<Reply, Error> {
     let request = json!({
         "analysis": analysis,
+        "label": "server d",
         "max_chars": max_chars,
         "probability": PROBABILITY,
         "template": template,
@@ -198,10 +199,13 @@ fn notice(analysis: &str, max_chars: u32, template: &str) -> Result<Reply, Error
 
 #[test]
 fn notice_fills_template_and_truncates_analysis() {
-    let reply = notice("abcdef", 4, "[{probability}] {topic}\n{analysis}")
+    let reply = notice("abcdef", 4, "[{probability}] {label} {topic}\n{analysis}")
         .unwrap()
         .unwrap();
-    assert_eq!(reply.get("text"), Some(&json!("[0.95] t1-0\nabcd")));
+    assert_eq!(
+        reply.get("text"),
+        Some(&json!("[0.95] server d t1-0\nabcd"))
+    );
 }
 
 #[test]

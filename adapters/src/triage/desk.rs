@@ -116,6 +116,7 @@ impl<'desk> Desk<'desk> {
     pub(crate) fn notice(&self, alert: &Value) -> String {
         let request = json!({
             "analysis": alert.get("analysis"),
+            "label": alert.get("label"),
             "max_chars": self.triage.result_max_chars(),
             "probability": alert.get("probability"),
             "template": self.triage.notice(),
@@ -274,6 +275,7 @@ pub(crate) struct Screened {
     flag: String,
     hints: Vec<String>,
     key: String,
+    spans: Vec<String>,
     text: String,
 }
 
@@ -288,6 +290,10 @@ impl Screened {
 
     pub(crate) fn key(&self) -> &str {
         &self.key
+    }
+
+    pub(crate) const fn spans(&self) -> &Vec<String> {
+        &self.spans
     }
 
     pub(crate) fn text(&self) -> &str {

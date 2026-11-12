@@ -1,16 +1,32 @@
 use serde_json::{Value, from_str, json};
 
 use super::rig::{
-    BATCHES, KEY, LATER, LINES, NOTHING, PLACEMENTS, QUICK, SECOND, calls, decided, draw, input_of,
-    logged, questions_of, rule, seed, seed_from, start, table, two,
+    BATCHES, KEY, LATER, LINES, NOTHING, PLACEMENTS, QUICK, SECOND, THIRD, calls, decided, draw,
+    input_of, logged, questions_of, rule, seed, seed_from, start, table, two,
 };
 use crate::support::{Fallible, Sandbox};
 use domain::review::{Draw, Ruling};
 
+const BRIEF_RETRY: u64 = 300;
+const CAPPED_RETRY: u64 = 400;
 const FLAGGED: &str =
     "SELECT key || '|' || state || '|' || flag || '|' || reason AS item FROM lines ORDER BY key";
+const MANY_CALLS: usize = 24;
+const MISSES: &str =
+    "SELECT kind || '|' || key || '|' || text || '|' || spans AS item FROM misses ORDER BY key";
 const SECRET: &str = "abc-secret-9";
 const TEN: u32 = 10;
+
+fn aimed(sandbox: &Sandbox, mode: &str, only: &str) -> Value {
+    let mut patch = sandbox.screen("");
+    if let Some(map) = patch.as_object_mut() {
+        drop(map.insert(
+            "stub".to_owned(),
+            json!({"screen": {"mode": mode, "only": only}}),
+        ));
+    }
+    patch
+}
 
 #[tokio::test]
 async fn auto_mode_drops_flagged_lines_and_keeps_the_rest() {
@@ -19,10 +35,16 @@ async fn auto_mode_drops_flagged_lines_and_keeps_the_rest() {
     sandbox
         .write(
             "screen.json",
-            r#"{"lines":[{"line":"L1","risk":"high","spans":[],"topics":[]},{"line":"L2","risk":"low","spans":[],"topics":[]}]}"#,
+            r#"{"lines":[{"line":"L1","risk":"high","spans":[],"topics":[]}]}"#,
         )
         .unwrap();
-    start(&sandbox, &screened(&sandbox), QUICK).await.unwrap();
+    start(&sandbox, &aimed(&sandbox, "", "server down"), QUICK)
+        .await
+        .unwrap();
+    assert_eq!(
+        table(&sandbox, MISSES).unwrap(),
+        [format!("unmasked|{KEY}|server down|[]")]
+    );
     assert_eq!(
         table(&sandbox, FLAGGED).unwrap(),
         [
@@ -42,8 +64,9 @@ async fn clean_lines_pass_through_to_the_decision() {
     let sandbox = Sandbox::new("screen-clean").unwrap();
     seed(&sandbox, &two()).unwrap();
     start(&sandbox, &screened(&sandbox), QUICK).await.unwrap();
-    assert_eq!(calls(&sandbox, "screen").unwrap(), 1);
+    assert_eq!(calls(&sandbox, "screen").unwrap(), 2);
     assert_eq!(calls(&sandbox, "decide").unwrap(), 1);
+    assert_eq!(table(&sandbox, MISSES).unwrap(), NOTHING);
     assert_eq!(
         table(&sandbox, LINES).unwrap(),
         [
@@ -63,11 +86,49 @@ async fn failed_screening_is_retried_and_never_lets_lines_through() {
         seed(&sandbox, &two()).unwrap();
         let patch = sandbox.screen(mode);
         let logs = logged(&sandbox, &patch, QUICK).await.unwrap();
-        assert!(logs.contains("screening failed"), "{name}");
+        assert!(logs.contains("line screening failed"), "{name}");
+        assert!(logs.contains("\"retry_in_ms\":0"), "{name}");
         assert_eq!(calls(&sandbox, "decide").unwrap(), 0, "{name}");
         assert_eq!(table(&sandbox, BATCHES).unwrap(), NOTHING, "{name}");
         assert!(calls(&sandbox, "screen").unwrap() >= 1, "{name}");
     }
+}
+
+#[tokio::test]
+async fn failed_screening_waits_longer_between_retries() {
+    let sandbox = Sandbox::new("screen-backoff").unwrap();
+    seed(&sandbox, &two()).unwrap();
+    let mut patch = sandbox.screen("fail");
+    if let Some(map) = patch.as_object_mut() {
+        drop(map.insert(
+            "limits".to_owned(),
+            json!({"retry_after_ms": BRIEF_RETRY, "retry_max_ms": CAPPED_RETRY}),
+        ));
+    }
+    let logs = logged(&sandbox, &patch, QUICK).await.unwrap();
+    assert!(logs.contains("\"attempt\":1") && logs.contains("\"retry_in_ms\":300"));
+    assert!(logs.contains("\"attempt\":3") && logs.contains("\"retry_in_ms\":400"));
+    assert!(!logs.contains("\"retry_in_ms\":600"));
+    let sent = calls(&sandbox, "screen").unwrap();
+    assert!((4..MANY_CALLS).contains(&sent), "{sent}");
+}
+
+#[tokio::test]
+async fn failing_line_does_not_hold_back_the_others() {
+    let sandbox = Sandbox::new("screen-one-fails").unwrap();
+    seed(&sandbox, &two()).unwrap();
+    start(&sandbox, &aimed(&sandbox, "fail", "still down"), QUICK)
+        .await
+        .unwrap();
+    assert_eq!(
+        table(&sandbox, FLAGGED).unwrap(),
+        [
+            format!("{KEY}|approved||"),
+            format!("{SECOND}|screening||deferred")
+        ]
+    );
+    assert_eq!(calls(&sandbox, "decide").unwrap(), 0);
+    assert_eq!(table(&sandbox, BATCHES).unwrap(), NOTHING);
 }
 
 #[tokio::test]
@@ -141,12 +202,73 @@ async fn hints_narrow_the_topic_options() {
     assert_eq!(calls(&sandbox, "decide").unwrap(), 2);
 }
 
+#[tokio::test]
+async fn landed_lines_survive_shutdown() {
+    let sandbox = Sandbox::new("screen-landed").unwrap();
+    seed(&sandbox, &two()).unwrap();
+    start(&sandbox, &aimed(&sandbox, "slow", "still down"), QUICK)
+        .await
+        .unwrap();
+    assert_eq!(
+        table(&sandbox, FLAGGED).unwrap(),
+        [format!("{KEY}|approved||"), format!("{SECOND}|screening||")]
+    );
+}
+
 fn manual(sandbox: &Sandbox) -> Value {
     let mut patch = sandbox.screen("");
     if let Some(map) = patch.as_object_mut() {
         drop(map.insert("review".to_owned(), json!({"mode": "manual"})));
     }
     patch
+}
+
+#[tokio::test]
+async fn misnamed_answers_are_retried_not_dropped() {
+    let sandbox = Sandbox::new("screen-misnamed").unwrap();
+    seed(&sandbox, &two()).unwrap();
+    sandbox
+        .write(
+            "screen.json",
+            r#"{"lines":[{"line":"L9","risk":"low","spans":[],"topics":[]}]}"#,
+        )
+        .unwrap();
+    let logs = logged(&sandbox, &screened(&sandbox), QUICK).await.unwrap();
+    assert!(logs.contains("bad_answer"));
+    assert_eq!(
+        table(&sandbox, FLAGGED).unwrap(),
+        [
+            format!("{KEY}|screening||deferred"),
+            format!("{SECOND}|screening||deferred")
+        ]
+    );
+}
+
+#[tokio::test]
+async fn missed_samples_that_cannot_be_stored_keep_the_line_unscreened() {
+    let sandbox = Sandbox::new("screen-sample-fails").unwrap();
+    let leaky = format!("token {SECRET} here");
+    seed(&sandbox, &[(KEY, "u1", "c1", leaky.as_str())]).unwrap();
+    sandbox
+        .write(
+            "screen.json",
+            r#"{"lines":[{"line":"L1","risk":"high","spans":["abc-secret-9"],"topics":[]}]}"#,
+        )
+        .unwrap();
+    start(&sandbox, &json!({"mode": "disabled"}), QUICK)
+        .await
+        .unwrap();
+    sandbox
+        .seed("CREATE TRIGGER refuse BEFORE INSERT ON misses BEGIN SELECT RAISE(ABORT, 'refused'); END;")
+        .unwrap();
+    let logs = logged(&sandbox, &screened(&sandbox), QUICK).await.unwrap();
+    assert!(logs.contains("ledger transaction failed"));
+    assert!(logs.contains("lane backing off"));
+    assert_eq!(
+        table(&sandbox, FLAGGED).unwrap(),
+        [format!("{KEY}|screening||")]
+    );
+    assert_eq!(table(&sandbox, MISSES).unwrap(), NOTHING);
 }
 
 #[tokio::test]
@@ -161,7 +283,7 @@ async fn model_masks_spans_and_flags_unmaskable_secrets_for_review() {
     sandbox
         .write(
             "screen.json",
-            r#"{"lines":[{"line":"L1","risk":"high","spans":["abc-secret-9"],"topics":[]},{"line":"L2","risk":"high","spans":[],"topics":[]}]}"#,
+            r#"{"lines":[{"line":"L1","risk":"high","spans":["abc-secret-9"],"topics":[]}]}"#,
         )
         .unwrap();
     let merged = manual(&sandbox);
@@ -185,6 +307,13 @@ async fn model_masks_spans_and_flags_unmaskable_secrets_for_review() {
     assert_eq!(
         table(&sandbox, "SELECT text AS item FROM lines ORDER BY key").unwrap(),
         ["token [s] here", "odd text"]
+    );
+    assert_eq!(
+        table(&sandbox, MISSES).unwrap(),
+        [
+            format!("rules|{KEY}|{leaky}|[\"{SECRET}\"]"),
+            format!("unmasked|{SECOND}|odd text|[]")
+        ]
     );
     assert_eq!(calls(&sandbox, "decide").unwrap(), 0);
     for key in [KEY, SECOND] {
@@ -210,7 +339,7 @@ async fn slow_screening_is_interrupted_by_shutdown() {
     seed(&sandbox, &two()).unwrap();
     let patch = sandbox.screen("slow");
     start(&sandbox, &patch, QUICK).await.unwrap();
-    assert_eq!(calls(&sandbox, "screen").unwrap(), 1);
+    assert_eq!(calls(&sandbox, "screen").unwrap(), 2);
     assert_eq!(calls(&sandbox, "decide").unwrap(), 0);
     assert_eq!(table(&sandbox, BATCHES).unwrap(), NOTHING);
     assert_eq!(
@@ -218,6 +347,29 @@ async fn slow_screening_is_interrupted_by_shutdown() {
         [
             format!("{KEY}|screening||1"),
             format!("{SECOND}|screening||1")
+        ]
+    );
+}
+
+#[tokio::test]
+async fn slow_screening_runs_at_most_parallel_requests() {
+    let sandbox = Sandbox::new("screen-parallel").unwrap();
+    let rows = [
+        (KEY, "u1", "c1", "server down"),
+        (SECOND, "u1", "c1", "still down"),
+        (THIRD, "u1", "c1", "again"),
+    ];
+    seed(&sandbox, &rows).unwrap();
+    start(&sandbox, &sandbox.screen("slow"), QUICK)
+        .await
+        .unwrap();
+    assert_eq!(calls(&sandbox, "screen").unwrap(), 2);
+    assert_eq!(
+        table(&sandbox, LINES).unwrap(),
+        [
+            format!("{KEY}|screening||1"),
+            format!("{SECOND}|screening||1"),
+            format!("{THIRD}|screening||1")
         ]
     );
 }

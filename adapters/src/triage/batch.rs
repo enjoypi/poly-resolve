@@ -4,7 +4,7 @@ use serde_json::{Value, from_str, json};
 
 use super::TRIAGE;
 use super::desk::{Packed, Sorted};
-use super::{HOUR_MS, NONE, Shift, current, number, retry_before, spread, text};
+use super::{HOUR_MS, NONE, Shift, current, number, pace, retry_in, text};
 use crate::http::Call;
 use crate::ingest::now_ms;
 use crate::trace::{Outcome, external};
@@ -19,9 +19,7 @@ fn alerts(shift: &Shift<'_>, found: &Sorted, batch_id: u64) -> Vec<Value> {
     let lines = shift.ledger.batch_lines(&json!({"batch_id": batch_id}));
     let fresh: Vec<&str> = lines
         .iter()
-        .filter(|line| {
-            number(line, "created_at_ms").saturating_sub(number(line, "occurred_at_ms")) <= lookback
-        })
+        .filter(|line| now.saturating_sub(number(line, "occurred_at_ms")) <= lookback)
         .map(|line| text(line, "key"))
         .collect();
     let live: Vec<&str> = found
@@ -38,6 +36,7 @@ fn alerts(shift: &Shift<'_>, found: &Sorted, batch_id: u64) -> Vec<Value> {
             json!({
                 "at_ms": now,
                 "key": format!("{}@{batch_id}", text(topic, "topic")),
+                "score": topic.get("score"),
                 "topic_id": text(topic, "topic"),
             })
         })
@@ -89,7 +88,9 @@ fn judge(shift: &Shift<'_>, batch: &Value, reply: Result<String, String>) {
                 rows,
                 reason,
                 attempt,
+                revivals = number(batch, "revivals"),
                 exhausted = attempt >= limit,
+                retry_in_ms = retry_in(shift, attempt),
                 "decision failed"
             );
         }
@@ -132,6 +133,7 @@ fn repacked(shift: &Shift<'_>, batch: &Value) -> Option<Value> {
     let (rules, rev) = current(shift);
     let Some(found) = packed(shift, batch_id, &rules) else {
         tracing::warn!(batch_id, "batch repack failed");
+        shift.fault();
         return None;
     };
     Some(json!({
@@ -203,8 +205,7 @@ async fn request(shift: &mut Shift<'_>, batch: &Value) -> Option<Option<Result<S
 fn revive(shift: &Shift<'_>) {
     let revived = shift.ledger.revive(&json!({
         "max_revivals": shift.triage.max_revivals(),
-        "retry_before_ms": retry_before(shift),
-        "spread_ms": spread(shift),
+        "pace": pace(shift),
     }));
     if revived > 0 {
         tracing::info!(revived, "failed batch revived");
@@ -259,8 +260,7 @@ pub(super) async fn send(shift: &mut Shift<'_>) -> Option<()> {
     revive(shift);
     let due = shift.ledger.next_batch(&json!({
         "max_attempts": shift.triage.max_attempts(),
-        "retry_before_ms": retry_before(shift),
-        "spread_ms": spread(shift),
+        "pace": pace(shift),
     }));
     for batch in &due {
         let stored = batch.get("answer").and_then(Value::as_str);

@@ -29,6 +29,7 @@
 - 新配置文件用 yaml；默认值、数值常量、业务字符串常量从配置读取
 - secret 只经环境变量加载，不设默认值，写法 `db_password: "${DB_PASSWORD}"`；值存于 sops 加密的 `secrets/dev.enc.yaml`（开发、`/serve`）与 `secrets/prod.enc.yaml`（release），扁平 YAML，键即变量名，运行时 `sops exec-env <上述文件> '<命令>'` 注入；AI 不运行 `sops -d`、不读取明文、不生成这两个文件
 - 存储与日志时间用 UTC；面向人展示时标注时区（如 2026-07-17 09:20:09 UTC+8）并支持 TZ 环境变量
+- 重试一律退避加抖动：等待逐次翻倍到上限，抖动随等待按比例（±1/4），成功后复位；每次重试记日志（对象、第几次、原因、下次等待）；不按固定间隔或轮询间隔原样重试
 - 输出 debug 级结构化日志（session、feature、user、action、request、response 等）供 AI 分析，日志中禁止 secret
 
 ## 测试与覆盖率

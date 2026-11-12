@@ -73,6 +73,7 @@ pub(super) fn intake(shift: &Shift<'_>) {
 fn open(shift: &Shift<'_>, message: &Value, stamp: &Stamp<'_>) {
     let Some(line) = shift.desk.line(message, stamp.rules) else {
         tracing::warn!("line unavailable");
+        shift.fault();
         return;
     };
     let skip = line.skip();

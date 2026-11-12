@@ -68,7 +68,7 @@ impl Run<'_> {
 
     async fn serve(&mut self) -> u8 {
         let shared = self.worker.shared;
-        let mut backoff = Backoff::new(shared);
+        let mut backoff = Backoff::new(shared.backoff_initial_ms(), shared.backoff_max_ms());
         loop {
             let outcome = {
                 let mut work = pin!(self.worker.session());
@@ -80,7 +80,14 @@ impl Run<'_> {
                 Some(Err(Halt::Busy)) => Retry::Failed,
                 Some(Err(Halt::Exit(code))) => return code,
             };
-            if self.pause(backoff.next(shared, retry)).await.is_none() {
+            let wait = backoff.next(retry);
+            tracing::warn!(
+                account = self.worker.config.account(),
+                attempt = backoff.streak(),
+                retry_in_ms = wait,
+                "imap session ended"
+            );
+            if self.pause(wait).await.is_none() {
                 return 0;
             }
         }

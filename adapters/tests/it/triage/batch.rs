@@ -1,13 +1,18 @@
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use domain::review::{Draw, Ruling};
 use serde_json::{Value, json};
 
 use super::rig::{
     ALERTS, BATCHES, KEY, LATER, LINES, NOTHING, PLACEMENTS, QUICK, SECOND, Seed, THIRD, calls,
-    decided, draw, input_of, logged, one, questions_of, rule, seed, seed_from, start, table, two,
+    decided, draw, input_of, logged, one, questions_of, rule, seed, seed_from, seed_stamped, start,
+    table, two,
 };
 use crate::support::{Fallible, Sandbox};
 
 const BACKOFF: u64 = 3_600_000;
+const BRIEF_LOOKBACK: u64 = 2_000;
+const NONE: u32 = 0;
 const QUIET: &str = "0.1";
 const SHORT_LOOKBACK: u64 = 1_000;
 const TWO: u32 = 2;
@@ -111,6 +116,30 @@ async fn invalid_rules_fail_closed() {
     assert!(logs.contains("line unavailable"));
     assert_eq!(table(&sandbox, LINES).unwrap(), NOTHING);
     assert_eq!(calls(&sandbox, "decide").unwrap(), 0);
+}
+
+#[tokio::test]
+async fn late_decisions_do_not_hand_off() {
+    let sandbox = Sandbox::new("batch-late").unwrap();
+    let elapsed = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+    let now = u64::try_from(elapsed.as_millis()).unwrap();
+    seed_stamped(&sandbox, &[((KEY, "u1", "c1", "server down"), now)]).unwrap();
+    let held = json!({"limits": {
+        "lookback_ms": BRIEF_LOOKBACK,
+        "max_decisions_per_hour": NONE,
+    }});
+    start(&sandbox, &held, QUICK).await.unwrap();
+    assert_eq!(
+        table(&sandbox, LINES).unwrap(),
+        [format!("{KEY}|approved||1")]
+    );
+    let open = json!({"limits": {"lookback_ms": BRIEF_LOOKBACK}});
+    start(&sandbox, &open, QUICK).await.unwrap();
+    assert_eq!(
+        table(&sandbox, PLACEMENTS).unwrap(),
+        [format!("{KEY}|t1-0|0.95")]
+    );
+    assert_eq!(table(&sandbox, ALERTS).unwrap(), NOTHING);
 }
 
 #[tokio::test]

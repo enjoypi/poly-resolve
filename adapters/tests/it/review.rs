@@ -156,6 +156,33 @@ fn settle_learns_a_rule_only_from_pending_lines() {
             row.get(0).map_err(Box::new)
         });
     assert_eq!(count.unwrap(), 1);
+    let sample: Result<String, Box<Error>> = connection.query_row_and_then(
+        "SELECT group_concat(kind || '|' || key || '|' || text || '|' || spans) FROM misses",
+        [],
+        |row| row.get(0).map_err(Box::new),
+    );
+    assert_eq!(
+        sample.unwrap(),
+        r#"review|a|text a secret-abc|["secret\\-abc"]"#
+    );
+}
+
+#[test]
+fn settle_refuses_a_leak_whose_sample_cannot_be_stored() {
+    let sandbox = Sandbox::new("review-settle-sample").unwrap();
+    drop(Archive::open(&sandbox.database(), BUSY).unwrap());
+    sandbox.seed(ROWS).unwrap();
+    sandbox
+        .seed("CREATE TRIGGER refuse BEFORE INSERT ON misses BEGIN SELECT RAISE(ABORT, 'refused'); END;")
+        .unwrap();
+    let path = sandbox.database();
+    let shelf = Shelf::new(&path, BUSY);
+    let rule = Rule::new(r"secret\-abc".to_owned(), "[x]".to_owned());
+    let err = shelf
+        .settle(&Ruling::reject("a", "leak").learned(&rule))
+        .unwrap_err();
+    assert_eq!(err.status(), 503);
+    assert_eq!(field(&sandbox, "a", "state").unwrap(), "pending");
 }
 
 #[test]

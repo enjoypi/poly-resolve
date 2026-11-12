@@ -6,24 +6,34 @@ use crate::jitter::spread;
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Backoff {
     delay: u64,
+    initial: u64,
+    max: u64,
+    streak: u32,
 }
 
 impl Backoff {
-    pub(crate) const fn new(shared: &Settings) -> Self {
+    pub(crate) const fn new(initial: u64, max: u64) -> Self {
         Self {
-            delay: shared.backoff_initial_ms(),
+            delay: initial,
+            initial,
+            max,
+            streak: 0,
         }
     }
 
-    pub(crate) fn next(&mut self, shared: &Settings, retry: Retry) -> u64 {
-        let max = shared.backoff_max_ms();
-        let wait = match retry {
-            Retry::Failed => self.delay,
-            Retry::Progress => shared.backoff_initial_ms(),
-            Retry::Stalled => max,
+    pub(crate) fn next(&mut self, retry: Retry) -> u64 {
+        let (wait, streak) = match retry {
+            Retry::Failed => (self.delay, self.streak.saturating_add(1)),
+            Retry::Progress => (self.initial, 1),
+            Retry::Stalled => (self.max, self.streak.saturating_add(1)),
         };
-        self.delay = wait.saturating_mul(2).min(max);
+        self.delay = wait.saturating_mul(2).min(self.max);
+        self.streak = streak;
         spread(wait)
+    }
+
+    pub(crate) const fn streak(&self) -> u32 {
+        self.streak
     }
 }
 

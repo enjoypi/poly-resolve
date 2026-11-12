@@ -114,10 +114,11 @@ triage:
     parallel: 4
     poll_ms: 5000
     retry_after_ms: 60000
+    retry_max_ms: 900000
   mode: enabled
   model: gpt-6-luna
   notice: |-
-    【消息提醒】优先级 {probability}｜话题 {topic}
+    【待处理】{label}｜优先级 {probability}
     {analysis}
   notify:
     args:

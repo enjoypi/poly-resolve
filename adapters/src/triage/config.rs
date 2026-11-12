@@ -88,6 +88,7 @@ struct Limits {
     parallel: NonZeroU32,
     poll_ms: NonZeroU64,
     retry_after_ms: u64,
+    retry_max_ms: NonZeroU64,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
@@ -158,6 +159,7 @@ pub(crate) struct Rule {
 pub struct Screen {
     http: Http,
     model: String,
+    parallel: NonZeroU32,
     placeholder: String,
 }
 
@@ -168,6 +170,10 @@ impl Screen {
 
     pub(crate) fn model(&self) -> &str {
         &self.model
+    }
+
+    pub(crate) fn parallel(&self) -> usize {
+        usize::try_from(self.parallel.get()).unwrap_or(usize::MAX)
     }
 
     pub(crate) fn placeholder(&self) -> &str {
@@ -376,6 +382,10 @@ impl Settings {
 
     pub(crate) const fn retry_after_ms(&self) -> u64 {
         self.limits.retry_after_ms
+    }
+
+    pub(crate) const fn retry_max_ms(&self) -> u64 {
+        self.limits.retry_max_ms.get()
     }
 
     pub(crate) fn review_auto(&self) -> bool {

@@ -497,7 +497,7 @@ async fn urgent_message_is_analyzed_and_delivered() {
     );
     assert_eq!(
         sandbox.read("send-stdin.txt").unwrap(),
-        "[0.95] T1|ANALYSIS"
+        "[0.95] server d T1|ANALYSIS"
     );
     for line in [
         "batch sealed",

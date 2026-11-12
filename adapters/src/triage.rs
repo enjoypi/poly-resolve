@@ -8,7 +8,7 @@ pub mod prompts;
 mod screen;
 
 use alloc::collections::BTreeMap;
-use core::cell::RefCell;
+use core::cell::{Cell, RefCell};
 use core::pin::pin;
 use core::time::Duration;
 
@@ -25,6 +25,7 @@ use self::intake::{form, intake, rerender};
 use self::screen::screen;
 use crate::config::Settings as Ingest;
 use crate::http::{Call, Client as HttpClient, Reply};
+use crate::ingest::cycle::{Backoff, Retry};
 use crate::ingest::now_ms;
 use crate::ledger::Ledger;
 use crate::race::{Stop, race};
@@ -34,6 +35,7 @@ const ANALYZED: &str = "analyzed";
 const HOUR_MS: u64 = 3_600_000;
 const MAX_BATCH: u32 = 200;
 const MAX_CHOICES: u32 = 254;
+const MAX_DOUBLINGS: u32 = 20;
 pub(super) const NONE: u64 = 0;
 const PENDING: &str = "pending";
 const SENT: &str = "sent";
@@ -69,16 +71,23 @@ impl<'setup> Setup<'setup> {
 }
 
 struct Shift<'shift> {
+    backoff: Backoff,
     desk: Desk<'shift>,
+    faults: Cell<u64>,
     http: HttpClient,
     lane: Lane,
     ledger: Ledger,
     notes: RefCell<BTreeMap<&'static str, String>>,
+    seen: u64,
     stop: Stop<'shift>,
     triage: &'shift Settings,
 }
 
 impl Shift<'_> {
+    fn fault(&self) {
+        self.faults.set(self.faults.get().saturating_add(1));
+    }
+
     fn gate(&self, state: &str) -> Value {
         let now = now_ms();
         json!({
@@ -86,9 +95,9 @@ impl Shift<'_> {
             "hour_since_ms": now.saturating_sub(HOUR_MS),
             "max_attempts": self.triage.max_attempts(),
             "max_per_hour": self.triage.max_handoffs_per_hour(),
+            "open_since_ms": now.saturating_sub(self.triage.session_max_ms()),
+            "pace": pace(self),
             "parallel": self.triage.parallel(),
-            "retry_before_ms": retry_before(self),
-            "spread_ms": spread(self),
             "state": state,
         })
     }
@@ -99,7 +108,23 @@ impl Shift<'_> {
     }
 
     async fn pause(&mut self) -> Option<()> {
-        let mut nap = pin!(sleep(Duration::from_millis(self.triage.poll_ms())));
+        let total = self.ledger.faults().saturating_add(self.faults.get());
+        let wait = if total > self.seen {
+            let wait = self.backoff.next(Retry::Failed);
+            tracing::warn!(
+                lane = ?self.lane,
+                attempt = self.backoff.streak(),
+                faults = total.saturating_sub(self.seen),
+                retry_in_ms = wait,
+                "lane backing off"
+            );
+            wait
+        } else {
+            self.backoff = Backoff::new(self.triage.poll_ms(), self.triage.retry_max_ms());
+            self.triage.poll_ms()
+        };
+        self.seen = total;
+        let mut nap = pin!(sleep(Duration::from_millis(wait)));
         race(&mut *self.stop, nap.as_mut()).await
     }
 
@@ -181,6 +206,14 @@ fn number(row: &Value, key: &str) -> u64 {
     row.get(key).and_then(Value::as_u64).unwrap_or_default()
 }
 
+fn pace(shift: &Shift<'_>) -> Value {
+    json!({
+        "now_ms": now_ms(),
+        "retry_after_ms": shift.triage.retry_after_ms(),
+        "retry_max_ms": shift.triage.retry_max_ms(),
+    })
+}
+
 pub async fn reach(triage: &Settings) -> Result<(), String> {
     let client = HttpClient::new();
     knock(&client, triage.decide())
@@ -194,8 +227,16 @@ pub async fn reach(triage: &Settings) -> Result<(), String> {
     }
 }
 
-fn retry_before(shift: &Shift<'_>) -> u64 {
-    now_ms().saturating_sub(shift.triage.retry_after_ms())
+fn retry_in(shift: &Shift<'_>, attempt: u64) -> u64 {
+    let doublings = u32::try_from(attempt.saturating_sub(1))
+        .unwrap_or(u32::MAX)
+        .min(MAX_DOUBLINGS);
+    let two: u64 = 2;
+    shift
+        .triage
+        .retry_after_ms()
+        .saturating_mul(two.saturating_pow(doublings))
+        .min(shift.triage.retry_max_ms())
 }
 
 pub async fn run(setup: Setup<'_>, lane: Lane, stop: Stop<'_>) {
@@ -209,11 +250,14 @@ pub async fn run(setup: Setup<'_>, lane: Lane, stop: Stop<'_>) {
                 return;
             }
             Shift {
+                backoff: Backoff::new(setup.triage.poll_ms(), setup.triage.retry_max_ms()),
                 desk: Desk::new(setup.context, setup.ingest, setup.triage),
+                faults: Cell::new(0),
                 http: HttpClient::new(),
                 lane,
                 ledger,
                 notes: RefCell::default(),
+                seen: 0,
                 stop,
                 triage: setup.triage,
             }
@@ -222,10 +266,6 @@ pub async fn run(setup: Setup<'_>, lane: Lane, stop: Stop<'_>) {
         }
         Err(err) => tracing::error!(error = %err, "triage ledger open failed"),
     }
-}
-
-const fn spread(shift: &Shift<'_>) -> u64 {
-    shift.triage.retry_after_ms() >> 2
 }
 
 fn text<'row>(row: &'row Value, key: &str) -> &'row str {
@@ -241,6 +281,9 @@ pub fn validate(setup: Setup<'_>) -> Result<(), String> {
     }
     if triage.backlog_max_ms() < triage.lookback_ms() {
         return Err("triage.limits.backlog_max_ms below lookback_ms".to_owned());
+    }
+    if triage.retry_max_ms() < triage.retry_after_ms() {
+        return Err("triage.limits.retry_max_ms below retry_after_ms".to_owned());
     }
     triage
         .decide()

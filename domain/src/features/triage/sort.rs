@@ -26,6 +26,7 @@ struct Group {
     label: String,
     last_ms: u64,
     probability: Option<f64>,
+    score: Option<f64>,
 }
 
 #[derive(JsonSchema, Serialize)]
@@ -102,6 +103,7 @@ pub(crate) struct Touched {
     label: String,
     last_ms: u64,
     probability: Option<f64>,
+    score: Option<f64>,
     topic: String,
     urgent: Verdict,
 }
@@ -151,10 +153,16 @@ fn grouped(layout: &Layout, placements: &[Placement], threshold: f64) -> Vec<Tou
                     .get(placement.topic.as_str())
                     .copied()
                     .flatten(),
+                score: None,
             });
         group.last_ms = group.last_ms.max(line.occurred_at_ms());
         group.probability = group
             .probability
+            .into_iter()
+            .chain(placement.probability)
+            .reduce(f64::max);
+        group.score = group
+            .score
             .into_iter()
             .chain(placement.probability)
             .reduce(f64::max);
@@ -165,8 +173,9 @@ fn grouped(layout: &Layout, placements: &[Placement], threshold: f64) -> Vec<Tou
             label: group.label,
             last_ms: group.last_ms,
             probability: group.probability,
+            score: group.score,
             topic: topic.to_owned(),
-            urgent: if group.probability.is_some_and(|value| value >= threshold) {
+            urgent: if group.score.is_some_and(|value| value >= threshold) {
                 Verdict::Urgent
             } else {
                 Verdict::Normal

@@ -11,6 +11,11 @@ use serde_json::{Value, from_str};
 
 use crate::ingest::now_ms;
 
+const ATTEMPTS: Column = Column {
+    alter: "ALTER TABLE lines ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0",
+    name: "attempts",
+    table: "lines",
+};
 const BATCHES: &str = "SELECT json_group_array(json_object('attempts', attempts, 'batch_id', id, 'lines', (SELECT COUNT(*) FROM lines l WHERE l.batch_id = b.id AND l.state = 'approved'), 'reason', reason, 'state', state, 'updated_at_ms', updated_at_ms)) FROM (SELECT * FROM batches WHERE state = ?1 ORDER BY id LIMIT ?2) b";
 const BATCH_STATE: &str = "SELECT json_group_array(state) FROM batches WHERE id = ?1";
 const CURSOR: Column = Column {
@@ -22,6 +27,7 @@ const DRAW: &str = "UPDATE lines SET batch_id = ?4, state = ?2, reviewer = '', u
 const INSERT: &str = "INSERT OR IGNORE INTO messages (key, source, account, conversation_id, sender_id, sender_name, text, occurred_at_ms, received_at_ms, raw) SELECT json_extract(value, '$.key'), json_extract(value, '$.source'), json_extract(value, '$.account'), json_extract(value, '$.conversation_id'), json_extract(value, '$.sender_id'), json_extract(value, '$.sender_name'), json_extract(value, '$.text'), json_extract(value, '$.occurred_at_ms'), json_extract(value, '$.received_at_ms'), json_extract(value, '$.raw') FROM json_each(?1, ?2)";
 const LEARN: &str = "INSERT OR IGNORE INTO learned_rules (pattern, placeholder, source_key, reviewer, created_at_ms) SELECT ?1, ?2, ?3, '', ?4 WHERE EXISTS (SELECT 1 FROM lines WHERE key = ?3 AND state = 'pending')";
 const LIST: &str = "SELECT json_group_array(json_object('account', account, 'analysis', analysis, 'conversation_id', conversation_id, 'key', key, 'occurred_at_ms', occurred_at_ms, 'priority', priority, 'received_at_ms', received_at_ms, 'sender_id', sender_id, 'sender_name', sender_name, 'source', source, 'text', text, 'topic', topic) ORDER BY occurred_at_ms DESC, key DESC) FROM (SELECT m.*, p.probability AS priority, p.topic_id AS topic, (SELECT a.analysis FROM alerts a WHERE a.topic_id = p.topic_id AND a.analysis IS NOT NULL ORDER BY a.created_at_ms DESC LIMIT 1) AS analysis FROM messages m LEFT JOIN placements p ON p.key = m.key WHERE (?1 IS NULL OR (m.occurred_at_ms, m.key) < (?1, ?2)) AND (?4 IS NULL OR m.occurred_at_ms >= ?4) AND (?5 IS NULL OR m.occurred_at_ms < ?5) ORDER BY m.occurred_at_ms DESC, m.key DESC LIMIT ?3)";
+const MISSED: &str = "INSERT INTO misses (kind, key, text, spans, created_at_ms) SELECT 'review', key, text, json_array(?1), ?4 FROM lines WHERE key = ?3 AND state = 'pending' AND ?2 IS NOT NULL";
 const NEXT_BATCH: &str = "SELECT CASE WHEN EXISTS (SELECT 1 FROM lines a WHERE a.batch_id > 0 AND a.state IN ('screening', 'pending', 'leaked') AND NOT EXISTS (SELECT 1 FROM batches b WHERE b.id = a.batch_id)) THEN -1 ELSE COALESCE(MAX(batch_id), 0) + 1 END FROM lines";
 const PRESENT: &str = "SELECT COUNT(*) FROM pragma_table_info(?1) WHERE name = ?2";
 const REPLACE: &str = "UPDATE messages SET text = json_extract(?2, '$.text') WHERE key = json_extract(?2, '$.key') AND text = json_extract(?1, '$.text')";
@@ -32,7 +38,12 @@ const REVIVALS: Column = Column {
     table: "batches",
 };
 const REVIVE: &str = "UPDATE batches SET state = 'ready', revivals = MAX(revivals, 0) + 1, reason = '', updated_at_ms = 0 WHERE id = ?1 AND state = 'failed' AND NOT EXISTS (SELECT 1 FROM batches WHERE state = 'ready')";
-pub(crate) const SCHEMA: &str = "CREATE TABLE IF NOT EXISTS messages (key TEXT PRIMARY KEY NOT NULL, source TEXT NOT NULL, account TEXT NOT NULL, conversation_id TEXT NOT NULL, sender_id TEXT NOT NULL, sender_name TEXT NOT NULL, text TEXT NOT NULL, occurred_at_ms INTEGER NOT NULL, received_at_ms INTEGER NOT NULL, raw TEXT NOT NULL) WITHOUT ROWID; CREATE INDEX IF NOT EXISTS messages_by_time ON messages (source, account, occurred_at_ms); CREATE INDEX IF NOT EXISTS messages_by_when ON messages (occurred_at_ms, key); CREATE TABLE IF NOT EXISTS lines (key TEXT PRIMARY KEY NOT NULL, conversation_id TEXT NOT NULL, occurred_at_ms INTEGER NOT NULL, sender TEXT NOT NULL, text TEXT NOT NULL, state TEXT NOT NULL, reason TEXT NOT NULL, reviewer TEXT NOT NULL, flag TEXT NOT NULL, hints TEXT NOT NULL, rules_rev INTEGER NOT NULL, batch_id INTEGER NOT NULL, created_at_ms INTEGER NOT NULL, updated_at_ms INTEGER NOT NULL) WITHOUT ROWID; CREATE INDEX IF NOT EXISTS lines_by_batch ON lines (batch_id, state); CREATE INDEX IF NOT EXISTS lines_by_state ON lines (state, occurred_at_ms); CREATE TABLE IF NOT EXISTS answers (batch_id INTEGER PRIMARY KEY NOT NULL, body TEXT NOT NULL); CREATE TABLE IF NOT EXISTS batches (id INTEGER PRIMARY KEY NOT NULL, state TEXT NOT NULL, payload TEXT NOT NULL, layout TEXT NOT NULL, attempts INTEGER NOT NULL, reason TEXT NOT NULL, created_at_ms INTEGER NOT NULL, updated_at_ms INTEGER NOT NULL, revivals INTEGER NOT NULL DEFAULT 0); CREATE TABLE IF NOT EXISTS topics (id TEXT PRIMARY KEY NOT NULL, label TEXT NOT NULL, probability REAL, thread_id TEXT NOT NULL, until_ms INTEGER NOT NULL, until_key TEXT NOT NULL, thread_at_ms INTEGER NOT NULL, created_at_ms INTEGER NOT NULL, last_at_ms INTEGER NOT NULL) WITHOUT ROWID; CREATE TABLE IF NOT EXISTS placements (key TEXT PRIMARY KEY NOT NULL, topic_id TEXT NOT NULL, probability REAL, batch_id INTEGER NOT NULL) WITHOUT ROWID; CREATE INDEX IF NOT EXISTS placements_by_topic ON placements (topic_id); CREATE TABLE IF NOT EXISTS alerts (key TEXT PRIMARY KEY NOT NULL, topic_id TEXT NOT NULL, state TEXT NOT NULL, attempts INTEGER NOT NULL, analysis TEXT, reason TEXT NOT NULL, created_at_ms INTEGER NOT NULL, updated_at_ms INTEGER NOT NULL) WITHOUT ROWID; CREATE INDEX IF NOT EXISTS alerts_by_topic ON alerts (topic_id, created_at_ms); CREATE TABLE IF NOT EXISTS learned_rules (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, pattern TEXT NOT NULL, placeholder TEXT NOT NULL, source_key TEXT NOT NULL, reviewer TEXT NOT NULL, created_at_ms INTEGER NOT NULL); CREATE UNIQUE INDEX IF NOT EXISTS learned_rules_unique ON learned_rules (pattern, placeholder); CREATE TABLE IF NOT EXISTS topic_aliases (old TEXT PRIMARY KEY NOT NULL, new TEXT NOT NULL) WITHOUT ROWID; CREATE TABLE IF NOT EXISTS triage_state (id INTEGER PRIMARY KEY NOT NULL, enabled INTEGER NOT NULL, since_ms INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS calls (kind TEXT NOT NULL, subject TEXT NOT NULL, topic_id TEXT NOT NULL, attempt INTEGER NOT NULL, at_ms INTEGER NOT NULL, PRIMARY KEY (kind, subject, attempt)) WITHOUT ROWID; CREATE INDEX IF NOT EXISTS calls_by_time ON calls (kind, at_ms); CREATE INDEX IF NOT EXISTS calls_by_topic ON calls (topic_id, at_ms); CREATE TRIGGER IF NOT EXISTS messages_unsealed AFTER UPDATE OF text ON messages BEGIN DELETE FROM lines WHERE key = NEW.key AND state = 'skipped' AND reason = 'sealed'; END;";
+pub(crate) const SCHEMA: &str = "CREATE TABLE IF NOT EXISTS messages (key TEXT PRIMARY KEY NOT NULL, source TEXT NOT NULL, account TEXT NOT NULL, conversation_id TEXT NOT NULL, sender_id TEXT NOT NULL, sender_name TEXT NOT NULL, text TEXT NOT NULL, occurred_at_ms INTEGER NOT NULL, received_at_ms INTEGER NOT NULL, raw TEXT NOT NULL) WITHOUT ROWID; CREATE INDEX IF NOT EXISTS messages_by_time ON messages (source, account, occurred_at_ms); CREATE INDEX IF NOT EXISTS messages_by_when ON messages (occurred_at_ms, key); CREATE TABLE IF NOT EXISTS lines (key TEXT PRIMARY KEY NOT NULL, conversation_id TEXT NOT NULL, occurred_at_ms INTEGER NOT NULL, sender TEXT NOT NULL, text TEXT NOT NULL, state TEXT NOT NULL, reason TEXT NOT NULL, reviewer TEXT NOT NULL, flag TEXT NOT NULL, hints TEXT NOT NULL, rules_rev INTEGER NOT NULL, batch_id INTEGER NOT NULL, created_at_ms INTEGER NOT NULL, updated_at_ms INTEGER NOT NULL, attempts INTEGER NOT NULL DEFAULT 0) WITHOUT ROWID; CREATE TABLE IF NOT EXISTS misses (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, kind TEXT NOT NULL, key TEXT NOT NULL, text TEXT NOT NULL, spans TEXT NOT NULL, created_at_ms INTEGER NOT NULL); CREATE INDEX IF NOT EXISTS lines_by_batch ON lines (batch_id, state); CREATE INDEX IF NOT EXISTS lines_by_state ON lines (state, occurred_at_ms); CREATE TABLE IF NOT EXISTS answers (batch_id INTEGER PRIMARY KEY NOT NULL, body TEXT NOT NULL); CREATE TABLE IF NOT EXISTS batches (id INTEGER PRIMARY KEY NOT NULL, state TEXT NOT NULL, payload TEXT NOT NULL, layout TEXT NOT NULL, attempts INTEGER NOT NULL, reason TEXT NOT NULL, created_at_ms INTEGER NOT NULL, updated_at_ms INTEGER NOT NULL, revivals INTEGER NOT NULL DEFAULT 0); CREATE TABLE IF NOT EXISTS topics (id TEXT PRIMARY KEY NOT NULL, label TEXT NOT NULL, probability REAL, thread_id TEXT NOT NULL, until_ms INTEGER NOT NULL, until_key TEXT NOT NULL, thread_at_ms INTEGER NOT NULL, created_at_ms INTEGER NOT NULL, last_at_ms INTEGER NOT NULL) WITHOUT ROWID; CREATE TABLE IF NOT EXISTS placements (key TEXT PRIMARY KEY NOT NULL, topic_id TEXT NOT NULL, probability REAL, batch_id INTEGER NOT NULL) WITHOUT ROWID; CREATE INDEX IF NOT EXISTS placements_by_topic ON placements (topic_id); CREATE TABLE IF NOT EXISTS alerts (key TEXT PRIMARY KEY NOT NULL, topic_id TEXT NOT NULL, state TEXT NOT NULL, attempts INTEGER NOT NULL, analysis TEXT, reason TEXT NOT NULL, created_at_ms INTEGER NOT NULL, updated_at_ms INTEGER NOT NULL, score REAL) WITHOUT ROWID; CREATE INDEX IF NOT EXISTS alerts_by_topic ON alerts (topic_id, created_at_ms); CREATE TABLE IF NOT EXISTS learned_rules (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, pattern TEXT NOT NULL, placeholder TEXT NOT NULL, source_key TEXT NOT NULL, reviewer TEXT NOT NULL, created_at_ms INTEGER NOT NULL); CREATE UNIQUE INDEX IF NOT EXISTS learned_rules_unique ON learned_rules (pattern, placeholder); CREATE TABLE IF NOT EXISTS topic_aliases (old TEXT PRIMARY KEY NOT NULL, new TEXT NOT NULL) WITHOUT ROWID; CREATE TABLE IF NOT EXISTS triage_state (id INTEGER PRIMARY KEY NOT NULL, enabled INTEGER NOT NULL, since_ms INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS calls (kind TEXT NOT NULL, subject TEXT NOT NULL, topic_id TEXT NOT NULL, attempt INTEGER NOT NULL, at_ms INTEGER NOT NULL, PRIMARY KEY (kind, subject, attempt)) WITHOUT ROWID; CREATE INDEX IF NOT EXISTS calls_by_time ON calls (kind, at_ms); CREATE INDEX IF NOT EXISTS calls_by_topic ON calls (topic_id, at_ms); CREATE TRIGGER IF NOT EXISTS messages_unsealed AFTER UPDATE OF text ON messages BEGIN DELETE FROM lines WHERE key = NEW.key AND state = 'skipped' AND reason = 'sealed'; END;";
+const SCORE: Column = Column {
+    alter: "ALTER TABLE alerts ADD COLUMN score REAL",
+    name: "score",
+    table: "alerts",
+};
 const SEALED: &str = "SELECT json_group_array(json_object('account', account, 'conversation_id', conversation_id, 'key', key, 'occurred_at_ms', occurred_at_ms, 'raw', raw, 'received_at_ms', received_at_ms, 'sender_id', sender_id, 'sender_name', sender_name, 'source', source, 'text', text)) FROM (SELECT * FROM messages WHERE source = ?1 AND account = ?2 AND text GLOB '*||[0-9]*||[0-9]*||[0-9]*' ORDER BY occurred_at_ms DESC, key DESC LIMIT ?3)";
 const SETTLE: &str = "UPDATE lines SET state = ?2, reason = ?3, updated_at_ms = ?4 WHERE key = ?1 AND state = 'pending'";
 const SOURCE: &str = "SELECT json_group_array(text) FROM lines WHERE key = ?1";
@@ -303,8 +314,9 @@ pub(crate) fn connect(path: &Path, busy_ms: u64) -> Fallible<Connection> {
     connection
         .execute_batch(&format!("PRAGMA busy_timeout = {busy_ms}; {TUNE} {SCHEMA}"))
         .map_err(Box::new)?;
-    ensure(&connection, CURSOR)?;
-    ensure(&connection, REVIVALS)?;
+    [ATTEMPTS, CURSOR, REVIVALS, SCORE]
+        .into_iter()
+        .try_for_each(|column| ensure(&connection, column))?;
     Ok(connection)
 }
 
@@ -321,12 +333,9 @@ fn ensure(connection: &Connection, column: Column) -> Fallible<()> {
 
 fn learn(connection: &Connection, ruling: &Ruling<'_>, now: i64) -> Fallible<usize> {
     ruling.rule().map_or(Ok(usize::default()), |rule| {
-        connection
-            .execute(
-                LEARN,
-                params![rule.pattern(), rule.placeholder(), ruling.key(), now],
-            )
-            .map_err(Box::new)
+        let args = params![rule.pattern(), rule.placeholder(), ruling.key(), now];
+        let _: usize = connection.execute(MISSED, args).map_err(Box::new)?;
+        connection.execute(LEARN, args).map_err(Box::new)
     })
 }
 

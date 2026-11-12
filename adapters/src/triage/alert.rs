@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 
 use super::TRIAGE;
 use super::desk::Brief;
-use super::{ANALYZED, HOUR_MS, PENDING, SENT, Shift, current, failure, number, text};
+use super::{ANALYZED, HOUR_MS, PENDING, SENT, Shift, current, failure, number, retry_in, text};
 use crate::ingest::now_ms;
 use crate::pipe::{Job, feed};
 use crate::race::race;
@@ -44,7 +44,7 @@ fn analysis_jobs(shift: &Shift<'_>, alerts: &[Value]) -> Vec<Analysis> {
             } else {
                 shift.triage.fresh_args()
             };
-            let claim = claim_of(shift, text(alert, "key"), PENDING);
+            let claim = claim_of(shift, alert, PENDING);
             if shift.ledger.claim_alert(&claim) == 0 {
                 return None;
             }
@@ -104,7 +104,17 @@ fn analyze(shift: &Shift<'_>, job: &Analysis, done: &io::Result<Output>) {
         let reason = failure(done);
         let failed = shift.ledger.fail_alert(&failed_of(&job.claim, &reason));
         let dropped = shift.ledger.forget_thread(&json!({"topic_id": topic}));
-        tracing::warn!(failed, dropped, reason, "alert analysis failed");
+        let attempt = number(&job.alert, "attempts").saturating_add(1);
+        tracing::warn!(
+            key,
+            failed,
+            dropped,
+            reason,
+            attempt,
+            exhausted = attempt >= u64::from(shift.triage.max_attempts()),
+            retry_in_ms = retry_in(shift, attempt),
+            "alert analysis failed"
+        );
     }
 }
 
@@ -125,13 +135,14 @@ fn brief(shift: &Shift<'_>, alert: &Value, now: u64) -> Option<Brief> {
     }))
 }
 
-fn claim_of(shift: &Shift<'_>, key: &str, state: &str) -> Value {
+fn claim_of(shift: &Shift<'_>, alert: &Value, state: &str) -> Value {
     let now = now_ms();
     json!({
         "at_ms": now,
         "cooldown_since_ms": now.saturating_sub(shift.triage.handoff_cooldown_ms()),
+        "created_at_ms": alert.get("created_at_ms"),
         "hour_since_ms": now.saturating_sub(HOUR_MS),
-        "key": key,
+        "key": alert.get("key"),
         "kind": if state == PENDING { "analysis" } else { "notify" },
         "max_attempts": shift.triage.max_attempts(),
         "max_per_hour": shift.triage.max_handoffs_per_hour(),
@@ -157,7 +168,15 @@ fn deliver(shift: &Shift<'_>, job: &Delivery, done: &io::Result<Output>) {
     } else {
         let reason = failure(done);
         let rows = shift.ledger.fail_alert(&failed_of(&job.claim, &reason));
-        tracing::warn!(rows, reason, "alert step failed");
+        tracing::warn!(
+            key,
+            rows,
+            reason,
+            attempt = job.attempt,
+            exhausted = job.attempt >= u64::from(shift.triage.max_attempts()),
+            retry_in_ms = retry_in(shift, job.attempt),
+            "alert step failed"
+        );
     }
 }
 
@@ -166,7 +185,7 @@ fn delivery_jobs(shift: &Shift<'_>, alerts: &[Value]) -> Vec<Delivery> {
         .iter()
         .filter_map(|alert| {
             let key = text(alert, "key");
-            let claim = claim_of(shift, key, ANALYZED);
+            let claim = claim_of(shift, alert, ANALYZED);
             if shift.ledger.claim_alert(&claim) == 0 {
                 return None;
             }

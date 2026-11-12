@@ -7,6 +7,7 @@ use std::io::Write as _;
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 
+use futures_util::stream::{StreamExt as _, unfold};
 use serde_json::{Value, from_str, json, to_string};
 use tokio::io::{AsyncBufReadExt as _, AsyncReadExt as _, AsyncWriteExt as _, BufReader};
 use tokio::net::{TcpListener as AsyncListener, TcpStream};
@@ -29,16 +30,20 @@ struct Call<'call> {
 impl Call<'_> {
     async fn answer(&self) -> (u16, String) {
         let behavior = plan(self.dir, self.role);
-        match text(&behavior, "mode") {
-            "fail" => return (500, String::new()),
-            "junk" => return (200, "not json".to_owned()),
-            "slow" => self.wait().await,
+        let aimed = self.request.body.contains(text(&behavior, "only"));
+        match (aimed, text(&behavior, "mode")) {
+            (true, "fail") => return (500, String::new()),
+            (true, "junk") => return (200, "not json".to_owned()),
+            (true, "slow") => self.wait().await,
             _ => {}
         }
-        match self.role {
-            "decide" => (200, answers(&behavior, &self.request.body)),
-            _ => (200, screened(self.dir, &self.request.body)),
+        if self.role == "decide" {
+            return (200, answers(&behavior, &self.request.body));
         }
+        let canned = aimed
+            .then(|| fs::read_to_string(self.dir.join("screen.json")).ok())
+            .flatten();
+        (200, screened(canned, &self.request.body))
     }
 
     fn record(&self) -> io::Result<()> {
@@ -98,7 +103,8 @@ impl Stub {
 
     pub(crate) async fn serve(&self) -> io::Result<()> {
         let listener = AsyncListener::from_std(self.listener.try_clone()?)?;
-        accept(&self.dir, &listener).await
+        accept(&self.dir, &listener).await;
+        Ok(())
     }
 
     pub(crate) fn url(&self, path: &str) -> String {
@@ -107,11 +113,16 @@ impl Stub {
     }
 }
 
-async fn accept(dir: &Path, listener: &AsyncListener) -> io::Result<()> {
-    loop {
-        let (mut stream, _) = listener.accept().await?;
-        drop(handle(dir, &mut stream).await);
-    }
+async fn accept(dir: &Path, listener: &AsyncListener) {
+    unfold(listener, async |source| {
+        Some((source.accept().await, source))
+    })
+    .for_each_concurrent(None, async |accepted| {
+        if let Ok((mut stream, _)) = accepted {
+            drop(handle(dir, &mut stream).await);
+        }
+    })
+    .await;
 }
 
 fn answer(behavior: &Value, question: &Value) -> Value {
@@ -255,10 +266,8 @@ fn role(path: &str) -> Option<&'static str> {
     }
 }
 
-fn screened(dir: &Path, body: &str) -> String {
-    let content = fs::read_to_string(dir.join("screen.json"))
-        .ok()
-        .map_or_else(|| verdicts(body), |raw| raw.trim().to_owned());
+fn screened(canned: Option<String>, body: &str) -> String {
+    let content = canned.map_or_else(|| verdicts(body), |raw| raw.trim().to_owned());
     to_string(&json!({ "choices": [{ "message": { "content": content } }] })).unwrap_or_default()
 }
 
@@ -270,7 +279,7 @@ fn verdicts(body: &str) -> String {
     let parsed: Value = from_str(body).unwrap_or(Value::Null);
     let content = parsed
         .get("messages")
-        .and_then(|messages| messages.get(1))
+        .and_then(|messages| messages.get(2))
         .and_then(|message| message.get("content"))
         .and_then(Value::as_str)
         .unwrap_or_default();

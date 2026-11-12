@@ -68,6 +68,7 @@ triage:
     parallel: 2
     poll_ms: 10
     retry_after_ms: 0
+    retry_max_ms: 1000
   mode: disabled
   model: m
   notice: n

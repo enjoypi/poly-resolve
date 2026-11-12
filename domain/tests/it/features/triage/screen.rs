@@ -30,22 +30,30 @@ fn screen_asks_for_a_json_verdict_on_aliased_lines() {
         body.pointer("/messages/0"),
         Some(&json!({"content": "judge", "role": "system"}))
     );
-    let user: Value = from_str(
+    let known: Value = from_str(
         body.pointer("/messages/1/content")
             .and_then(Value::as_str)
             .unwrap(),
     )
     .unwrap();
     assert_eq!(
-        user,
-        json!({
-            "lines": [
-                {"line": "L1", "text": "first"},
-                {"line": "L2", "text": "second"},
-            ],
-            "topics": [{"label": "old", "topic": "t3-0"}],
-        })
+        known,
+        json!({"topics": [{"label": "old", "topic": "t3-0"}]})
     );
+    let shown: Value = from_str(
+        body.pointer("/messages/2/content")
+            .and_then(Value::as_str)
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        shown,
+        json!({"lines": [
+            {"line": "L1", "text": "first"},
+            {"line": "L2", "text": "second"},
+        ]})
+    );
+    assert_eq!(body.pointer("/messages/2/role"), Some(&json!("user")));
     assert!(!body.to_string().contains("\"k1\""));
 }
 

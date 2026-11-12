@@ -221,14 +221,23 @@ impl Run<'_> {
     }
 
     async fn serve(&mut self) -> u8 {
-        let mut backoff = Backoff::new(self.shared);
+        let mut backoff = Backoff::new(
+            self.shared.backoff_initial_ms(),
+            self.shared.backoff_max_ms(),
+        );
         loop {
             let retry = match self.session().await {
                 Ok(retry) => retry,
                 Err(Halt::Busy) => Retry::Failed,
                 Err(Halt::Exit(code)) => return code,
             };
-            let wait = backoff.next(self.shared, retry);
+            let wait = backoff.next(retry);
+            tracing::warn!(
+                account = self.config.account(),
+                attempt = backoff.streak(),
+                retry_in_ms = wait,
+                "dingtalk session ended"
+            );
             if self.pause(wait).await.is_none() {
                 return 0;
             }
