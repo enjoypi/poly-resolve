@@ -26,11 +26,17 @@ pub(super) fn form(shift: &Shift<'_>) {
         (APPROVED, AUTO)
     };
     let now = now_ms();
+    let expired = shift.ledger.expire(&json!({
+        "at_ms": now,
+        "before_ms": now.saturating_sub(shift.triage.lookback_ms()),
+    }));
+    if expired > 0 {
+        tracing::info!(expired, "lines expired");
+    }
     let formed = shift.ledger.form(&json!({
         "at_ms": now,
         "limit": shift.triage.batch(),
         "reviewer": reviewer,
-        "stale_before_ms": now.saturating_sub(shift.triage.lookback_ms()),
         "state": state,
     }));
     if formed > 0 {

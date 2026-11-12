@@ -62,7 +62,7 @@
 - `intake`：`Ledger::unlined` 取上述下界起还没有 `lines` 行的消息，从新到旧，每轮至多 `intake` 条；逐条调 domain `triage.line`（规则无效则记 warn、该条留待下一轮），写 `lines`（`INSERT OR IGNORE`，`queued` 或带原因 `skipped`，`rules_rev` 记当时最大的规则 id）
 - `rerender`：把 `rules_rev` 落后的 `queued/pending/leaked/screening` 行经 domain `redact` 重新脱敏（先在审的，再从新到旧的 `queued`；已裁决的行不改写），`leaked` 行回到 `pending`
 - `Settings::draw()` 给 domain `review::Draw`：开关关闭或 `review.mode: auto` 为 `off`，配了 `screen` 为 `screened(batch)`，否则 `reviewed(batch)`；`Settings::marks()` 收集脱敏规则、拒绝原因与筛查的占位符交 domain `redact::marks`
-- `form`：只在 `review.mode: auto` 时执行，人工模式由 `PATCH /api/reviews` 经 `Shelf::draw` 取批；没有未封批（有行 `batch_id > 0` 但 `batches` 里没有该批）时，把至多 `batch` 条 `queued` 行编入新批（批号＝最大批号 + 1）：先取发生时间不早于 `now - lookback_ms` 的，从旧到新，不足再取更早的，从旧到新，同一时间按 `key` 升序；未配 `triage.screen` 时状态为 `approved`（审核人 `auto`），配了则为 `screening`
+- `form`：只在 `review.mode: auto` 时执行，人工模式由 `PATCH /api/reviews` 经 `Shelf::draw` 取批；先经 `EXPIRE` 把发生时间早于 `now - lookback_ms` 的 `queued` 行置为 `skipped`（`reason = 'expired'`），有则记 info `lines expired`；没有未封批（有行 `batch_id > 0` 但 `batches` 里没有该批）时，把至多 `batch` 条 `queued` 行编入新批（批号＝最大批号 + 1）：从旧到新，同一时间按 `key` 升序；未配 `triage.screen` 时状态为 `approved`（审核人 `auto`），配了则为 `screening`
 - `screen`（可选）：取至多 `batch` 条到期的 `screening` 行（`reason = 'deferred'` 的按 `lines.attempts` 退避），提示词与开放话题每轮取一次，每行各调一次 domain `triage.screen` 生成单行请求，经 `buffer_unordered(screen.parallel)` 并发发给本机模型；每完成一条外包一次 `race`，成功即交 domain `triage.screened` 并在一个事务里先写 `misses`（有采用的片段为 `rules`，`flag` 为 `unmasked` 即 `unmasked`，取遮盖前文字）再写回 `lines.text/flag/hints`：`manual` 转 `pending`，`auto` 时 `flag` 非空转 `rejected`（原因 `screen`）、其余转 `approved`；无法解析或结果为 `missing`（`bad_answer`，含输出被 `screen.max_tokens` 截断）的行立即由 `abandon` 以 `flag = unscreened` 落库（处置同 `unmasked`，样本 kind 为 `unscreened`），记 WARN `line screening abandoned`，不重试；其余失败（连接、状态、超时）的行本轮结束后一并 `DEFER`（`attempts + 1`），逐条记 WARN `line screening failed`，不放行，不设次数上限；被停机打断时已完成的行已落库，在途的各记一条 `stopped`，状态不改
 - `seal`（`Ledger::sealable`）：批内无 `screening/pending/leaked` 行，且没有其他批处于 `ready`（或本批没有已通过行）时，取已通过的行，加上开放话题（`last_at_ms` 在 `session_max_ms` 内，至多 `topics_max_open` 个）和各会话仍开放的话题（`attach`），调 domain `triage.pack` 得冻结的请求体与 `layout`，写 `batches`（`ready`）；没有已通过的行则直接写 `sent`、`payload` 为空关批
 - `send`：先自动重来至多一个 `failed` 批（`REVIVE`：失败超过 `retry_after_ms`、`0 ≤ revivals < max_revivals`、当前没有 `ready` 批），再按 `calls` 中实际决策请求数（`max_decisions_per_hour`）取最早的 `ready` 批；限额只阻止新请求，已存应答仍可重放；尝试上限为 `max_attempts × (revivals + 1)`，`attempts` 不归零，故 `calls` 主键 `(kind, subject, attempt)` 不冲突；`BATCH_SEAL` 写 `ready` 前同样要求没有 `ready` 批，防人工重发与封批并发
@@ -82,11 +82,11 @@
 - 防自循环：domain 的 `line` 跳过本人发出的与通知会话的消息；本人与通知会话按消息的 `source:account` 取对应数据源的 `Profile`，取不到（无此概念的源）则不判定；通知以本人身份发出，补拉可能再收到，靠这两条切断
 - 停机：在途子进程被打断并 kill，状态不改，下次启动续做（至少一次，发送靠幂等键去重）
 - 排查（只读：`sqlite3 -readonly <store_path>`，WAL 下库所在目录须可写以建 `-shm`）：
-  - `lines` 按 `state, reason` 计数，本人、通知会话、空正文、密文均为 `skipped`
+  - `lines` 按 `state, reason` 计数，本人、通知会话、空正文、密文均为 `skipped`，自动模式下过期的为 `skipped/expired`
   - `batches` 由 `ready` 变 `sent`；`failed` 的批按 `max_revivals` 自动重来，`revivals = -1` 的旧批只能人工重发；`answers` 存决策应答
   - 已通过的行都有 `placements`
   - `alerts` 由 `waiting` → `pending` → `analyzed` → `sent`；冷却或限额时停在 `pending`，话题关闭后未分析的 `pending` 不再出队
-  - 日志关键词：`batch formed`、`batch sealed`、`batch decided`、`alert analyzed`、`alert sent`、`failed batch revived`，WARN `decision failed`（带 `batch_id`、`attempt`、`revivals`、`exhausted`、`retry_in_ms`）、`alert analysis failed`、`alert step failed`（带 `key`、`attempt`、`exhausted`、`retry_in_ms`）、`line screening failed`（带 `key`、`attempt`、`reason`、`retry_in_ms`）、`lane backing off`（带 `lane`、`attempt`、`faults`、`retry_in_ms`）；采集重连 `dingtalk session ended`、`imap session ended`（带 `account`、`attempt`、`retry_in_ms`，`attempt` 为 `Backoff::streak()`，收到过消息的一轮后回到 1）
+  - 日志关键词：`lines expired`、`batch formed`、`batch sealed`、`batch decided`、`alert analyzed`、`alert sent`、`failed batch revived`，WARN `decision failed`（带 `batch_id`、`attempt`、`revivals`、`exhausted`、`retry_in_ms`）、`alert analysis failed`、`alert step failed`（带 `key`、`attempt`、`exhausted`、`retry_in_ms`）、`line screening failed`（带 `key`、`attempt`、`reason`、`retry_in_ms`）、`lane backing off`（带 `lane`、`attempt`、`faults`、`retry_in_ms`）；采集重连 `dingtalk session ended`、`imap session ended`（带 `account`、`attempt`、`retry_in_ms`，`attempt` 为 `Backoff::streak()`，收到过消息的一轮后回到 1）
   - 等待原因只在变化时记一条 info（`Shift::noted` 按主题记上次原因）：`decision quota reached`、`handoff held`（`reason` 为 `quota` 或 `cooldown`）、`batch waiting`（`state` 为 `review@<批号>` 或 `sending@<批号>`）、`backlog … left out`；`batch claim skipped` 表示打包后又学到规则、下轮重打包
 
 ## 新增数据源

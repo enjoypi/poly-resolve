@@ -19,14 +19,17 @@ const TWO: u32 = 2;
 async fn disabling_keeps_the_backlog() {
     let sandbox = Sandbox::new("batch-lookback-disable").unwrap();
     seed(&sandbox, &one()).unwrap();
-    let patch = json!({"limits": {"lookback_ms": SHORT_LOOKBACK}});
     start(&sandbox, &json!({}), QUICK).await.unwrap();
     seed_from(&sandbox, &[(SECOND, "u1", "c1", "still down")], LATER).unwrap();
     start(&sandbox, &json!({"mode": "disabled"}), QUICK)
         .await
         .unwrap();
-    start(&sandbox, &patch, QUICK).await.unwrap();
-    assert_eq!(calls(&sandbox, "decide").unwrap(), 2);
+    start(&sandbox, &manual_lookback(), QUICK).await.unwrap();
+    assert_eq!(calls(&sandbox, "decide").unwrap(), 1);
+    assert_eq!(
+        table(&sandbox, LINES).unwrap(),
+        [format!("{KEY}|approved||1"), format!("{SECOND}|queued||0")]
+    );
 }
 
 #[tokio::test]
@@ -143,18 +146,18 @@ async fn late_decisions_do_not_hand_off() {
 async fn lookback_continues_backlog_after_restart() {
     let sandbox = Sandbox::new("batch-lookback-restart").unwrap();
     seed(&sandbox, &one()).unwrap();
-    let patch = json!({"limits": {"lookback_ms": SHORT_LOOKBACK}});
     start(&sandbox, &json!({}), QUICK).await.unwrap();
     seed_from(&sandbox, &[(SECOND, "u1", "c1", "still down")], LATER).unwrap();
-    start(&sandbox, &patch, QUICK).await.unwrap();
-    assert_eq!(calls(&sandbox, "decide").unwrap(), 2);
+    start(&sandbox, &manual_lookback(), QUICK).await.unwrap();
+    assert_eq!(calls(&sandbox, "decide").unwrap(), 1);
     assert_eq!(
         table(&sandbox, LINES).unwrap(),
-        [
-            format!("{KEY}|approved||1"),
-            format!("{SECOND}|approved||2")
-        ]
+        [format!("{KEY}|approved||1"), format!("{SECOND}|queued||0")]
     );
+}
+
+fn manual_lookback() -> Value {
+    json!({"limits": {"lookback_ms": SHORT_LOOKBACK}, "review": {"mode": "manual"}})
 }
 
 #[tokio::test]

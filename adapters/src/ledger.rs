@@ -57,10 +57,11 @@ const CALL_BATCH: &str = "INSERT INTO calls (kind, subject, topic_id, attempt, a
 const CLAIM_ALERT: &str = "UPDATE alerts SET attempts = attempts + 1, updated_at_ms = json_extract(?1, '$.at_ms') WHERE key = json_extract(?1, '$.key') AND state = json_extract(?1, '$.state') AND attempts < json_extract(?1, '$.max_attempts') AND created_at_ms = json_extract(?1, '$.created_at_ms') AND (state <> 'pending' OR analysis IS NOT NULL OR ((SELECT COUNT(*) FROM calls c WHERE c.kind = 'analysis' AND c.at_ms >= json_extract(?1, '$.hour_since_ms')) < json_extract(?1, '$.max_per_hour') AND NOT EXISTS (SELECT 1 FROM calls c WHERE c.kind = 'analysis' AND c.topic_id = alerts.topic_id AND c.at_ms > json_extract(?1, '$.cooldown_since_ms'))))";
 const COMMIT: &str = "COMMIT";
 const DEFER: &str = "UPDATE lines SET attempts = attempts + 1, reason = 'deferred', updated_at_ms = json_extract(?1, '$.at_ms') WHERE state = 'screening' AND key IN (SELECT value FROM json_each(?1, '$.keys'))";
+const EXPIRE: &str = "UPDATE lines SET state = 'skipped', reason = 'expired', updated_at_ms = json_extract(?1, '$.at_ms') WHERE state = 'queued' AND occurred_at_ms < json_extract(?1, '$.before_ms')";
 const FAIL_ALERT: &str = "UPDATE alerts SET reason = json_extract(?1, '$.reason'), updated_at_ms = json_extract(?1, '$.at_ms'), state = CASE WHEN attempts >= json_extract(?1, '$.max_attempts') THEN 'failed' ELSE state END WHERE key = json_extract(?1, '$.key') AND state = json_extract(?1, '$.state')";
 const FORGET_THREAD: &str =
     "UPDATE topics SET thread_at_ms = 0 WHERE id = json_extract(?1, '$.topic_id')";
-const FORM: &str = "UPDATE lines SET batch_id = (SELECT COALESCE(MAX(batch_id), 0) + 1 FROM lines), state = json_extract(?1, '$.state'), reviewer = json_extract(?1, '$.reviewer'), updated_at_ms = json_extract(?1, '$.at_ms') WHERE key IN (SELECT key FROM lines WHERE state = 'queued' ORDER BY occurred_at_ms < json_extract(?1, '$.stale_before_ms'), occurred_at_ms, key LIMIT json_extract(?1, '$.limit')) AND NOT EXISTS (SELECT 1 FROM lines a WHERE a.batch_id > 0 AND NOT EXISTS (SELECT 1 FROM batches b WHERE b.id = a.batch_id))";
+const FORM: &str = "UPDATE lines SET batch_id = (SELECT COALESCE(MAX(batch_id), 0) + 1 FROM lines), state = json_extract(?1, '$.state'), reviewer = json_extract(?1, '$.reviewer'), updated_at_ms = json_extract(?1, '$.at_ms') WHERE key IN (SELECT key FROM lines WHERE state = 'queued' ORDER BY occurred_at_ms, key LIMIT json_extract(?1, '$.limit')) AND NOT EXISTS (SELECT 1 FROM lines a WHERE a.batch_id > 0 AND NOT EXISTS (SELECT 1 FROM batches b WHERE b.id = a.batch_id))";
 const HELD: &str = "SELECT json_group_array(json_object('count', total, 'reason', reason)) FROM (SELECT CASE WHEN (SELECT COUNT(*) FROM calls c WHERE c.kind = 'analysis' AND c.at_ms >= json_extract(?1, '$.hour_since_ms')) >= json_extract(?1, '$.max_per_hour') THEN 'quota' ELSE 'cooldown' END AS reason, COUNT(*) AS total FROM alerts a WHERE a.state = 'pending' AND a.analysis IS NULL AND a.attempts < json_extract(?1, '$.max_attempts') AND ((SELECT COUNT(*) FROM calls c WHERE c.kind = 'analysis' AND c.at_ms >= json_extract(?1, '$.hour_since_ms')) >= json_extract(?1, '$.max_per_hour') OR EXISTS (SELECT 1 FROM calls c WHERE c.kind = 'analysis' AND c.topic_id = a.topic_id AND c.at_ms > json_extract(?1, '$.cooldown_since_ms'))) AND EXISTS (SELECT 1 FROM topics t WHERE t.id = a.topic_id AND t.last_at_ms >= json_extract(?1, '$.open_since_ms')) GROUP BY 1)";
 const INTAKE_SINCE: &str = "SELECT json_group_array(json_object('since_ms', since_ms)) FROM triage_state WHERE id = 1 AND json_extract(?1, '$.enabled') IS NOT NULL";
 const INTAKE_STATE: &str = "INSERT INTO triage_state (id, enabled, since_ms) VALUES (1, json_extract(?1, '$.enabled'), json_extract(?1, '$.since_ms')) ON CONFLICT(id) DO UPDATE SET since_ms = CASE WHEN triage_state.since_ms = 0 THEN excluded.since_ms ELSE triage_state.since_ms END, enabled = excluded.enabled";
@@ -194,6 +195,10 @@ impl Ledger {
                 self.fault();
                 0
             })
+    }
+
+    pub(crate) fn expire(&self, args: &Value) -> usize {
+        self.exec(EXPIRE, args)
     }
 
     pub(crate) fn fail_alert(&self, args: &Value) -> usize {

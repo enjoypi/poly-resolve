@@ -1,8 +1,8 @@
 use serde_json::json;
 
 use super::rig::{
-    ALERTS, BATCHES, KEY, LINES, NOTHING, QUICK, SECOND, THIRD, calls, logged, now, seed,
-    seed_stamped, start, table,
+    BATCHES, KEY, LINES, NOTHING, QUICK, SECOND, THIRD, calls, logged, now, seed, seed_stamped,
+    start, table,
 };
 use crate::support::Sandbox;
 
@@ -26,8 +26,8 @@ async fn backlog_beyond_the_cap_is_left_out() {
 }
 
 #[tokio::test]
-async fn backlog_is_batched_oldest_first_without_handoffs() {
-    let sandbox = Sandbox::new("backlog-oldest").unwrap();
+async fn backlog_beyond_the_lookback_is_skipped() {
+    let sandbox = Sandbox::new("backlog-expired").unwrap();
     start(&sandbox, &json!({}), QUICK).await.unwrap();
     let rows = [
         (KEY, "u1", "c1", "server down"),
@@ -36,24 +36,22 @@ async fn backlog_is_batched_oldest_first_without_handoffs() {
     ];
     seed(&sandbox, &rows).unwrap();
     let patch = json!({"limits": {"batch": TWO, "lookback_ms": SHORT_LOOKBACK}});
-    start(&sandbox, &patch, QUICK).await.unwrap();
+    let logs = logged(&sandbox, &patch, QUICK).await.unwrap();
+    assert!(logs.contains("lines expired"));
     assert_eq!(
         table(&sandbox, LINES).unwrap(),
         [
-            format!("{KEY}|approved||1"),
-            format!("{SECOND}|approved||1"),
-            format!("{THIRD}|approved||2"),
+            format!("{KEY}|skipped|expired|0"),
+            format!("{SECOND}|skipped|expired|0"),
+            format!("{THIRD}|skipped|expired|0"),
         ]
     );
-    assert_eq!(
-        table(&sandbox, BATCHES).unwrap(),
-        ["1|sent|0|", "2|sent|0|"]
-    );
-    assert_eq!(table(&sandbox, ALERTS).unwrap(), NOTHING);
+    assert_eq!(table(&sandbox, BATCHES).unwrap(), NOTHING);
+    assert_eq!(calls(&sandbox, "decide").unwrap(), 0);
 }
 
 #[tokio::test]
-async fn recent_lines_are_batched_before_the_backlog() {
+async fn recent_lines_are_batched_oldest_first_and_the_backlog_skipped() {
     let sandbox = Sandbox::new("backlog-recent").unwrap();
     start(&sandbox, &json!({}), QUICK).await.unwrap();
     let old = [
@@ -73,8 +71,8 @@ async fn recent_lines_are_batched_before_the_backlog() {
     assert_eq!(
         table(&sandbox, LINES).unwrap(),
         [
-            format!("{KEY}|approved||2"),
-            format!("{SECOND}|approved||3"),
+            format!("{KEY}|skipped|expired|0"),
+            format!("{SECOND}|skipped|expired|0"),
             format!("{THIRD}|approved||1"),
             format!("{FOURTH}|approved||1"),
             format!("{FIFTH}|approved||2"),
@@ -82,6 +80,6 @@ async fn recent_lines_are_batched_before_the_backlog() {
     );
     assert_eq!(
         table(&sandbox, BATCHES).unwrap(),
-        ["1|sent|0|", "2|sent|0|", "3|sent|0|"]
+        ["1|sent|0|", "2|sent|0|"]
     );
 }
