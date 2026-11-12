@@ -1,12 +1,10 @@
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use domain::review::{Draw, Ruling};
 use serde_json::{Value, json};
 
 use super::rig::{
     ALERTS, BATCHES, KEY, LATER, LINES, NOTHING, PLACEMENTS, QUICK, SECOND, Seed, THIRD, calls,
-    decided, draw, input_of, logged, one, questions_of, rule, seed, seed_from, seed_stamped, start,
-    table, two,
+    decided, draw, input_of, logged, now, one, questions_of, rule, seed, seed_from, seed_stamped,
+    start, table, two,
 };
 use crate::support::{Fallible, Sandbox};
 
@@ -121,9 +119,8 @@ async fn invalid_rules_fail_closed() {
 #[tokio::test]
 async fn late_decisions_do_not_hand_off() {
     let sandbox = Sandbox::new("batch-late").unwrap();
-    let elapsed = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-    let now = u64::try_from(elapsed.as_millis()).unwrap();
-    seed_stamped(&sandbox, &[((KEY, "u1", "c1", "server down"), now)]).unwrap();
+    let stamp = now().unwrap();
+    seed_stamped(&sandbox, &[((KEY, "u1", "c1", "server down"), stamp)]).unwrap();
     let held = json!({"limits": {
         "lookback_ms": BRIEF_LOOKBACK,
         "max_decisions_per_hour": NONE,
@@ -168,40 +165,6 @@ async fn messages_before_the_lookback_are_ignored() {
     start(&sandbox, &patch, QUICK).await.unwrap();
     assert_eq!(table(&sandbox, LINES).unwrap(), NOTHING);
     assert_eq!(calls(&sandbox, "decide").unwrap(), 0);
-}
-
-#[tokio::test]
-async fn newest_messages_are_batched_first() {
-    let sandbox = Sandbox::new("batch-next").unwrap();
-    let rows = [
-        (KEY, "u1", "c1", "server down"),
-        (SECOND, "u1", "c1", "still down"),
-        (THIRD, "u1", "c1", "again"),
-    ];
-    seed(&sandbox, &rows).unwrap();
-    let patch = json!({"limits": {"batch": TWO}});
-    start(&sandbox, &patch, QUICK).await.unwrap();
-    assert_eq!(calls(&sandbox, "decide").unwrap(), 2);
-    assert_eq!(
-        table(&sandbox, LINES).unwrap(),
-        [
-            format!("{KEY}|approved||2"),
-            format!("{SECOND}|approved||1"),
-            format!("{THIRD}|approved||1"),
-        ]
-    );
-    assert_eq!(
-        table(&sandbox, BATCHES).unwrap(),
-        ["1|sent|0|", "2|sent|0|"]
-    );
-    assert_eq!(
-        table(&sandbox, PLACEMENTS).unwrap(),
-        [
-            format!("{KEY}|T1|0.95"),
-            format!("{SECOND}|T1|0.95"),
-            format!("{THIRD}|T1|0.95"),
-        ]
-    );
 }
 
 #[tokio::test]
@@ -272,9 +235,9 @@ async fn next_batch_waits_for_the_previous_decision_before_sealing() {
     assert_eq!(
         table(&sandbox, LINES).unwrap(),
         [
-            format!("{KEY}|approved||2"),
+            format!("{KEY}|approved||1"),
             format!("{SECOND}|approved||1"),
-            format!("{THIRD}|approved||1"),
+            format!("{THIRD}|approved||2"),
         ]
     );
 }
@@ -306,6 +269,40 @@ async fn priorities_are_scored_per_line() {
     );
 }
 
+#[tokio::test]
+async fn recent_messages_are_batched_oldest_first() {
+    let sandbox = Sandbox::new("batch-next").unwrap();
+    let rows = [
+        (KEY, "u1", "c1", "server down"),
+        (SECOND, "u1", "c1", "still down"),
+        (THIRD, "u1", "c1", "again"),
+    ];
+    seed(&sandbox, &rows).unwrap();
+    let patch = json!({"limits": {"batch": TWO}});
+    start(&sandbox, &patch, QUICK).await.unwrap();
+    assert_eq!(calls(&sandbox, "decide").unwrap(), 2);
+    assert_eq!(
+        table(&sandbox, LINES).unwrap(),
+        [
+            format!("{KEY}|approved||1"),
+            format!("{SECOND}|approved||1"),
+            format!("{THIRD}|approved||2"),
+        ]
+    );
+    assert_eq!(
+        table(&sandbox, BATCHES).unwrap(),
+        ["1|sent|0|", "2|sent|0|"]
+    );
+    assert_eq!(
+        table(&sandbox, PLACEMENTS).unwrap(),
+        [
+            format!("{KEY}|T1|0.95"),
+            format!("{SECOND}|T1|0.95"),
+            format!("{THIRD}|T1|0.95"),
+        ]
+    );
+}
+
 async fn stalled(name: &str) -> Fallible<Sandbox> {
     let sandbox = Sandbox::new(name)?;
     seed(&sandbox, &three())?;
@@ -319,8 +316,8 @@ async fn stalled(name: &str) -> Fallible<Sandbox> {
 
 const fn three() -> [Seed<'static>; 3] {
     [
-        (KEY, "u1", "c2", "server down"),
+        (KEY, "u1", "c1", "server down"),
         (SECOND, "u1", "c1", "still down"),
-        (THIRD, "u1", "c1", "again"),
+        (THIRD, "u1", "c2", "again"),
     ]
 }

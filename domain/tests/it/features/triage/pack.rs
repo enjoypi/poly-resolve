@@ -142,6 +142,7 @@ fn pack_ignores_stale_or_foreign_attachments() {
     let attach = json!([
         {"conversation_id": "c2", "last_ms": NOON, "topic_id": "foreign"},
         {"conversation_id": "c1", "last_ms": NOON - 10 * MINUTE, "topic_id": "stale"},
+        {"conversation_id": "c1", "last_ms": NOON + 10 * MINUTE, "topic_id": "later"},
     ]);
     let reply = pack(&lines, &attach, &json!([])).unwrap().unwrap();
     let layout = reply.get("layout").unwrap();

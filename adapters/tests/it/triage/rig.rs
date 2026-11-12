@@ -1,5 +1,6 @@
 use std::env;
 use std::io::ErrorKind;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use adapters::store::{Archive, Shelf};
 use domain::review::{Docket as _, Draw, Ruling};
@@ -86,6 +87,11 @@ pub(super) async fn logged(sandbox: &Sandbox, patch: &Value, millis: u64) -> Fal
     sandbox
         .triage_logged(&Run::new(&ingest, &triage), millis)
         .await
+}
+
+pub(super) fn now() -> Fallible<u64> {
+    let elapsed = SystemTime::now().duration_since(UNIX_EPOCH)?;
+    Ok(u64::try_from(elapsed.as_millis())?)
 }
 
 pub(super) const fn one() -> [Seed<'static>; 1] {

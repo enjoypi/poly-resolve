@@ -238,7 +238,7 @@ fn attached<'req>(req: &'req PackRequest, first: &Entry) -> Option<&'req str> {
         .iter()
         .find(|point| {
             point.conversation_id == first.conversation_id
-                && first.row.occurred_at_ms().saturating_sub(point.last_ms) <= req.gap_ms
+                && first.row.occurred_at_ms().abs_diff(point.last_ms) <= req.gap_ms
         })
         .map(|point| point.topic_id.as_str())
 }
