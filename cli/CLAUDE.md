@@ -71,6 +71,7 @@
   - `assets.rs`：临时 `web_dir`，含目录外的 `secret.txt` 验证不可越界
   - `messages.rs`：用 `adapters::store::Archive` 播种临时库（含两个来源），经 HTTP 翻页与按时间筛选
   - `outbound.rs`：用 dev-dependency `rusqlite` 往库里插 `lines` 行，覆盖列表的 `placeholders`、按状态筛选、条数无效 400，以及删库后 `Shelf` 的 `Outbox` 失败日志分支（其 `tracing` 参数只在有 subscriber 时求值）
+  - `topics.rs`：同样插行，覆盖话题列表按状态筛选、详情、查无 404、条数无效 400 与删库后的 503
   - `host.rs`：Host 放行与 403、415、内部动作路径 404、POST 405
 - `YAML` 的钉钉源嵌在 `ingest.sources` 列表里，`dws.env` 下的键缩进 12 格，按行替换时照此缩进
 - 配置用例经 `support::load`（`ingest` 子命令）：配置错误退出 2，配置有效则在沙箱自检处以 `sandbox_exit_code` 退出

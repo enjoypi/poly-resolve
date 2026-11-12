@@ -127,6 +127,6 @@
 ## 测试
 
 - `tests/it/support.rs`：`local` 构造 adapters 来源的 `Call`（需要参数时 `.with_params`）；`Fixture` 持有 `Errors`、`Paging`、占位符 `[x]` 与一个 `Seal`（各 `dispatch*` 都附上），`dispatch_unsealed` 不带密钥，`dispatch` 用空 reader，`dispatch_with(&reader, &call)` 换 reader，`dispatch_outbox(&outbox, &call)` 换外发记录，`dispatch_prompts(&library, &call)` 换提示词存储
-- 替身：`Rows`（按契约过滤并截断的内存 reader）；`Broken`（`Reader`、`Outbox`、`Roster` 都恒返回 `Storage`）；`Pool`（内存 `Roster`，`failed` 重发得 `ready`，其余返回原状态）；`dispatch_roster(&roster, &call)` 换失败批端口；`Sent`（内存 `Outbox`，按键与状态存项）
+- 替身：`Rows`（按契约过滤并截断的内存 reader）；`Broken`（`Reader`、`Outbox`、`Roster` 都恒返回 `Storage`）；`Pool`（内存 `Roster`，`failed` 重发得 `ready`，其余返回原状态）；`dispatch_roster(&roster, &call)` 换失败批端口；`Desk`（内存 `Board`，只认话题 `KNOWN`），经 `dispatch_board(&board, &call)` 接入；`Sent`（内存 `Outbox`，按键与状态存项）
 - triage 测试按动作一文件，放 `tests/it/features/triage/`，与 `src/features/triage/` 对应
 - 用 scoped subscriber 捕获日志前先确保常驻占位 `Dispatch`（`tests/it/log.rs` 的 `ANCHOR`）：tracing-core 只注册 1 个 dispatcher 时按当前线程算 callsite interest，并行测试中无 subscriber 的线程会把 interest 缓存成 never，日志丢失

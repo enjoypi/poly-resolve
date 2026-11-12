@@ -51,7 +51,7 @@
 
 - 只读：`GET /api/outbound` 取 `CARD_LIMIT`（200）条，`state` 取下拉框的值（`OUTBOUND_STATES`：已外发 `approved`、未外发 `withheld`），切换或点“刷新”重新请求；没有通过、拒绝、取批，不自动轮询
 - 标红：返回的 `placeholders` 转义后拼成带捕获组的正则切分正文，占位符放 `span.masked`（`--mask` 红色），其余用文本节点
-- 每行一张卡片：批号、来源（`SOURCES` 映射）与账号、会话、发送人、时间、角色（`ROLES`：本人、自动邮件）、脱敏文字；未外发的加 `flagged` 类并写明原因（`HELD` 映射，未登记原样）
+- 每行一张卡片：批号、来源（`SOURCES` 映射）与账号、会话、发送人、时间、角色（`ROLES`：本人、自动邮件、重复转发）、脱敏文字；未外发的加 `flagged` 类并写明原因（`HELD` 映射，未登记原样）
 - 安全：文字只经文本节点与 `span` 的 `textContent` 写入 `<pre>`，不渲染
 - happy-dom 无全局 `Option`，下拉项用 `createElement("option")`
 
