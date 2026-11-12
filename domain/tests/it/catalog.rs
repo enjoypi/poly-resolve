@@ -3,7 +3,7 @@ use serde_json::json;
 
 use crate::support::{Fixture, local};
 
-static ROUTES: [Bound; 7] = [
+static ROUTES: [Bound; 9] = [
     ("batches", "list", "get", "/api/batches"),
     ("batches", "update", "patch", "/api/batches/{batch_id}"),
     ("health", "check", "get", "/api/health"),
@@ -11,8 +11,10 @@ static ROUTES: [Bound; 7] = [
     ("outbound", "list", "get", "/api/outbound"),
     ("prompts", "list", "get", "/api/prompts"),
     ("prompts", "update", "patch", "/api/prompts/{name}"),
+    ("topics", "get", "get", "/api/topics/{topic_id}"),
+    ("topics", "list", "get", "/api/topics"),
 ];
-static SCHEMAS: [&str; 19] = [
+static SCHEMAS: [&str; 27] = [
     "BatchItem",
     "BatchKey",
     "BatchListRequest",
@@ -32,6 +34,14 @@ static SCHEMAS: [&str; 19] = [
     "PromptsListResponse",
     "PromptsNameResponse",
     "PromptsUpdateRequest",
+    "TopicChange",
+    "TopicDetail",
+    "TopicEntry",
+    "TopicItem",
+    "TopicKey",
+    "TopicListRequest",
+    "TopicOverview",
+    "TopicTally",
 ];
 
 type Bound = (&'static str, &'static str, &'static str, &'static str);
@@ -123,6 +133,8 @@ fn lists_failures_per_route() {
             ("outbound", vec![400, 503]),
             ("prompts", vec![503]),
             ("prompts", vec![400, 404, 422, 503]),
+            ("topics", vec![400, 404, 503]),
+            ("topics", vec![400, 503]),
         ]
     );
 }

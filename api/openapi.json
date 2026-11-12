@@ -435,6 +435,272 @@
           "text"
         ],
         "type": "object"
+      },
+      "TopicChange": {
+        "properties": {
+          "at_ms": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "from_topic": {
+            "type": "string"
+          },
+          "keys": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "serial": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "state": {
+            "type": "string"
+          },
+          "to_topic": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "at_ms",
+          "from_topic",
+          "keys",
+          "kind",
+          "reason",
+          "serial",
+          "state",
+          "to_topic"
+        ],
+        "type": "object"
+      },
+      "TopicDetail": {
+        "properties": {
+          "changes": {
+            "items": {
+              "$ref": "#/components/schemas/TopicChange"
+            },
+            "type": "array"
+          },
+          "timeline": {
+            "items": {
+              "$ref": "#/components/schemas/TopicEntry"
+            },
+            "type": "array"
+          },
+          "topic": {
+            "$ref": "#/components/schemas/TopicItem"
+          }
+        },
+        "required": [
+          "changes",
+          "timeline",
+          "topic"
+        ],
+        "type": "object"
+      },
+      "TopicEntry": {
+        "properties": {
+          "conversation_id": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string"
+          },
+          "occurred_at_ms": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          },
+          "sender": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          },
+          "via": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "conversation_id",
+          "key",
+          "occurred_at_ms",
+          "reason",
+          "role",
+          "sender",
+          "source",
+          "state",
+          "text",
+          "via"
+        ],
+        "type": "object"
+      },
+      "TopicItem": {
+        "properties": {
+          "conversations": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "label": {
+            "type": "string"
+          },
+          "last_at_ms": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "members": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "people": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "score": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "sources": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "state": {
+            "type": "string"
+          },
+          "topic_id": {
+            "type": "string"
+          },
+          "urgency": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "verdict": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "conversations",
+          "label",
+          "last_at_ms",
+          "members",
+          "people",
+          "sources",
+          "state",
+          "topic_id",
+          "verdict"
+        ],
+        "type": "object"
+      },
+      "TopicKey": {
+        "properties": {
+          "topic_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "topic_id"
+        ],
+        "type": "object"
+      },
+      "TopicListRequest": {
+        "properties": {
+          "limit": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "state": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "TopicOverview": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/TopicItem"
+            },
+            "type": "array"
+          },
+          "lines": {
+            "items": {
+              "$ref": "#/components/schemas/TopicTally"
+            },
+            "type": "array"
+          },
+          "topics": {
+            "items": {
+              "$ref": "#/components/schemas/TopicTally"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items",
+          "lines",
+          "topics"
+        ],
+        "type": "object"
+      },
+      "TopicTally": {
+        "properties": {
+          "count": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "count",
+          "reason",
+          "state"
+        ],
+        "type": "object"
       }
     }
   },
@@ -995,6 +1261,166 @@
               }
             },
             "description": "violates rules"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "storage unavailable"
+          }
+        }
+      }
+    },
+    "/api/topics": {
+      "get": {
+        "parameters": [
+          {
+            "description": "set by the gateway",
+            "in": "header",
+            "name": "x-session-id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "set by the gateway",
+            "in": "header",
+            "name": "x-user",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "state",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TopicOverview"
+                }
+              }
+            },
+            "description": "success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "bad request"
+          },
+          "403": {
+            "description": "host not allowed"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "storage unavailable"
+          }
+        }
+      }
+    },
+    "/api/topics/{topic_id}": {
+      "get": {
+        "parameters": [
+          {
+            "description": "set by the gateway",
+            "in": "header",
+            "name": "x-session-id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "set by the gateway",
+            "in": "header",
+            "name": "x-user",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "topic_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TopicDetail"
+                }
+              }
+            },
+            "description": "success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "bad request"
+          },
+          "403": {
+            "description": "host not allowed"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "not found"
           },
           "503": {
             "content": {

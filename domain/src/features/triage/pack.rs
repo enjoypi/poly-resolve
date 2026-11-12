@@ -17,6 +17,7 @@ const COPY: &str = "copy";
 pub(crate) const LINE: &str = "{line}";
 const NEW: &str = "new";
 const NONE: &str = "none";
+pub(crate) const REVIEW: &str = "{review}";
 pub(crate) const SEGMENT: &str = "{segment}";
 
 #[derive(Deserialize, JsonSchema)]
@@ -46,6 +47,8 @@ impl Block<'_> {
             .map_or(0, |entry| entry.row.occurred_at_ms())
     }
 }
+
+type Checks = (Vec<Value>, Vec<Value>);
 
 struct Draft {
     input: Vec<Value>,
@@ -111,6 +114,8 @@ pub(crate) struct PackRequest {
     new_label: String,
     none_label: String,
     questions: Questions,
+    #[serde(default)]
+    reviews: Vec<Review>,
     rules: Vec<Rule>,
     topics: Vec<Open>,
 }
@@ -140,8 +145,17 @@ pub(crate) struct Question {
 #[derive(Deserialize, JsonSchema)]
 #[schemars(rename = "TriageQuestions")]
 pub(crate) struct Questions {
+    review: Question,
     topic: Question,
     urgent: Question,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[schemars(rename = "TriageReview")]
+pub(crate) struct Review {
+    left: String,
+    right: String,
+    tag: Value,
 }
 
 pub(super) fn alias(prefix: &str, index: usize) -> String {
@@ -265,6 +279,18 @@ fn draft(req: &PackRequest, found: &[Block<'_>], style: &Style<'_>) -> Draft {
     done
 }
 
+fn history(req: &PackRequest) -> BTreeMap<String, Option<f64>> {
+    req.topics
+        .iter()
+        .map(|topic| (topic.topic.clone(), topic.probability))
+        .chain(
+            req.attach
+                .iter()
+                .map(|point| (point.topic_id.clone(), point.probability)),
+        )
+        .collect()
+}
+
 fn label_of(req: &PackRequest, block: &Block<'_>, style: &Style<'_>) -> String {
     let chars = usize::try_from(req.label_chars).unwrap_or(usize::MAX);
     block.entries.first().map_or_else(String::new, |entry| {
@@ -359,7 +385,8 @@ pub(crate) fn pack(req: &PackRequest, seal: Option<&Seal>) -> Result<PackRespons
     let found = blocks(req);
     let drafted = draft(req, &found, &style);
     let options = options(req, &found, &style);
-    let mut next = drafted.urgent.len();
+    let (shown, checks) = reviews(req, &style, max);
+    let mut next = drafted.urgent.len().saturating_add(checks.len());
     let segments: Vec<Segment> = found
         .iter()
         .zip(&options)
@@ -390,26 +417,29 @@ pub(crate) fn pack(req: &PackRequest, seal: Option<&Seal>) -> Result<PackRespons
         .enumerate()
         .filter(|&(_, picks)| !picks.is_empty())
         .map(|(index, picks)| choice(&req.questions.topic, index, picks));
-    let questions: Vec<Value> = drafted.urgent.into_iter().chain(asked).collect();
+    let questions: Vec<Value> = drafted
+        .urgent
+        .into_iter()
+        .chain(checks)
+        .chain(asked)
+        .collect();
     let count = questions.len();
+    let input: Vec<Value> = drafted.input.into_iter().chain(shown).collect();
     let body = json!({
-        "input": Value::Array(drafted.input).to_string(),
+        "input": Value::Array(input).to_string(),
         "model": req.model,
         "questions": questions,
     });
     Ok(PackResponse {
         body: to_string(&body).unwrap_or_default(),
-        layout: Layout::new(req.batch_id, drafted.lines, segments).with_probabilities(
-            req.topics
-                .iter()
-                .map(|topic| (topic.topic.clone(), topic.probability))
-                .chain(
-                    req.attach
-                        .iter()
-                        .map(|point| (point.topic_id.clone(), point.probability)),
-                )
-                .collect(),
-        ),
+        layout: Layout::new(req.batch_id, drafted.lines, segments)
+            .with_reviews(
+                req.reviews
+                    .iter()
+                    .map(|review| review.tag.clone())
+                    .collect(),
+            )
+            .with_probabilities(history(req)),
         questions: count,
     })
 }
@@ -420,6 +450,27 @@ fn predicate(question: &Question, number: usize) -> Value {
         "name": format!("{}_{}", question.name, number.saturating_add(1)),
         "type": "predicate",
     })
+}
+
+fn reviews(req: &PackRequest, style: &Style<'_>, max: usize) -> Checks {
+    let question = &req.questions.review;
+    req.reviews
+        .iter()
+        .enumerate()
+        .map(|(index, review)| {
+            let name = alias("R", index);
+            let side =
+                |text: &str| -> String { style.mask().apply(text).chars().take(max).collect() };
+            (
+                json!({"left": side(&review.left), "review": name, "right": side(&review.right)}),
+                json!({
+                    "instructions": question.instructions.replace(REVIEW, &name),
+                    "name": format!("{}_{}", question.name, index.saturating_add(1)),
+                    "type": "predicate",
+                }),
+            )
+        })
+        .unzip()
 }
 
 fn topic_label(req: &PackRequest, open: &Open, style: &Style<'_>) -> String {

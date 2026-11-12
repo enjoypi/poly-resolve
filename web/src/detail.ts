@@ -1,6 +1,6 @@
 import { badge } from "./badge";
 import { type Column, content, display, type Row } from "./columns";
-import { DETAIL, TEXT } from "./config";
+import { DETAIL, TEXT, TOPIC_HASH } from "./config";
 import { blocks } from "./markdown";
 import { stamp } from "./stamp";
 
@@ -19,12 +19,20 @@ function fields(item: Row, columns: Column[], timeZone?: string): HTMLElement {
       column.kind === "time" && typeof raw === "number"
         ? stamp(raw, timeZone)
         : display(item, column, timeZone);
-    list.append(area("dt", "name", column.label), area("dd", "value", shown));
+    list.append(area("dt", "name", column.label), area("dd", "value", jump(column.key, shown)));
   }
   const holder = document.createElement("details");
   holder.className = "fields";
   holder.append(area("summary", "", TEXT.fields), list);
   return holder;
+}
+
+function jump(key: string, shown: string): Node | string {
+  if (key !== DETAIL.topic || shown === "") return shown;
+  const anchor = document.createElement("a");
+  anchor.href = `${TOPIC_HASH}${encodeURIComponent(shown)}`;
+  anchor.textContent = shown;
+  return anchor;
 }
 
 function head(item: Row, columns: Column[], close: () => void, timeZone?: string): HTMLElement {

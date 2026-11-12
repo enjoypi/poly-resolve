@@ -59,7 +59,9 @@ fn spec_declares_statuses_per_operation() {
             "/api/messages",
             "/api/outbound",
             "/api/prompts",
-            "/api/prompts/{name}"
+            "/api/prompts/{name}",
+            "/api/topics",
+            "/api/topics/{topic_id}"
         ]
     );
 }

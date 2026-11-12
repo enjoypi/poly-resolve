@@ -6,6 +6,7 @@ mod messages;
 mod outbound;
 mod prompts;
 mod routes;
+mod topics;
 pub(crate) mod triage;
 
 use std::time::Instant;
@@ -22,8 +23,10 @@ use crate::inbox::{Paging, Reader};
 use crate::outbound::Outbox;
 use crate::prompts::{Library, Vacant};
 use crate::redact::Seal;
+use crate::topics::{Blank, Board};
 use crate::{AppError, Errors};
 
+static BLANK: Blank = Blank;
 static VACANT: Vacant = Vacant;
 
 type Binding = (&'static str, &'static str, Describer);
@@ -55,12 +58,17 @@ impl<'call> Call<'call> {
 
 #[derive(Clone, Copy, Debug)]
 pub struct Context<'ctx> {
+    board: &'ctx dyn Board,
     errors: &'ctx Errors,
     ports: Ports<'ctx>,
     rules: Rules<'ctx>,
 }
 
 impl<'ctx> Context<'ctx> {
+    const fn board(&self) -> &dyn Board {
+        self.board
+    }
+
     const fn errors(&self) -> &Errors {
         self.errors
     }
@@ -72,6 +80,7 @@ impl<'ctx> Context<'ctx> {
     #[must_use = "上下文需交给 dispatch"]
     pub const fn new(errors: &'ctx Errors, rules: Rules<'ctx>, ports: Ports<'ctx>) -> Self {
         Self {
+            board: &BLANK,
             errors,
             ports,
             rules,
@@ -100,6 +109,11 @@ impl<'ctx> Context<'ctx> {
 
     const fn seal(&self) -> Option<&Seal> {
         self.rules.seal
+    }
+
+    #[must_use = "上下文需交给 dispatch"]
+    pub const fn with_board(self, board: &'ctx dyn Board) -> Self {
+        Self { board, ..self }
     }
 
     #[must_use = "上下文需交给 dispatch"]

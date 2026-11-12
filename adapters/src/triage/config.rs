@@ -75,6 +75,7 @@ struct Limits {
     lookback_ms: u64,
     max_attempts: NonZeroU32,
     max_revivals: u32,
+    notice_cooldown_ms: u64,
     parallel: NonZeroU32,
     poll_ms: NonZeroU64,
     retry_after_ms: u64,
@@ -103,12 +104,17 @@ impl Question {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Questions {
+    review: Review,
     threshold: f64,
     topic: Topic,
     urgent: Question,
 }
 
 impl Questions {
+    pub(crate) const fn review(&self) -> &Review {
+        &self.review
+    }
+
     pub(crate) const fn threshold(&self) -> f64 {
         self.threshold
     }
@@ -130,6 +136,23 @@ struct Redact {
     hash_key: Var,
     patterns: Vec<Rule>,
     unknown_sender: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Review {
+    name: String,
+    threshold: f64,
+}
+
+impl Review {
+    pub(crate) fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub(crate) const fn threshold(&self) -> f64 {
+        self.threshold
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -297,6 +320,10 @@ impl Settings {
 
     pub(crate) const fn notice(&self) -> &Notice {
         &self.notice
+    }
+
+    pub(crate) const fn notice_cooldown_ms(&self) -> u64 {
+        self.limits.notice_cooldown_ms
     }
 
     pub(crate) const fn notify(&self) -> &Exec {

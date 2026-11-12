@@ -302,6 +302,59 @@ fn sort_rejects_unusable_responses() {
 }
 
 #[test]
+fn sort_returns_review_verdicts_by_position() {
+    let mut reviewed = layout();
+    drop(
+        reviewed
+            .as_object_mut()
+            .unwrap()
+            .insert("reviews".to_owned(), json!([{"a": "x"}, {"a": "y"}])),
+    );
+    for segment in reviewed
+        .get_mut("segments")
+        .and_then(Value::as_array_mut)
+        .unwrap()
+    {
+        let shifted = segment
+            .get("question")
+            .and_then(Value::as_u64)
+            .map(|slot| slot + 2);
+        drop(
+            segment
+                .as_object_mut()
+                .unwrap()
+                .insert("question".to_owned(), json!(shifted)),
+        );
+    }
+    let response = answers(&[
+        predicate(LOW),
+        predicate(LOW),
+        predicate(LOW),
+        predicate(HIGH),
+        Value::Null,
+        choice(&json!("new"), STRONG),
+        choice(&json!("new"), STRONG),
+    ]);
+    let reply = sort_with(&reviewed, &response).unwrap().unwrap();
+    assert_eq!(
+        reply.get("reviews"),
+        Some(&json!([
+            {"probability": HIGH, "tag": {"a": "x"}},
+            {"probability": null, "tag": {"a": "y"}},
+        ]))
+    );
+    assert_eq!(topics_of(&reply), ["t-old", "t7-1", "t7-2"]);
+    let short = answers(&[
+        predicate(LOW),
+        predicate(LOW),
+        predicate(LOW),
+        choice(&json!("new"), STRONG),
+        choice(&json!("new"), STRONG),
+    ]);
+    assert_eq!(sort_with(&reviewed, &short).unwrap(), Err(400));
+}
+
+#[test]
 fn sort_treats_refusals_missing_fields_and_bad_probabilities_as_unanswered() {
     let response = answers(&[
         json!({"name": null, "type": "refusal"}),

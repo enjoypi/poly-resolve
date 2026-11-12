@@ -4,6 +4,7 @@ mod pack;
 mod people;
 mod prompt;
 mod redact;
+mod regroup;
 mod reply;
 mod screen;
 mod screened;

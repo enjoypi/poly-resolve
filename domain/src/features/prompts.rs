@@ -1,14 +1,15 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use super::triage::pack::{LINE, SEGMENT};
+use super::triage::pack::{LINE, REVIEW, SEGMENT};
 use super::triage::prompt::MESSAGES;
 use crate::AppError;
 use crate::features::Context;
 use crate::prompts::Prompt;
 
-static TABLE: [Entry; 5] = [
+static TABLE: [Entry; 6] = [
     ("followup", &[MESSAGES]),
+    ("review", &[REVIEW]),
     ("screen", &[]),
     ("session", &[MESSAGES]),
     ("topic", &[SEGMENT]),

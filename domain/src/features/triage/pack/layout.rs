@@ -2,6 +2,7 @@ use alloc::collections::BTreeMap;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 #[derive(Clone, Deserialize, JsonSchema, Serialize)]
 #[schemars(rename = "TriageChoice")]
@@ -44,6 +45,8 @@ pub(crate) struct Layout {
     lines: Vec<Placed>,
     #[serde(default)]
     probabilities: BTreeMap<String, Option<f64>>,
+    #[serde(default)]
+    reviews: Vec<Value>,
     segments: Vec<Segment>,
 }
 
@@ -61,6 +64,7 @@ impl Layout {
             batch_id,
             lines,
             probabilities: BTreeMap::new(),
+            reviews: Vec::new(),
             segments,
         }
     }
@@ -77,12 +81,20 @@ impl Layout {
     }
 
     pub(crate) fn questions(&self) -> usize {
-        self.predicates().saturating_add(
+        self.scored().saturating_add(
             self.segments
                 .iter()
                 .filter(|segment| segment.question.is_some())
                 .count(),
         )
+    }
+
+    pub(crate) fn reviews(&self) -> &[Value] {
+        &self.reviews
+    }
+
+    pub(crate) fn scored(&self) -> usize {
+        self.predicates().saturating_add(self.reviews.len())
     }
 
     pub(crate) fn segments(&self) -> &[Segment] {
@@ -94,6 +106,10 @@ impl Layout {
             probabilities,
             ..self
         }
+    }
+
+    pub(crate) fn with_reviews(self, reviews: Vec<Value>) -> Self {
+        Self { reviews, ..self }
     }
 }
 

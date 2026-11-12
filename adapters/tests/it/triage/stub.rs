@@ -130,6 +130,12 @@ fn answer(behavior: &Value, question: &Value) -> Value {
     if let Some(("urgent", _)) = name.split_once('_') {
         let score = probability(behavior, name);
         json!({ "name": name, "probability": score, "type": "predicate" })
+    } else if let Some(("review", _)) = name.split_once('_') {
+        let score: f64 = listed(behavior, "review", 0)
+            .unwrap_or_else(|| DEFAULT_PROBABILITY.to_owned())
+            .parse()
+            .unwrap_or_default();
+        json!({ "name": name, "probability": score, "type": "predicate" })
     } else {
         let index = ordinal(name).saturating_sub(1);
         let pick = listed(behavior, "topics", index).unwrap_or_else(|| "new".to_owned());

@@ -14,9 +14,11 @@ const ANALYSIS: &str = "{analysis}";
 const CHANGES: &str = "{changes}";
 const CONVERSATIONS: &str = "{conversations}";
 const COUNT: &str = "{count}";
+const ITEMS: &str = "{items}";
 const LABEL: &str = "{label}";
 const LATE: &str = "{late}";
 pub(crate) const MESSAGES: &str = "{messages}";
+const ORIGIN: &str = "{origin}";
 const PEOPLE: &str = "{people}";
 const REASON: &str = "{reason}";
 const SCORE: &str = "{score}";
@@ -60,6 +62,10 @@ pub(crate) struct NoticeRequest {
     late_ms: Option<u64>,
     max_chars: u32,
     #[serde(default)]
+    origin: String,
+    #[serde(default)]
+    origins: BTreeMap<String, String>,
+    #[serde(default)]
     reach: Reach,
     #[serde(default)]
     score: Option<f64>,
@@ -88,6 +94,25 @@ pub(crate) struct Reach {
     people: u64,
     #[serde(default)]
     sources: u64,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[schemars(rename = "TriageRecapItem")]
+pub(crate) struct RecapItem {
+    label: String,
+    #[serde(default)]
+    score: Option<f64>,
+    state: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[schemars(rename = "TriageRecapRequest")]
+pub(crate) struct RecapRequest {
+    item: String,
+    items: Vec<RecapItem>,
+    #[serde(default)]
+    states: BTreeMap<String, String>,
+    template: String,
 }
 
 #[derive(Clone, Copy, JsonSchema, Serialize)]
@@ -146,6 +171,8 @@ pub(crate) fn notice(req: NoticeRequest) -> NoticeResponse {
         late,
         late_ms,
         max_chars,
+        origin,
+        origins,
         reach,
         score,
         state,
@@ -170,6 +197,7 @@ pub(crate) fn notice(req: NoticeRequest) -> NoticeResponse {
             .replace(SOURCES, &reach.sources.to_string())
             .replace(STATE, states.get(&state).unwrap_or(&state))
             .replace(LATE, &delayed)
+            .replace(ORIGIN, origins.get(&origin).map_or("", String::as_str))
             .replace(LABEL, &label)
             .replace(CHANGES, &changes)
             .replacen(ANALYSIS, &excerpt, 1),
@@ -178,4 +206,28 @@ pub(crate) fn notice(req: NoticeRequest) -> NoticeResponse {
 
 fn ratio(value: Option<f64>) -> String {
     value.map_or_default(|found| format!("{found:.2}"))
+}
+
+pub(crate) fn recap(req: RecapRequest) -> NoticeResponse {
+    let RecapRequest {
+        item,
+        items,
+        states,
+        template,
+    } = req;
+    let lines: Vec<String> = items
+        .iter()
+        .map(|entry| {
+            item.replace(SCORE, &ratio(entry.score))
+                .replace(STATE, states.get(&entry.state).unwrap_or(&entry.state))
+                .replace(LABEL, &entry.label)
+        })
+        .collect();
+    NoticeResponse {
+        text: template.replace(COUNT, &items.len().to_string()).replacen(
+            ITEMS,
+            &lines.join("\n"),
+            1,
+        ),
+    }
 }

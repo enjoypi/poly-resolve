@@ -19,8 +19,9 @@ const PROFILE: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../adapters/tests/it/fixtures/fake.sb"
 );
-const PROMPTS: [(&str, &str); 4] = [
+const PROMPTS: [(&str, &str); 5] = [
     ("followup", "f {messages}"),
+    ("review", "r {review}"),
     ("session", "p {messages}"),
     ("topic", "t {segment}"),
     ("urgent", "i {line}"),
@@ -61,17 +62,18 @@ triage:
     lookback_ms: 1000
     max_attempts: 1
     max_revivals: 1
+    notice_cooldown_ms: 0
     parallel: 2
     poll_ms: 10
     retry_after_ms: 0
     retry_max_ms: 1000
   mode: disabled
   model: m
-  notice: {late: l, late_after_ms: 1000, states: {}, template: n}
+  notice: {late: l, late_after_ms: 1000, origins: {}, states: {}, summary: {item: i, template: s}, template: n}
   notify: {args: [x], bin: /nonexistent/triage, env: {FAKE_DIR: /nonexistent}, sandbox: *fence, timeout_ms: 1000, vars: {PATH: \"${PATH}\"}}
   notify_target: \"${HOME}\"
   prompts_dir: /nonexistent/prompts
-  questions: {threshold: 0.8, topic: {min_confidence: 0.6, name: topic, new_label: n, none_label: z}, urgent: {name: urgent}}
+  questions: {review: {name: review, threshold: 0.5}, threshold: 0.8, topic: {min_confidence: 0.6, name: topic, new_label: n, none_label: z}, urgent: {name: urgent}}
   redact:
     digest_min_chars: 12
     hash_chars: 8
@@ -90,6 +92,9 @@ triage:
     archive_after_ms: 1000
     clues: {patterns: [], subject: {ignore: [], min_chars: 4, prefixes: []}}
     max_open: 5
+    merge_after: 2
+    review_max: 3
+    split_after: 2
     reach: {cap: 0.5, conversations: 0.1, people: 0.1, sources: 0.1}
 ingest:
   backoff_initial_ms: 5

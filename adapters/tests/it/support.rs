@@ -67,8 +67,9 @@ const PARALLEL_LIMIT: u32 = 2;
 const PARALLEL_SCREEN: u32 = 2;
 const POLL: u64 = 20;
 const PROFILE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/it/fixtures/fake.sb");
-const PROMPTS: [(&str, &str); 5] = [
+const PROMPTS: [(&str, &str); 6] = [
     ("followup", "next:{messages}"),
+    ("review", "same {review}"),
     ("screen", "judge"),
     ("session", "ctx:{messages}"),
     ("topic", "which {segment}"),
@@ -81,6 +82,8 @@ pub(crate) const REFUSE_INSERT: &str =
 pub(crate) const REFUSE_UPDATE: &str =
     "CREATE TRIGGER refuse BEFORE UPDATE ON messages BEGIN SELECT RAISE(ABORT, 'refused'); END;";
 const RETRY_MAX: u64 = 3_600_000;
+const REVIEWS: u32 = 3;
+const REVIEW_THRESHOLD: f64 = 0.5;
 const REVIVALS: u32 = 0;
 pub(crate) const SEALED: &str = "QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo0MTIzNDU2||2||1||196";
 const SHARED: [&str; 6] = [
@@ -95,6 +98,7 @@ const SUBJECT_CHARS: u32 = 4;
 pub(crate) const TEXT_STAMP: &str = "CREATE TABLE messages (key TEXT PRIMARY KEY, source TEXT, account TEXT, occurred_at_ms TEXT); INSERT INTO messages VALUES ('k', 'dingtalk', 'acct', 'abc');";
 const THRESHOLD: f64 = 0.8;
 const TOPICS: u32 = 5;
+const VOTES: u32 = 2;
 const ZERO: u64 = 0;
 
 pub(crate) type Fallible<T> = Result<T, Box<dyn Error>>;
@@ -283,6 +287,7 @@ impl Sandbox {
                 "lookback_ms": LOOKBACK,
                 "max_attempts": ATTEMPTS,
                 "max_revivals": REVIVALS,
+                "notice_cooldown_ms": ZERO,
                 "parallel": PARALLEL_LIMIT,
                 "poll_ms": POLL,
                 "retry_after_ms": ZERO,
@@ -293,13 +298,16 @@ impl Sandbox {
             "notice": {
                 "late": " late {time}",
                 "late_after_ms": LOOKBACK,
+                "origins": {"merge": " merged", "move": " moved", "split": " split"},
                 "states": {"resolved": "done"},
-                "template": "[{score}] {state} {label} {topic}{late}|{changes}|{analysis}",
+                "summary": {"item": "{label}/{state}/{score}", "template": "{count} topics:\n{items}"},
+                "template": "[{score}] {state} {label} {topic}{late}{origin}|{changes}|{analysis}",
             },
             "notify": self.exec("send"),
             "notify_target": "${CARGO_PKG_VERSION}",
             "prompts_dir": self.prompts()?,
             "questions": {
+                "review": {"name": "review", "threshold": REVIEW_THRESHOLD},
                 "threshold": THRESHOLD,
                 "topic": {
                     "min_confidence": MIN_CONFIDENCE,
@@ -460,6 +468,9 @@ fn text_settings() -> Value {
                 "subject": {"ignore": [], "min_chars": SUBJECT_CHARS, "prefixes": ["re:"]},
             },
             "max_open": TOPICS,
+            "merge_after": VOTES,
+            "review_max": REVIEWS,
+            "split_after": VOTES,
             "reach": {"cap": REACH_CAP, "conversations": REACH_STEP, "people": REACH_STEP, "sources": REACH_STEP},
         },
     })

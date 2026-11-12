@@ -1,122 +1,13 @@
+mod sql;
+
 use core::cell::Cell;
+use core::iter::once;
 use std::path::Path;
 
 use rusqlite::{Connection, Error, params_from_iter};
 use serde_json::{Value, from_str};
 
 use crate::store::{Fallible, connect};
-
-macro_rules! due {
-    ($stamp:literal, $tries:literal) => {
-        concat!(
-            $stamp,
-            " + ",
-            wait!($tries),
-            " + ",
-            $stamp,
-            " % (2 * (",
-            wait!($tries),
-            " / 4) + 1) - ",
-            wait!($tries),
-            " / 4 <= json_extract(?1, '$.pace.now_ms')"
-        )
-    };
-}
-
-macro_rules! wait {
-    ($tries:literal) => {
-        concat!(
-            "MIN(json_extract(?1, '$.pace.retry_after_ms') << MIN(MAX(",
-            $tries,
-            " - 1, 0), 20), json_extract(?1, '$.pace.retry_max_ms'))"
-        )
-    };
-}
-
-const ADVANCE_ALERT: &str = "UPDATE alerts SET state = json_extract(?1, '$.state'), analysis = COALESCE(json_extract(?1, '$.analysis'), analysis), reason = '', attempts = 0, updated_at_ms = 0 WHERE key = json_extract(?1, '$.key') AND state = json_extract(?1, '$.from')";
-const ALIAS_CHAIN: &str = "UPDATE topic_aliases SET new = json_extract(?1, '$.thread_id') WHERE new = json_extract(?1, '$.topic_id') AND json_extract(?1, '$.topic_id') <> json_extract(?1, '$.thread_id')";
-const ALIAS_TOPIC: &str = "INSERT OR REPLACE INTO topic_aliases (old, new) SELECT json_extract(?1, '$.topic_id'), json_extract(?1, '$.thread_id') WHERE json_extract(?1, '$.topic_id') <> json_extract(?1, '$.thread_id')";
-const ANSWER: &str = "INSERT OR REPLACE INTO answers (batch_id, body) VALUES (json_extract(?1, '$.batch_id'), json_extract(?1, '$.body'))";
-const ARCHIVE: &str = "UPDATE topics SET state = 'archived' WHERE state <> 'archived' AND last_at_ms < json_extract(?1, '$.before_ms')";
-const ATTACH: &str = "SELECT json_group_array(json_object('conversation_id', conversation_id, 'last_ms', last_ms, 'probability', probability, 'topic_id', topic_id)) FROM (SELECT l.conversation_id AS conversation_id, MAX(l.occurred_at_ms) AS last_ms, t.probability AS probability, p.topic_id AS topic_id FROM members p JOIN lines l ON l.key = p.key JOIN topics t ON t.id = p.topic_id WHERE l.conversation_id IN (SELECT conversation_id FROM lines WHERE batch_id = json_extract(?1, '$.batch_id')) GROUP BY l.conversation_id)";
-const BATCH_CALL_RELEASE: &str = "DELETE FROM calls WHERE kind = 'decision' AND subject = CAST(json_extract(?1, '$.id') AS TEXT) AND attempt = (SELECT attempts FROM batches WHERE id = json_extract(?1, '$.id'))";
-const BATCH_CLAIM: &str = "UPDATE batches SET attempts = attempts + 1, payload = json_extract(?1, '$.payload'), layout = json_extract(?1, '$.layout'), updated_at_ms = json_extract(?1, '$.at_ms') WHERE id = json_extract(?1, '$.id') AND state = 'ready' AND attempts < json_extract(?1, '$.max_attempts') * (revivals + 1) AND NOT EXISTS (SELECT 1 FROM learned_rules WHERE id > json_extract(?1, '$.rev'))";
-const BATCH_FAIL: &str = "UPDATE batches SET reason = json_extract(?1, '$.reason'), updated_at_ms = json_extract(?1, '$.at_ms'), state = CASE WHEN attempts >= json_extract(?1, '$.max_attempts') * (revivals + 1) THEN 'failed' ELSE state END WHERE id = json_extract(?1, '$.id') AND state = 'ready'";
-const BATCH_LINES: &str = "SELECT json_group_array(json_object('conversation_id', conversation_id, 'created_at_ms', created_at_ms, 'digest', digest, 'hints', json((SELECT json_group_array(COALESCE((SELECT new FROM topic_aliases WHERE old = h.value), h.value)) FROM json_each(b.hints) h)), 'key', key, 'occurred_at_ms', occurred_at_ms, 'role', role, 'sender', sender, 'text', text)) FROM (SELECT * FROM lines WHERE batch_id = json_extract(?1, '$.batch_id') AND state = 'approved' ORDER BY occurred_at_ms, key) b";
-const BATCH_NEXT: &str = concat!(
-    "SELECT json_group_array(json_object('answer', answer, 'attempts', attempts, 'id', id, 'layout', layout, 'payload', payload, 'revivals', revivals)) FROM (SELECT a.body AS answer, b.attempts AS attempts, b.id AS id, b.layout AS layout, b.payload AS payload, b.revivals AS revivals FROM batches b LEFT JOIN answers a ON a.batch_id = b.id WHERE b.state = 'ready' AND ",
-    due!("b.updated_at_ms", "b.attempts"),
-    " AND (a.body IS NOT NULL OR b.attempts < json_extract(?1, '$.max_attempts') * (b.revivals + 1)) ORDER BY b.id LIMIT 1)"
-);
-const BATCH_RELEASE: &str = "UPDATE batches SET attempts = attempts - 1, updated_at_ms = 0 WHERE id = json_extract(?1, '$.id') AND state = 'ready' AND attempts > 0";
-const BATCH_SEAL: &str = "INSERT OR IGNORE INTO batches (id, state, payload, layout, attempts, reason, created_at_ms, updated_at_ms) SELECT json_extract(?1, '$.id'), json_extract(?1, '$.state'), json_extract(?1, '$.payload'), json_extract(?1, '$.layout'), 0, '', json_extract(?1, '$.at_ms'), json_extract(?1, '$.updated_ms') WHERE json_extract(?1, '$.state') <> 'ready' OR NOT EXISTS (SELECT 1 FROM batches WHERE state = 'ready')";
-const BATCH_SENT: &str = "UPDATE batches SET state = 'sent', attempts = 0, reason = '', updated_at_ms = json_extract(?1, '$.at_ms') WHERE id = json_extract(?1, '$.batch_id') AND state = 'ready'";
-const BEGIN: &str = "BEGIN IMMEDIATE";
-const BIND_THREAD: &str = "UPDATE topics SET thread_id = json_extract(?1, '$.thread_id'), thread_at_ms = CASE WHEN thread_at_ms = 0 THEN json_extract(?1, '$.at_ms') ELSE thread_at_ms END WHERE id = json_extract(?1, '$.thread_id')";
-const CALL_ALERT: &str = "INSERT INTO calls (kind, subject, topic_id, attempt, at_ms) SELECT json_extract(?1, '$.kind'), key, topic_id, attempts, json_extract(?1, '$.at_ms') FROM alerts WHERE key = json_extract(?1, '$.key') AND updated_at_ms = json_extract(?1, '$.at_ms')";
-const CALL_BATCH: &str = "INSERT INTO calls (kind, subject, topic_id, attempt, at_ms) SELECT 'decision', CAST(id AS TEXT), '', attempts, json_extract(?1, '$.at_ms') FROM batches WHERE id = json_extract(?1, '$.id') AND updated_at_ms = json_extract(?1, '$.at_ms')";
-const CLAIM_ALERT: &str = "UPDATE alerts SET attempts = attempts + 1, updated_at_ms = json_extract(?1, '$.at_ms') WHERE key = json_extract(?1, '$.key') AND state = json_extract(?1, '$.state') AND attempts < json_extract(?1, '$.max_attempts') AND created_at_ms = json_extract(?1, '$.created_at_ms')";
-const CLUES: &str = "INSERT OR IGNORE INTO clues (kind, value, key, occurred_at_ms) SELECT json_extract(value, '$.kind'), json_extract(value, '$.value'), json_extract(?1, '$.key'), json_extract(?1, '$.occurred_at_ms') FROM json_each(?1, '$.clues') UNION ALL SELECT 'seen', json_extract(?1, '$.key'), json_extract(?1, '$.key'), json_extract(?1, '$.occurred_at_ms') UNION ALL SELECT 'digest', digest, key, occurred_at_ms FROM lines WHERE key = json_extract(?1, '$.key') AND digest <> ''";
-const COMMIT: &str = "COMMIT";
-const DEFER: &str = "UPDATE lines SET attempts = attempts + 1, reason = 'deferred', updated_at_ms = json_extract(?1, '$.at_ms') WHERE state = 'screening' AND key IN (SELECT value FROM json_each(?1, '$.keys'))";
-const FAIL_ALERT: &str = "UPDATE alerts SET reason = json_extract(?1, '$.reason'), updated_at_ms = json_extract(?1, '$.at_ms'), state = CASE WHEN attempts >= json_extract(?1, '$.max_attempts') THEN 'failed' ELSE state END WHERE key = json_extract(?1, '$.key') AND state = json_extract(?1, '$.state')";
-const FORGET_THREAD: &str =
-    "UPDATE topics SET thread_at_ms = 0 WHERE id = json_extract(?1, '$.topic_id')";
-const FORM: &str = "UPDATE lines SET batch_id = (SELECT COALESCE(MAX(batch_id), 0) + 1 FROM lines), state = json_extract(?1, '$.state'), reviewer = json_extract(?1, '$.reviewer'), updated_at_ms = json_extract(?1, '$.at_ms') WHERE key IN (SELECT key FROM lines WHERE state = 'queued' ORDER BY occurred_at_ms, key LIMIT json_extract(?1, '$.limit')) AND NOT EXISTS (SELECT 1 FROM lines a WHERE a.batch_id > 0 AND NOT EXISTS (SELECT 1 FROM batches b WHERE b.id = a.batch_id))";
-const IDENTIFY: &str = "INSERT OR REPLACE INTO identities (source, sender_id, person_id, name) SELECT json_extract(value, '$.source'), json_extract(value, '$.sender_id'), json_extract(value, '$.person_id'), json_extract(value, '$.name') FROM json_each(?1, '$.identities')";
-const INTAKE_SINCE: &str = "SELECT json_group_array(json_object('since_ms', since_ms)) FROM triage_state WHERE id = 1 AND json_extract(?1, '$.enabled') IS NOT NULL";
-const INTAKE_STATE: &str = "INSERT INTO triage_state (id, enabled, since_ms) VALUES (1, json_extract(?1, '$.enabled'), json_extract(?1, '$.since_ms')) ON CONFLICT(id) DO UPDATE SET since_ms = CASE WHEN triage_state.since_ms = 0 THEN excluded.since_ms ELSE triage_state.since_ms END, enabled = excluded.enabled";
-const LINKED: &str = "SELECT json_group_array(json_object('key', key, 'topic', topic)) FROM (SELECT DISTINCT c.key AS key, m.topic_id AS topic FROM lines l JOIN clues c ON c.key = l.key JOIN clues o ON o.kind = c.kind AND o.value = c.value AND o.key <> c.key JOIN members m ON m.key = o.key WHERE l.batch_id = json_extract(?1, '$.batch_id') AND l.state = 'approved' ORDER BY c.key, m.topic_id)";
-const MEMBERS: &str = "INSERT OR IGNORE INTO members (key, topic_id, probability, batch_id, via, created_at_ms) SELECT json_extract(value, '$.key'), COALESCE((SELECT new FROM topic_aliases WHERE old = json_extract(value, '$.topic')), json_extract(value, '$.topic')), json_extract(value, '$.probability'), json_extract(?1, '$.batch_id'), json_extract(value, '$.via'), json_extract(?1, '$.at_ms') FROM json_each(?1, '$.placements') WHERE json_extract(value, '$.topic') IS NOT NULL";
-const MERGE_ALERT: &str = "UPDATE alerts SET created_at_ms = json_extract(?1, '$.at_ms'), score = MAX(COALESCE(score, 0), COALESCE((SELECT t.score FROM topics t WHERE t.id = alerts.topic_id), 0)) WHERE topic_id = COALESCE((SELECT new FROM topic_aliases WHERE old = json_extract(?1, '$.topic_id')), json_extract(?1, '$.topic_id')) AND state IN ('waiting', 'pending') AND analysis IS NULL AND attempts = 0";
-const MIGRATE: &str = "BEGIN IMMEDIATE; UPDATE topic_aliases SET new = (SELECT t.thread_id FROM topics t WHERE t.id = topic_aliases.new) WHERE EXISTS (SELECT 1 FROM topics t WHERE t.id = topic_aliases.new AND t.id <> t.thread_id AND t.thread_id <> ''); INSERT OR REPLACE INTO topic_aliases (old, new) SELECT id, thread_id FROM topics WHERE id <> thread_id AND thread_id <> ''; INSERT INTO topics (id, label, probability, thread_id, until_ms, until_key, thread_at_ms, created_at_ms, last_at_ms) SELECT thread_id, label, probability, thread_id, until_ms, until_key, thread_at_ms, created_at_ms, last_at_ms FROM topics WHERE id <> thread_id AND thread_id <> ''; UPDATE placements SET topic_id = (SELECT t.thread_id FROM topics t WHERE t.id = placements.topic_id) WHERE EXISTS (SELECT 1 FROM topics t WHERE t.id = placements.topic_id AND t.id <> t.thread_id AND t.thread_id <> ''); UPDATE alerts SET topic_id = (SELECT t.thread_id FROM topics t WHERE t.id = alerts.topic_id) WHERE EXISTS (SELECT 1 FROM topics t WHERE t.id = alerts.topic_id AND t.id <> t.thread_id AND t.thread_id <> ''); UPDATE calls SET topic_id = (SELECT t.thread_id FROM topics t WHERE t.id = calls.topic_id) WHERE EXISTS (SELECT 1 FROM topics t WHERE t.id = calls.topic_id AND t.id <> t.thread_id AND t.thread_id <> ''); DELETE FROM topics WHERE id <> thread_id AND thread_id <> ''; DELETE FROM lines WHERE state = 'skipped' AND reason IN ('own', 'expired'); UPDATE lines SET state = 'queued', batch_id = 0, reviewer = '' WHERE state IN ('pending', 'leaked'); UPDATE lines SET state = 'withheld' WHERE state = 'skipped' AND reason IN ('sealed', 'empty'); UPDATE lines SET state = 'withheld', reason = CASE WHEN flag = 'unmasked' THEN 'risky' ELSE 'unscreened' END WHERE state = 'rejected' AND reason = 'screen'; INSERT OR IGNORE INTO members (key, topic_id, probability, batch_id, via, created_at_ms) SELECT key, topic_id, probability, batch_id, 'legacy', 0 FROM placements WHERE NOT EXISTS (SELECT 1 FROM members x WHERE x.key = placements.key); UPDATE topics SET urgency = probability, score = probability WHERE score IS NULL AND probability IS NOT NULL; UPDATE messages SET conversation_id = 'mail:' || account || ':thread:' || COALESCE(json_extract(raw, '$.references[0]'), json_extract(raw, '$.in_reply_to'), json_extract(raw, '$.message_id'), substr(key, length(source) + length(account) + 3)) WHERE conversation_id LIKE 'mail:%' AND substr(conversation_id, 1, length(account) + 13) <> 'mail:' || account || ':thread:' AND json_valid(raw); UPDATE lines SET conversation_id = (SELECT m.conversation_id FROM messages m WHERE m.key = lines.key) WHERE conversation_id LIKE 'mail:%' AND EXISTS (SELECT 1 FROM messages m WHERE m.key = lines.key AND m.conversation_id <> lines.conversation_id); COMMIT;";
-const MISS: &str = "INSERT INTO misses (kind, key, text, spans, created_at_ms) SELECT json_extract(?1, '$.kind'), key, text, json_extract(?1, '$.spans'), json_extract(?1, '$.at_ms') FROM lines WHERE key = json_extract(?1, '$.key') AND state = 'screening' AND json_extract(?1, '$.kind') <> ''";
-const NEXT_ALERT: &str = concat!(
-    "SELECT json_group_array(json_object('analysis', analysis, 'attempts', attempts, 'changes', changes, 'created_at_ms', created_at_ms, 'key', key, 'label', label, 'last_at_ms', last_at_ms, 'reach', json(reach), 'score', score, 'state', state, 'thread_at_ms', thread_at_ms, 'thread_id', thread_id, 'topic_id', topic_id, 'urgency', urgency)) FROM (SELECT a.analysis AS analysis, a.attempts AS attempts, a.changes AS changes, a.created_at_ms AS created_at_ms, a.key AS key, t.label AS label, t.last_at_ms AS last_at_ms, t.reach AS reach, COALESCE(t.score, a.score, t.probability) AS score, t.state AS state, t.thread_at_ms AS thread_at_ms, t.thread_id AS thread_id, a.topic_id AS topic_id, t.urgency AS urgency FROM alerts a JOIN topics t ON t.id = a.topic_id WHERE a.state = json_extract(?1, '$.state') AND ",
-    due!("a.updated_at_ms", "a.attempts"),
-    " AND (a.attempts < json_extract(?1, '$.max_attempts') OR (a.state = 'pending' AND a.analysis IS NOT NULL)) ORDER BY COALESCE(t.score, a.score, 0) DESC, a.created_at_ms DESC, a.key LIMIT json_extract(?1, '$.parallel'))"
-);
-const OPEN_ALERT: &str = "INSERT OR IGNORE INTO alerts (key, topic_id, state, attempts, analysis, reason, created_at_ms, updated_at_ms, score) SELECT json_extract(?1, '$.key'), t.id, 'waiting', 0, NULL, '', json_extract(?1, '$.at_ms'), 0, t.score FROM topics t WHERE t.id = COALESCE((SELECT new FROM topic_aliases WHERE old = json_extract(?1, '$.topic_id')), json_extract(?1, '$.topic_id')) AND (t.score >= json_extract(?1, '$.threshold') OR t.thread_id <> '') AND NOT EXISTS (SELECT 1 FROM alerts WHERE topic_id = t.id AND state IN ('waiting', 'pending') AND analysis IS NULL AND attempts = 0)";
-const OPEN_LINE: &str = "INSERT OR IGNORE INTO lines (key, conversation_id, occurred_at_ms, sender, text, state, reason, reviewer, flag, hints, rules_rev, batch_id, created_at_ms, updated_at_ms, role, digest) VALUES (json_extract(?1, '$.key'), json_extract(?1, '$.conversation_id'), json_extract(?1, '$.occurred_at_ms'), json_extract(?1, '$.sender'), json_extract(?1, '$.text'), json_extract(?1, '$.state'), json_extract(?1, '$.reason'), '', '', '[]', json_extract(?1, '$.rules_rev'), 0, json_extract(?1, '$.at_ms'), json_extract(?1, '$.at_ms'), json_extract(?1, '$.role'), json_extract(?1, '$.digest'))";
-const OPEN_TOPICS: &str = "SELECT json_group_array(json_object('created_at_ms', created_at_ms, 'first', (SELECT l.text FROM members p JOIN lines l ON l.key = p.key WHERE p.topic_id = t.id AND l.state = 'approved' ORDER BY l.occurred_at_ms, l.key LIMIT 1), 'label', label, 'probability', probability, 'topic', id)) FROM (SELECT id, label, probability, created_at_ms FROM topics WHERE state <> 'archived' ORDER BY last_at_ms DESC, id LIMIT json_extract(?1, '$.limit')) t";
-const PLACE_WITHHELD: &str = "INSERT OR IGNORE INTO members (key, topic_id, probability, batch_id, via, created_at_ms) SELECT w.key, p.topic_id, NULL, p.batch_id, 'neighbour', json_extract(?1, '$.at_ms') FROM lines w JOIN members p ON p.key = (SELECT l.key FROM lines l WHERE l.conversation_id = w.conversation_id AND l.occurred_at_ms BETWEEN w.occurred_at_ms - json_extract(?1, '$.gap_ms') AND w.occurred_at_ms + json_extract(?1, '$.gap_ms') AND EXISTS (SELECT 1 FROM members x WHERE x.key = l.key) ORDER BY ABS(l.occurred_at_ms - w.occurred_at_ms), l.key LIMIT 1) WHERE w.state = 'withheld' AND NOT EXISTS (SELECT 1 FROM members x WHERE x.key = w.key)";
-const REACH: &str = "UPDATE topics SET urgency = (SELECT m.probability FROM members m JOIN lines l ON l.key = m.key WHERE m.topic_id = topics.id AND m.probability IS NOT NULL ORDER BY l.occurred_at_ms DESC, l.key DESC LIMIT 1), reach = (SELECT json_object('conversations', COUNT(DISTINCT CASE WHEN copy THEN NULL ELSE conversation_id END), 'people', COUNT(DISTINCT CASE WHEN copy THEN NULL ELSE person END), 'sources', COUNT(DISTINCT source)) FROM (SELECT l.conversation_id AS conversation_id, g.source AS source, CASE WHEN l.role = '' AND l.state <> 'withheld' THEN COALESCE(i.person_id, g.source || ':' || g.sender_id, l.sender) END AS person, l.digest <> '' AND EXISTS (SELECT 1 FROM members d JOIN lines e ON e.key = d.key WHERE d.topic_id = m.topic_id AND e.digest = l.digest AND (e.occurred_at_ms, e.key) < (l.occurred_at_ms, l.key)) AS copy FROM members m JOIN lines l ON l.key = m.key LEFT JOIN messages g ON g.key = m.key LEFT JOIN identities i ON i.source = g.source AND i.sender_id = g.sender_id WHERE m.topic_id = topics.id)) WHERE id IN (SELECT topic_id FROM members WHERE created_at_ms = json_extract(?1, '$.at_ms'))";
-const RECORD_ANALYSIS: &str = "UPDATE alerts SET analysis = json_extract(?1, '$.analysis'), changes = json_extract(?1, '$.changes'), reason = '', updated_at_ms = 0 WHERE key = json_extract(?1, '$.key') AND state = 'pending'";
-const RELATE: &str = "INSERT INTO relations (a, b, kind, count) SELECT json_extract(value, '$.fresh'), COALESCE((SELECT new FROM topic_aliases WHERE old = json_extract(value, '$.known')), json_extract(value, '$.known')), 'maybe', 1 FROM json_each(?1, '$.relations') WHERE true ON CONFLICT(a, b, kind) DO UPDATE SET count = count + 1";
-const RELEASE_ALERT: &str = "UPDATE alerts SET attempts = attempts - 1, updated_at_ms = 0 WHERE key = json_extract(?1, '$.key') AND state = json_extract(?1, '$.state') AND attempts > 0";
-const RELEASE_CALL_ALERT: &str = "DELETE FROM calls WHERE kind = json_extract(?1, '$.kind') AND subject = json_extract(?1, '$.key') AND attempt = (SELECT attempts FROM alerts WHERE key = json_extract(?1, '$.key'))";
-const RENAME_ALERTS: &str = "UPDATE alerts SET topic_id = json_extract(?1, '$.thread_id') WHERE topic_id = json_extract(?1, '$.topic_id')";
-const RENAME_CALLS: &str = "UPDATE calls SET topic_id = json_extract(?1, '$.thread_id') WHERE topic_id = json_extract(?1, '$.topic_id')";
-const RENAME_DELETE: &str = "DELETE FROM topics WHERE id = json_extract(?1, '$.topic_id') AND id <> json_extract(?1, '$.thread_id')";
-const RENAME_MEMBERS: &str = "UPDATE OR IGNORE members SET topic_id = json_extract(?1, '$.thread_id') WHERE topic_id = json_extract(?1, '$.topic_id')";
-const RENAME_TOPIC: &str = "INSERT INTO topics (id, label, probability, thread_id, until_ms, until_key, thread_at_ms, created_at_ms, last_at_ms, state, urgency, reach, score, verdict, closed_at_ms) SELECT json_extract(?1, '$.thread_id'), label, probability, thread_id, until_ms, until_key, thread_at_ms, created_at_ms, last_at_ms, state, urgency, reach, score, verdict, closed_at_ms FROM topics WHERE id = json_extract(?1, '$.topic_id') AND id <> json_extract(?1, '$.thread_id')";
-const REOPEN: &str = "UPDATE topics SET state = 'open', closed_at_ms = 0 WHERE state <> 'open' AND id IN (SELECT topic_id FROM members WHERE created_at_ms = json_extract(?1, '$.at_ms'))";
-const RESCORE: &str = "UPDATE topics SET score = urgency + (1 - urgency) * MIN(json_extract(?1, '$.reach.cap'), json_extract(?1, '$.reach.people') * MAX(json_extract(reach, '$.people') - 1, 0) + json_extract(?1, '$.reach.conversations') * MAX(json_extract(reach, '$.conversations') - 1, 0) + json_extract(?1, '$.reach.sources') * MAX(json_extract(reach, '$.sources') - 1, 0)) WHERE id IN (SELECT topic_id FROM members WHERE created_at_ms = json_extract(?1, '$.at_ms'))";
-const RESTATE: &str = "UPDATE lines SET text = json_extract(?1, '$.text'), rules_rev = json_extract(?1, '$.rev'), updated_at_ms = json_extract(?1, '$.at_ms') WHERE key = json_extract(?1, '$.key') AND state IN ('queued', 'screening')";
-const REVIVE: &str = concat!(
-    "UPDATE batches SET state = 'ready', revivals = revivals + 1, reason = '', updated_at_ms = 0 WHERE id = (SELECT id FROM batches WHERE state = 'failed' AND revivals >= 0 AND revivals < json_extract(?1, '$.max_revivals') AND ",
-    due!("updated_at_ms", "revivals + 1"),
-    " ORDER BY id LIMIT 1) AND NOT EXISTS (SELECT 1 FROM batches WHERE state = 'ready')"
-);
-const ROLLBACK: &str = "ROLLBACK";
-const RULES: &str = "SELECT json_group_array(json_object('id', id, 'pattern', pattern, 'placeholder', placeholder)) FROM (SELECT * FROM learned_rules WHERE id > json_extract(?1, '$.after') ORDER BY id)";
-const SCREENED: &str = "UPDATE lines SET text = json_extract(?1, '$.text'), flag = json_extract(?1, '$.flag'), hints = json_extract(?1, '$.hints'), state = json_extract(?1, '$.state'), reason = json_extract(?1, '$.reason'), reviewer = json_extract(?1, '$.reviewer'), updated_at_ms = json_extract(?1, '$.at_ms') WHERE key = json_extract(?1, '$.key') AND state = 'screening'";
-const SCREENING: &str = concat!(
-    "SELECT json_group_array(json_object('attempts', attempts, 'key', key, 'text', text)) FROM (SELECT attempts, key, text FROM lines WHERE state = 'screening' AND batch_id > 0 AND (reason = '' OR ",
-    due!("updated_at_ms", "attempts"),
-    ") ORDER BY occurred_at_ms, key LIMIT json_extract(?1, '$.limit'))"
-);
-const SEALABLE: &str = "SELECT json_group_array(json_object('batch_id', batch_id)) FROM (SELECT DISTINCT l.batch_id AS batch_id FROM lines l WHERE l.batch_id > json_extract(?1, '$.after') AND NOT EXISTS (SELECT 1 FROM batches b WHERE b.id = l.batch_id) AND NOT EXISTS (SELECT 1 FROM lines p WHERE p.batch_id = l.batch_id AND p.state = 'screening') AND (NOT EXISTS (SELECT 1 FROM batches o WHERE o.state NOT IN ('sent', 'failed')) OR NOT EXISTS (SELECT 1 FROM lines a WHERE a.batch_id = l.batch_id AND a.state = 'approved')) ORDER BY l.batch_id LIMIT 1)";
-const STALE: &str = "SELECT json_group_array(json_object('key', key, 'text', text)) FROM (SELECT key, text FROM lines WHERE state IN ('queued', 'screening') AND rules_rev < json_extract(?1, '$.rev') ORDER BY state = 'queued', occurred_at_ms DESC, key DESC LIMIT json_extract(?1, '$.limit'))";
-const STRANGERS: &str = "SELECT json_group_array(json_object('name', name, 'sender_id', sender_id, 'source', source)) FROM (SELECT source, sender_id, sender_name AS name, MAX(occurred_at_ms) FROM messages GROUP BY source, sender_id) WHERE json_extract(?1, '$') IS NULL AND EXISTS (SELECT 1 FROM messages m WHERE NOT EXISTS (SELECT 1 FROM identities i WHERE i.source = m.source AND i.sender_id = m.sender_id))";
-const STUCK: &str = "SELECT json_group_array(json_object('batch_id', batch_id, 'reason', reason)) FROM (SELECT batch_id, reason FROM (SELECT l.batch_id AS batch_id, 'screening' AS reason FROM lines l WHERE l.batch_id > json_extract(?1, '$.after') AND l.state = 'screening' AND NOT EXISTS (SELECT 1 FROM batches b WHERE b.id = l.batch_id) UNION ALL SELECT id, 'sending' FROM batches WHERE state = 'ready') ORDER BY batch_id LIMIT 1)";
-const TOPICS: &str = "INSERT INTO topics (id, label, probability, thread_id, until_ms, until_key, thread_at_ms, created_at_ms, last_at_ms) SELECT COALESCE((SELECT new FROM topic_aliases WHERE old = json_extract(value, '$.topic')), json_extract(value, '$.topic')), json_extract(value, '$.label'), json_extract(value, '$.probability'), '', 0, '', 0, json_extract(?1, '$.at_ms'), json_extract(value, '$.last_ms') FROM json_each(?1, '$.topics') WHERE true ON CONFLICT(id) DO UPDATE SET probability = NULLIF(MAX(COALESCE(topics.probability, -1), COALESCE(excluded.probability, -1)), -1), last_at_ms = MAX(topics.last_at_ms, excluded.last_at_ms)";
-const TOPIC_LINES: &str = "SELECT json_group_array(json_object('digest', digest, 'key', key, 'occurred_at_ms', occurred_at_ms, 'omitted', omitted, 'role', role, 'sender', sender, 'source', source, 'text', text)) FROM (SELECT l.digest AS digest, l.key AS key, l.occurred_at_ms AS occurred_at_ms, CASE WHEN l.state = 'withheld' THEN l.reason END AS omitted, l.role AS role, CASE WHEN l.state = 'withheld' THEN '' ELSE l.sender END AS sender, g.source AS source, CASE WHEN l.state = 'withheld' THEN '' ELSE l.text END AS text FROM members p JOIN lines l ON l.key = p.key LEFT JOIN messages g ON g.key = l.key WHERE p.topic_id = json_extract(?1, '$.topic_id') AND l.state IN ('approved', 'withheld') ORDER BY l.occurred_at_ms, l.key)";
-const UNINDEXED: &str = "SELECT json_group_array(json_object('key', key, 'occurred_at_ms', occurred_at_ms, 'raw', json(raw), 'text', text)) FROM (SELECT m.key AS key, m.occurred_at_ms AS occurred_at_ms, CASE WHEN json_valid(m.raw) THEN m.raw ELSE 'null' END AS raw, m.text AS text FROM lines l JOIN messages m ON m.key = l.key WHERE l.state <> 'skipped' AND NOT EXISTS (SELECT 1 FROM clues c WHERE c.kind = 'seen' AND c.value = l.key) ORDER BY l.occurred_at_ms DESC, l.key DESC LIMIT json_extract(?1, '$.limit'))";
-const UNLINED: &str = "SELECT json_group_array(json_object('account', account, 'bulk', bulk, 'conversation_id', conversation_id, 'key', key, 'occurred_at_ms', occurred_at_ms, 'sender_id', sender_id, 'sender_name', sender_name, 'source', source, 'text', text)) FROM (SELECT m.account AS account, CASE WHEN json_valid(m.raw) THEN json_extract(m.raw, '$.bulk') END AS bulk, m.conversation_id AS conversation_id, m.key AS key, m.occurred_at_ms AS occurred_at_ms, m.sender_id AS sender_id, m.sender_name AS sender_name, m.source AS source, m.text AS text FROM messages m WHERE m.occurred_at_ms >= json_extract(?1, '$.since_ms') AND NOT EXISTS (SELECT 1 FROM lines l WHERE l.key = m.key) ORDER BY m.occurred_at_ms DESC, m.key DESC LIMIT json_extract(?1, '$.limit'))";
-const UNRELATED: &str = "UPDATE lines SET state = 'unrelated', reason = 'no_topic', updated_at_ms = json_extract(?1, '$.at_ms') WHERE state = 'approved' AND key IN (SELECT json_extract(value, '$.key') FROM json_each(?1, '$.placements') WHERE json_extract(value, '$.topic') IS NULL)";
-const VERDICT: &str = "UPDATE topics SET state = json_extract(?1, '$.status'), closed_at_ms = CASE WHEN json_extract(?1, '$.status') = 'open' THEN 0 ELSE json_extract(?1, '$.at_ms') END, label = CASE WHEN json_extract(?1, '$.title') <> '' THEN json_extract(?1, '$.title') ELSE label END, verdict = json_extract(?1, '$.analysis') WHERE id = json_extract(?1, '$.thread_id')";
-const WAKE_ALERTS: &str = "UPDATE alerts SET state = 'pending', updated_at_ms = 0 WHERE state = 'waiting' AND json_extract(?1, '$') IS NULL";
 
 pub(crate) struct Ledger {
     connection: Connection,
@@ -125,63 +16,73 @@ pub(crate) struct Ledger {
 
 impl Ledger {
     pub(crate) fn advance_alert(&self, args: &Value) -> usize {
-        self.exec(ADVANCE_ALERT, args)
+        self.exec(sql::ADVANCE_ALERT, args)
     }
 
     pub(crate) fn answer(&self, args: &Value) -> usize {
-        self.exec(ANSWER, args)
+        self.exec(sql::ANSWER, args)
     }
 
     pub(crate) fn apply(&self, args: &Value, alerts: &[Value]) -> usize {
         let mut steps = vec![
-            Step::new(BEGIN, None),
-            Step::new(MEMBERS, Some(args)),
-            Step::new(UNRELATED, Some(args)),
-            Step::new(PLACE_WITHHELD, Some(args)),
-            Step::new(RELATE, Some(args)),
-            Step::new(TOPICS, Some(args)),
-            Step::new(REOPEN, Some(args)),
-            Step::new(REACH, Some(args)),
-            Step::new(RESCORE, Some(args)),
+            Step::new(sql::BEGIN, None),
+            Step::new(sql::MEMBERS, Some(args)),
+            Step::new(sql::UNRELATED, Some(args)),
+            Step::new(sql::PLACE_WITHHELD, Some(args)),
+            Step::new(sql::RELATE, Some(args)),
+            Step::new(sql::VOTE, Some(args)),
+            Step::new(sql::UNLIKE, Some(args)),
+            Step::new(sql::TOPICS, Some(args)),
+            Step::new(sql::REOPEN, Some(args)),
+            Step::new(sql::REACH, Some(args)),
+            Step::new(sql::RESCORE, Some(args)),
         ];
         steps.extend(alerts.iter().flat_map(|alert| {
             [
-                Step::new(MERGE_ALERT, Some(alert)),
-                Step::new(OPEN_ALERT, Some(alert)),
+                Step::new(sql::MERGE_ALERT, Some(alert)),
+                Step::new(sql::OPEN_ALERT, Some(alert)),
             ]
         }));
-        steps.push(Step::new(BATCH_SENT, Some(args)));
-        steps.push(Step::new(COMMIT, None));
+        steps.push(Step::new(sql::BATCH_SENT, Some(args)));
+        steps.push(Step::new(sql::COMMIT, None));
         self.committed(&steps)
     }
 
     pub(crate) fn archive(&self, args: &Value) -> usize {
-        self.exec(ARCHIVE, args)
+        self.exec(sql::ARCHIVE, args)
     }
 
     pub(crate) fn attach(&self, args: &Value) -> Vec<Value> {
-        self.rows(ATTACH, args)
+        self.rows(sql::ATTACH, args)
+    }
+
+    pub(crate) fn backlog(&self) -> Vec<Value> {
+        self.rows(sql::BACKLOG, &Value::Null)
     }
 
     pub(crate) fn batch_lines(&self, args: &Value) -> Vec<Value> {
-        self.rows(BATCH_LINES, args)
+        self.rows(sql::BATCH_LINES, args)
+    }
+
+    pub(crate) fn changes(&self) -> Vec<Value> {
+        self.rows(sql::CHANGES, &Value::Null)
     }
 
     pub(crate) fn claim_alert(&self, args: &Value) -> usize {
         self.committed(&[
-            Step::new(BEGIN, None),
-            Step::new(CLAIM_ALERT, Some(args)),
-            Step::new(CALL_ALERT, Some(args)),
-            Step::new(COMMIT, None),
+            Step::new(sql::BEGIN, None),
+            Step::new(sql::CLAIM_ALERT, Some(args)),
+            Step::new(sql::CALL_ALERT, Some(args)),
+            Step::new(sql::COMMIT, None),
         ])
     }
 
     pub(crate) fn claim_batch(&self, args: &Value) -> usize {
         self.committed(&[
-            Step::new(BEGIN, None),
-            Step::new(BATCH_CLAIM, Some(args)),
-            Step::new(CALL_BATCH, Some(args)),
-            Step::new(COMMIT, None),
+            Step::new(sql::BEGIN, None),
+            Step::new(sql::BATCH_CLAIM, Some(args)),
+            Step::new(sql::CALL_BATCH, Some(args)),
+            Step::new(sql::COMMIT, None),
         ])
     }
 
@@ -189,13 +90,17 @@ impl Ledger {
         self.transact(steps).unwrap_or_else(|err| {
             tracing::warn!(error = %err, "ledger transaction failed");
             self.fault();
-            drop(self.connection.execute_batch(ROLLBACK));
+            drop(self.connection.execute_batch(sql::ROLLBACK));
             usize::default()
         })
     }
 
     pub(crate) fn defer(&self, args: &Value) -> usize {
-        self.exec(DEFER, args)
+        self.exec(sql::DEFER, args)
+    }
+
+    pub(crate) fn drift(&self, args: &Value) -> Vec<Value> {
+        self.rows(sql::DRIFT, args)
     }
 
     fn exec(&self, sql: &str, args: &Value) -> usize {
@@ -209,11 +114,11 @@ impl Ledger {
     }
 
     pub(crate) fn fail_alert(&self, args: &Value) -> usize {
-        self.exec(FAIL_ALERT, args)
+        self.exec(sql::FAIL_ALERT, args)
     }
 
     pub(crate) fn fail_batch(&self, args: &Value) -> usize {
-        self.exec(BATCH_FAIL, args)
+        self.exec(sql::BATCH_FAIL, args)
     }
 
     fn fault(&self) {
@@ -225,39 +130,39 @@ impl Ledger {
     }
 
     pub(crate) fn forget_thread(&self, args: &Value) -> usize {
-        self.exec(FORGET_THREAD, args)
+        self.exec(sql::FORGET_THREAD, args)
     }
 
     pub(crate) fn form(&self, args: &Value) -> usize {
-        self.exec(FORM, args)
+        self.exec(sql::FORM, args)
     }
 
     pub(crate) fn identify(&self, args: &Value) -> usize {
-        self.exec(IDENTIFY, args)
+        self.exec(sql::IDENTIFY, args)
     }
 
     pub(crate) fn index(&self, args: &Value) -> usize {
-        self.exec(CLUES, args)
+        self.exec(sql::CLUES, args)
     }
 
     pub(crate) fn intake_since(&self, args: &Value) -> Option<u64> {
-        let _written = self.exec(INTAKE_STATE, args);
-        self.rows(INTAKE_SINCE, args)
+        let _written = self.exec(sql::INTAKE_STATE, args);
+        self.rows(sql::INTAKE_SINCE, args)
             .first()
             .and_then(|row| row.get("since_ms"))
             .and_then(Value::as_u64)
     }
 
     pub(crate) fn linked(&self, args: &Value) -> Vec<Value> {
-        self.rows(LINKED, args)
+        self.rows(sql::LINKED, args)
     }
 
     pub(crate) fn next_alert(&self, args: &Value) -> Vec<Value> {
-        self.rows(NEXT_ALERT, args)
+        self.rows(sql::NEXT_ALERT, args)
     }
 
     pub(crate) fn next_batch(&self, args: &Value) -> Vec<Value> {
-        self.rows(BATCH_NEXT, args)
+        self.rows(sql::BATCH_NEXT, args)
     }
 
     pub(crate) fn open(path: &Path, busy_ms: u64) -> Fallible<Self> {
@@ -265,33 +170,45 @@ impl Ledger {
             connection: connect(path, busy_ms)?,
             faults: Cell::new(0),
         };
-        ledger.connection.execute_batch(MIGRATE).map_err(Box::new)?;
+        ledger
+            .connection
+            .execute_batch(sql::MIGRATE)
+            .map_err(Box::new)?;
         Ok(ledger)
     }
 
     pub(crate) fn open_line(&self, args: &Value) -> usize {
-        self.exec(OPEN_LINE, args)
+        self.exec(sql::OPEN_LINE, args)
     }
 
     pub(crate) fn open_topics(&self, args: &Value) -> Vec<Value> {
-        self.rows(OPEN_TOPICS, args)
+        self.rows(sql::OPEN_TOPICS, args)
+    }
+
+    pub(crate) fn propose(&self, args: &Value) -> usize {
+        self.exec(sql::PROPOSE, args)
     }
 
     pub(crate) fn record_analysis(&self, args: &Value) -> usize {
         self.committed(
             &vec![
-                Step::new(BEGIN, None),
-                Step::new(RENAME_TOPIC, Some(args)),
-                Step::new(RENAME_MEMBERS, Some(args)),
-                Step::new(RENAME_ALERTS, Some(args)),
-                Step::new(RENAME_CALLS, Some(args)),
-                Step::new(ALIAS_CHAIN, Some(args)),
-                Step::new(ALIAS_TOPIC, Some(args)),
-                Step::new(RENAME_DELETE, Some(args)),
-                Step::new(BIND_THREAD, Some(args)),
-                Step::new(VERDICT, Some(args)),
-                Step::new(RECORD_ANALYSIS, Some(args)),
-                Step::new(COMMIT, None),
+                Step::new(sql::BEGIN, None),
+                Step::new(sql::RENAME_TOPIC, Some(args)),
+                Step::new(sql::RENAME_MEMBERS, Some(args)),
+                Step::new(sql::RENAME_ALERTS, Some(args)),
+                Step::new(sql::RENAME_CALLS, Some(args)),
+                Step::new(sql::RENAME_CHANGES_FROM, Some(args)),
+                Step::new(sql::RENAME_CHANGES_TO, Some(args)),
+                Step::new(sql::RENAME_RELATIONS_A, Some(args)),
+                Step::new(sql::RENAME_RELATIONS_B, Some(args)),
+                Step::new(sql::RENAME_RELATIONS_DROP, Some(args)),
+                Step::new(sql::ALIAS_CHAIN, Some(args)),
+                Step::new(sql::ALIAS_TOPIC, Some(args)),
+                Step::new(sql::RENAME_DELETE, Some(args)),
+                Step::new(sql::BIND_THREAD, Some(args)),
+                Step::new(sql::VERDICT, Some(args)),
+                Step::new(sql::RECORD_ANALYSIS, Some(args)),
+                Step::new(sql::COMMIT, None),
             ]
             .into_boxed_slice(),
         )
@@ -299,28 +216,32 @@ impl Ledger {
 
     pub(crate) fn release_alert(&self, args: &Value) -> usize {
         self.committed(&[
-            Step::new(BEGIN, None),
-            Step::new(RELEASE_CALL_ALERT, Some(args)),
-            Step::new(RELEASE_ALERT, Some(args)),
-            Step::new(COMMIT, None),
+            Step::new(sql::BEGIN, None),
+            Step::new(sql::RELEASE_CALL_ALERT, Some(args)),
+            Step::new(sql::RELEASE_ALERT, Some(args)),
+            Step::new(sql::COMMIT, None),
         ])
     }
 
     pub(crate) fn release_batch(&self, args: &Value) -> usize {
         self.committed(&[
-            Step::new(BEGIN, None),
-            Step::new(BATCH_CALL_RELEASE, Some(args)),
-            Step::new(BATCH_RELEASE, Some(args)),
-            Step::new(COMMIT, None),
+            Step::new(sql::BEGIN, None),
+            Step::new(sql::BATCH_CALL_RELEASE, Some(args)),
+            Step::new(sql::BATCH_RELEASE, Some(args)),
+            Step::new(sql::COMMIT, None),
         ])
     }
 
     pub(crate) fn restate(&self, args: &Value) -> usize {
-        self.exec(RESTATE, args)
+        self.exec(sql::RESTATE, args)
+    }
+
+    pub(crate) fn reviews(&self, args: &Value) -> Vec<Value> {
+        self.rows(sql::REVIEWS, args)
     }
 
     pub(crate) fn revive(&self, args: &Value) -> usize {
-        self.exec(REVIVE, args)
+        self.exec(sql::REVIVE, args)
     }
 
     fn rows(&self, sql: &str, args: &Value) -> Vec<Value> {
@@ -338,44 +259,64 @@ impl Ledger {
     }
 
     pub(crate) fn rules(&self, args: &Value) -> Vec<Value> {
-        self.rows(RULES, args)
+        self.rows(sql::RULES, args)
     }
 
     pub(crate) fn screened(&self, args: &Value) -> usize {
         self.committed(&[
-            Step::new(BEGIN, None),
-            Step::new(MISS, Some(args)),
-            Step::new(SCREENED, Some(args)),
-            Step::new(COMMIT, None),
+            Step::new(sql::BEGIN, None),
+            Step::new(sql::MISS, Some(args)),
+            Step::new(sql::SCREENED, Some(args)),
+            Step::new(sql::COMMIT, None),
         ])
     }
 
     pub(crate) fn screening(&self, args: &Value) -> Vec<Value> {
-        self.rows(SCREENING, args)
+        self.rows(sql::SCREENING, args)
     }
 
     pub(crate) fn seal(&self, args: &Value) -> usize {
-        self.exec(BATCH_SEAL, args)
+        self.exec(sql::BATCH_SEAL, args)
     }
 
     pub(crate) fn sealable(&self, args: &Value) -> Vec<Value> {
-        self.rows(SEALABLE, args)
+        self.rows(sql::SEALABLE, args)
+    }
+
+    pub(crate) fn settle(&self, args: &Value) -> usize {
+        let steps: Vec<Step> = once(Step::new(sql::BEGIN, None))
+            .chain(
+                sql::SETTLE
+                    .iter()
+                    .map(|statement| Step::new(statement, Some(args))),
+            )
+            .chain(once(Step::new(sql::COMMIT, None)))
+            .collect();
+        self.committed(&steps)
     }
 
     pub(crate) fn stale(&self, args: &Value) -> Vec<Value> {
-        self.rows(STALE, args)
+        self.rows(sql::STALE, args)
     }
 
     pub(crate) fn strangers(&self) -> Vec<Value> {
-        self.rows(STRANGERS, &Value::Null)
+        self.rows(sql::STRANGERS, &Value::Null)
     }
 
     pub(crate) fn stuck(&self, args: &Value) -> Vec<Value> {
-        self.rows(STUCK, args)
+        self.rows(sql::STUCK, args)
+    }
+
+    pub(crate) fn supersede_notices(&self) -> usize {
+        self.exec(sql::NOTICE_SUPERSEDE, &Value::Null)
+    }
+
+    pub(crate) fn superseded(&self, args: &Value) -> bool {
+        !self.rows(sql::SUPERSEDED, args).is_empty()
     }
 
     pub(crate) fn topic_lines(&self, args: &Value) -> Vec<Value> {
-        self.rows(TOPIC_LINES, args)
+        self.rows(sql::TOPIC_LINES, args)
     }
 
     fn transact(&self, steps: &[Step]) -> Fallible<usize> {
@@ -388,15 +329,15 @@ impl Ledger {
     }
 
     pub(crate) fn unindexed(&self, args: &Value) -> Vec<Value> {
-        self.rows(UNINDEXED, args)
+        self.rows(sql::UNINDEXED, args)
     }
 
     pub(crate) fn unlined(&self, args: &Value) -> Vec<Value> {
-        self.rows(UNLINED, args)
+        self.rows(sql::UNLINED, args)
     }
 
     pub(crate) fn wake_alerts(&self) -> usize {
-        self.exec(WAKE_ALERTS, &Value::Null)
+        self.exec(sql::WAKE_ALERTS, &Value::Null)
     }
 }
 

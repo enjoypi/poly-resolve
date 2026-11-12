@@ -62,6 +62,7 @@ impl Settings {
             Rules::new(&self.messages).with_placeholders(self.marks.as_slice()),
             Ports::new(reader, reader, reader).with_library(&self.prompts),
         )
+        .with_board(reader)
     }
 
     pub(crate) const fn errors(&self) -> &Errors {

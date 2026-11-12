@@ -172,6 +172,8 @@ fn notice(analysis: &str, max_chars: u32, template: &str) -> Result<Reply, Error
         "label": "server d",
         "late": "(at {time})",
         "max_chars": max_chars,
+        "origin": "merge",
+        "origins": {"merge": " merged"},
         "reach": {"conversations": CONVERSATIONS, "people": PEOPLE, "sources": SOURCES},
         "score": SCORE,
         "state": "resolved",
@@ -185,11 +187,13 @@ fn notice(analysis: &str, max_chars: u32, template: &str) -> Result<Reply, Error
 
 #[test]
 fn notice_fills_template_and_truncates_analysis() {
-    let template = "[{score}={urgency}+{people}/{conversations}/{sources}] {state} {label} {topic} {changes}{late}\n{analysis}";
+    let template = "[{score}={urgency}+{people}/{conversations}/{sources}] {state} {label} {topic} {changes}{late}{origin}\n{analysis}";
     let reply = notice("abcdef", 4, template).unwrap().unwrap();
     assert_eq!(
         reply.get("text"),
-        Some(&json!("[0.95=0.80+3/2/1] done server d t1-0 moved\nabcd"))
+        Some(&json!(
+            "[0.95=0.80+3/2/1] done server d t1-0 moved merged\nabcd"
+        ))
     );
 }
 
@@ -210,13 +214,13 @@ fn notice_marks_late_messages_and_tolerates_missing_parts() {
         "late_ms": NOON,
         "max_chars": ROOMY,
         "state": "open",
-        "template": "{state}|{score}|{people}|{late}|{analysis}",
+        "template": "{state}|{score}|{people}|{late}|{origin}|{analysis}",
         "topic_id": "t",
     });
     let reply = call("notice", &request.to_string()).unwrap().unwrap();
     assert_eq!(
         reply.get("text"),
-        Some(&json!("open||0|(at 2026-07-08 04:00:35 UTC)|a"))
+        Some(&json!("open||0|(at 2026-07-08 04:00:35 UTC)||a"))
     );
 }
 
@@ -231,6 +235,26 @@ fn prompt_of(reply: &Value) -> Option<String> {
         .get("prompt")
         .and_then(Value::as_str)
         .map(str::to_owned)
+}
+
+#[test]
+fn recap_lists_every_topic_once() {
+    let request = json!({
+        "item": "{label}/{state}/{score}",
+        "items": [
+            {"label": "outage", "score": SCORE, "state": "resolved"},
+            {"label": "{items}", "state": "open"},
+        ],
+        "states": {"resolved": "done"},
+        "template": "{count}:\n{items}",
+    });
+    let reply = call("recap", &request.to_string()).unwrap().unwrap();
+    assert_eq!(
+        reply.get("text"),
+        Some(&json!("2:\noutage/done/0.95\n{items}/open/"))
+    );
+    assert_eq!(call("recap", "nope").unwrap(), Err(400));
+    assert_eq!(call("recap", "{}").unwrap(), Err(400));
 }
 
 fn rows() -> Value {

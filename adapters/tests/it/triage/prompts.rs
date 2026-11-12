@@ -33,7 +33,7 @@ fn folder_lists_configured_prompts_and_saves_atomically() {
         .into_iter()
         .map(|(name, _text)| name)
         .collect();
-    assert_eq!(names, ["followup", "session", "topic", "urgent"]);
+    assert_eq!(names, ["followup", "review", "session", "topic", "urgent"]);
     let screened = listed(&sandbox, &sandbox.screen("")).unwrap();
     assert_eq!(
         screened.last(),
@@ -106,6 +106,7 @@ async fn unusable_prompts_hold_the_work() {
         ("prompts-missing", "urgent.md", None),
         ("prompts-invalid", "urgent.md", Some("no placeholder")),
         ("prompts-topic", "topic.md", Some("no placeholder")),
+        ("prompts-review", "review.md", None),
     ] {
         let sandbox = Sandbox::new(name).unwrap();
         seed(&sandbox, &one()).unwrap();

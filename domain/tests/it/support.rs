@@ -4,18 +4,33 @@ use domain::inbox::{Paging, Query, Reader, Row};
 use domain::outbound::{Item, Listing, Outbox};
 use domain::prompts::Library;
 use domain::redact::Seal;
+use domain::topics::{Board, Detail, Overview};
 use domain::{AppError, Errors};
 use serde_json::{Error, from_str, from_value, json};
 
 const BATCH: u64 = 1;
 pub(crate) const ERRORS: &str = r#"{"bad_request":{"code":"invalid"},"conflict":{"code":"clash"},"not_found":{"code":"absent"},"storage":{"code":"unavailable"},"unknown_action":{"code":"missing"},"unprocessable":{"code":"refused"}}"#;
 const HASH_CHARS: u32 = 8;
+pub(crate) const KNOWN: &str = "T1";
 pub(crate) const MARK: &str = "[x]";
 pub(crate) const PAGING: &str = r#"{"default":2,"max":3}"#;
+const PAIR: u64 = 2;
+const SCORE: f64 = 0.9;
 const STAMP: u64 = 1_000;
+const TRIO: u64 = 3;
 
 #[derive(Debug)]
 pub(crate) struct Broken;
+
+impl Board for Broken {
+    fn detail(&self, _topic_id: &str) -> Result<Option<Detail>, AppError> {
+        Err(AppError::Storage)
+    }
+
+    fn overview(&self, _listing: &Listing<'_>) -> Result<Overview, AppError> {
+        Err(AppError::Storage)
+    }
+}
 
 impl Outbox for Broken {
     fn list(&self, _listing: &Listing<'_>) -> Result<Vec<Item>, AppError> {
@@ -39,6 +54,44 @@ impl Roster for Broken {
     }
 }
 
+#[derive(Debug)]
+pub(crate) struct Desk {
+    detail: Detail,
+    overview: Overview,
+}
+
+impl Desk {
+    pub(crate) fn new() -> Result<Self, Error> {
+        let topic = json!({
+            "conversations": PAIR, "label": "outage", "last_at_ms": STAMP, "members": TRIO,
+            "people": PAIR, "score": SCORE, "sources": ["dingtalk"], "state": "open",
+            "topic_id": KNOWN, "urgency": SCORE, "verdict": "act",
+        });
+        Ok(Self {
+            detail: from_value(json!({"changes": [], "timeline": [], "topic": topic}))?,
+            overview: from_value(json!({
+                "items": [topic],
+                "lines": [{"count": TRIO, "reason": "", "state": "approved"}],
+                "topics": [{"count": BATCH, "reason": "", "state": "open"}],
+            }))?,
+        })
+    }
+}
+
+impl Board for Desk {
+    fn detail(&self, topic_id: &str) -> Result<Option<Detail>, AppError> {
+        Ok((topic_id == KNOWN).then(|| self.detail.clone()))
+    }
+
+    fn overview(&self, listing: &Listing<'_>) -> Result<Overview, AppError> {
+        Ok(if listing.state().is_empty() {
+            self.overview.clone()
+        } else {
+            Overview::default()
+        })
+    }
+}
+
 pub(crate) struct Fixture {
     errors: Errors,
     paging: Paging,
@@ -49,6 +102,20 @@ pub(crate) struct Fixture {
 impl Fixture {
     pub(crate) fn dispatch(&self, call: &Call<'_>) -> Result<String, AppError> {
         self.dispatch_with(&Rows::default(), call)
+    }
+
+    pub(crate) fn dispatch_board(
+        &self,
+        board: &dyn Board,
+        call: &Call<'_>,
+    ) -> Result<String, AppError> {
+        let rules = Rules::new(&self.paging);
+        let (reader, outbox, roster) = (Rows::default(), Sent::default(), Pool::default());
+        dispatch(
+            &Context::new(&self.errors, rules, Ports::new(&reader, &outbox, &roster))
+                .with_board(board),
+            call,
+        )
     }
 
     fn dispatch_both(&self, ports: Ports<'_>, call: &Call<'_>) -> Result<String, AppError> {

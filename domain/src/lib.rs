@@ -6,6 +6,7 @@ pub mod inbox;
 pub mod outbound;
 pub mod prompts;
 pub mod redact;
+pub mod topics;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

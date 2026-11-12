@@ -173,6 +173,7 @@ pub(crate) struct SortRequest {
 pub(crate) struct SortResponse {
     placements: Vec<Placement>,
     relations: Vec<Related>,
+    reviews: Vec<Verdict>,
     topics: Vec<Touched>,
 }
 
@@ -211,10 +212,11 @@ impl Tally<'_> {
         });
     }
 
-    fn finish(self, relations: Vec<Related>) -> SortResponse {
+    fn finish(self, relations: Vec<Related>, reviews: Vec<Verdict>) -> SortResponse {
         SortResponse {
             placements: self.placements,
             relations,
+            reviews,
             topics: self
                 .groups
                 .into_iter()
@@ -238,11 +240,18 @@ pub(crate) struct Touched {
     topic: String,
 }
 
+#[derive(JsonSchema, Serialize)]
+#[schemars(rename = "TriageVerdict")]
+pub(crate) struct Verdict {
+    probability: Option<f64>,
+    tag: Value,
+}
+
 fn check(reply: &Reply, layout: &Layout) -> Result<(), AppError> {
     if reply.answers.len() != layout.questions() {
         return Err(AppError::BadRequest);
     }
-    let line_count = layout.predicates();
+    let line_count = layout.scored();
     for (index, answer) in reply.answers.iter().enumerate() {
         let expected = if index < line_count {
             PREDICATE
@@ -308,5 +317,18 @@ pub(crate) fn sort(req: &SortRequest) -> Result<SortResponse, AppError> {
             tally.add(line, (home, chance));
         }
     }
-    Ok(tally.finish(resolved.relations))
+    let reviews = layout
+        .reviews()
+        .iter()
+        .enumerate()
+        .map(|(index, tag)| Verdict {
+            probability: reply
+                .answers
+                .get(layout.predicates().saturating_add(index))
+                .and_then(Option::as_ref)
+                .and_then(probability),
+            tag: tag.clone(),
+        })
+        .collect();
+    Ok(tally.finish(resolved.relations, reviews))
 }

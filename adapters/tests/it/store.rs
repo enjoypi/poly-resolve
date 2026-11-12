@@ -288,7 +288,7 @@ fn shelf_joins_priority_analysis_and_state() {
         assert_eq!(store.save_event(&envelope(key, NOON)).unwrap(), 1);
     }
     sandbox
-        .seed("INSERT INTO members VALUES ('k1', 't1-0', 0.5, 1, 'new', 0), ('k1', 't9-0', 0.9, 1, 'clue', 0); INSERT INTO alerts VALUES ('t1-0@1', 't1-0', 'sent', 0, 'mulled', '', 1, 0, NULL, ''); INSERT INTO lines (key, conversation_id, occurred_at_ms, sender, text, state, reason, reviewer, flag, hints, rules_rev, batch_id, created_at_ms, updated_at_ms) VALUES ('k2', 'c1', 1, '', '', 'withheld', 'sealed', '', '', '[]', 0, 0, 1, 1);")
+        .seed("INSERT INTO members VALUES ('k1', 't1-0', 0.5, 1, 'new', 0), ('k1', 't9-0', 0.9, 1, 'clue', 0); INSERT INTO alerts (key, topic_id, state, attempts, analysis, reason, created_at_ms, updated_at_ms) VALUES ('t1-0@1', 't1-0', 'sent', 0, 'mulled', '', 1, 0); INSERT INTO lines (key, conversation_id, occurred_at_ms, sender, text, state, reason, reviewer, flag, hints, rules_rev, batch_id, created_at_ms, updated_at_ms) VALUES ('k2', 'c1', 1, '', '', 'withheld', 'sealed', '', '', '[]', 0, 0, 1, 1);")
         .unwrap();
     let path = sandbox.database();
     let rows = Shelf::new(&path, BUSY)

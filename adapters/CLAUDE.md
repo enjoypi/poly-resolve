@@ -36,6 +36,7 @@
 - `triage/prompts.rs`：`Folder`（`Settings::prompts()` 构造，目录为 `triage.prompts_dir`，名字为 `followup`、`session`、`topic`、`urgent`，配了 `screen` 再加 `screen`，文件名 `<名字>.md`）实现 domain `prompts::Library`；路径只由白名单名字拼出，不取自请求；`save` 先写同目录 `<名字>.md.tmp` 再 `rename`，rename 失败删掉临时文件；读写失败记 warn `prompt storage failed` 并返回 `Storage`
 - `triage/intake.rs`：入库、成批、重新脱敏；`triage/screen.rs`：本地模型筛查；`triage/batch.rs`：封批、发送、落结果；`triage/alert.rs`：分析、通知；三者是以 `&Shift` 为参数的自由函数（`multiple_inherent_impl` 禁止给 `Shift` 再写 impl）
 - 外发的话题选项：`OPEN_TOPICS` 带出话题最早一条已通过行的原文 `first` 与 `created_at_ms`，domain 按当前规则先脱敏再截断生成说明，存库的 label 只供页面；hints 收窄时保留 `created_at_ms` 晚于该段最早一行入库时间的话题，hints 全不匹配开放话题时不收窄
+- `ledger/sql.rs`：账本的全部 SQL 常量，`ledger.rs` 只放方法并以 `sql::NAME` 引用（两文件各不超过 512 行）
 - `ledger.rs`：`lines`、`batches`、`answers`、`topics`、`members`、`clues`、`relations`、`identities`、`alerts`、`learned_rules`（只读）、`misses` 的读写（旧表 `placements` 只在迁移时读）；参数打成一个 JSON 对象经 `json_extract(?1, …)` 取值（绕开参数个数限制），读返回 `json_group_array`，失败只记 warn、计入 `Ledger::faults()` 并返回空或 0；多语句事务经 `committed`（`BEGIN IMMEDIATE` … `COMMIT`，任一步失败则 `ROLLBACK`）；事务返回的行数只累计带参数的步骤：`BEGIN`、`COMMIT` 的 `execute` 返回上一条写语句的行数，计入会让影响 0 行的认领被当成成功
 - `pipe.rs`：`feed(Job)` 起子进程（args 里的 `${名}` 由 `Exec::args` 换成同名 vars 的值，stderr 置 null，stdin 写入后关闭，超时 `TimedOut`，`kill_on_drop`）；`probe(exec)` 供 `Settings::check`
 
@@ -79,6 +80,10 @@
   - codex 的 stdin 传提示词，stdout 是 `--json` 事件流，经 domain `triage.reply`（带上话题当前 `state`）取会话 ID、状态、标题、变化要点与正文；退出非 0、输出无法解析、回复首行不是合规 JSON 都算失败，`reason` 为 `exit:0`
   - 成功先在一个事务里写分析与变化要点（`alerts.analysis/changes`）、会话 ID、话题的 `state`、`closed_at_ms`、标题（非空才改 `label`）与 `verdict`，再推进：结论没变且状态没变（domain 给 `quiet`）转 `quiet`、不通知，否则转 `analyzed`；推进失败下轮重放已存分析（一律转 `analyzed`），不重跑 Codex。失败 `attempts + 1` 并把 `thread_at_ms` 归零，让下次新建会话
 - `deliver`：用 `triage.notice` 渲染（标题、状态、`score`、紧急度、影响面取话题当前值，旧话题无 `score` 时回落 `alerts.score` 与话题概率；话题最后一条消息早于 `alerts.created_at_ms` 超过 `notice.late_after_ms` 时带 `late_ms`），dws 发送（参数末尾追加 `notify_target` 与 `--idempotency-key=<话题>@<批号>`）→ `sent`；失败达 `max_attempts` 转 `failed`；阶段推进（`ADVANCE_ALERT … WHERE state = from`）把 `attempts` 与 `updated_at_ms` 归零，故发送失败只重试发送
+- 通知合并：`gate` 带 `cooldown_ms`，同一话题上次 `sent` 距今不足 `limits.notice_cooldown_ms` 的 `analyzed` 项先不发；`Ledger::supersede_notices` 把同话题较旧的待发结论置 `merged`（`merged_into` 记话题），只发最新一条；分析落库时 `Ledger::superseded`（话题有 `pending` 的变更，或已有更新的待分析项）为真则本次结论转 `quiet`；lane 第一轮（`ticks == 0`）`recap`：待发结论多于一个话题时经 domain `triage.recap` 合成一条汇总发出，各项随之 `sent`
+- 自动调整（`triage/regroup.rs`，Batches lane 在 `send` 之后）：`Ledger::drift` 取候选（`clue` 两个话题的成员有共同强线索、`vote` 复核判同达 `topics.merge_after` 次、`apart` 复核判不属于达 `topics.split_after` 次；涉及的话题已有 `pending` 变更的不取）→ domain `triage.regroup` 定为 merge、move、split → `Ledger::propose` 写 `changes(pending)` → 逐条 `Ledger::settle`：一个事务（`sql::SETTLE` 按序执行），话题有在途分析（`alerts.pending`）时 `CHANGE_CLAIM` 不认领、留到下轮；merge 保留较早的话题，较晚的写 `topic_aliases`（保持一跳）并删除，其未发的提醒置 `merged`；split 的新话题 ID 为 `s<变更号>`、不继承会话；受影响的话题重算 `reach`、`score` 并开一条 `origin` 为变更类型的提醒（键 `<话题>@c<变更号>`）
+- 复核问题：封批时 `Ledger::reviews` 取至多 `topics.review_max` 道（先是 `relations.maybe` 未满 `merge_after` 的话题对，再是经 `choice` 归入、还没被判 `kept` 的会话首行与其话题），随 `pack` 外发；`apply` 里 `VOTE` 按 `questions.review.threshold` 记 `maybe`／`unlike` 或 `kept`／`apart` 计数，`UNLIKE` 把判不同达 `merge_after` 次的话题对删掉、不再复核
+- 话题视图：`Shelf` 实现 domain `topics::Board`（`OVERVIEW`、`DETAIL` 两条 SQL 共用 `topic!()` 宏拼话题摘要）；详情先经 `topic_aliases` 解析旧 ID，`withheld` 行的 `text` 置空，变更记录至多 100 条
 - 外发记录：cli 的 `GET /api/outbound` 经 domain `outbound.list` 调 `Shelf`，只读；没有人工审核，`rejected` 只存在于旧数据
 - `validate(setup)`：先检查 `batch ≤ 200`、`topics.max_open + batch ≤ 254`（决策接口 `questions ≤ 400`、`choices ≤ 255`），再校验决策与本地模型 URL，再用空文本调 domain `redact` 与 `clues`，规则或线索正则无效即 `Err`，最后逐个 `Desk::prompt`，任一为 `None` 报 `triage.prompts_dir: <名字>: unusable`；cli 启动自检用它
 - 外发内容（决策请求体、codex 提示词）只能来自 domain 渲染后的结果，adapters 不做文本替换
@@ -88,7 +93,7 @@
   - `lines` 按 `state, reason, role` 计数：通知会话为 `skipped/notice`，空正文、密文、筛查拦下的为 `withheld`，自动邮件没有话题可并的为 `unrelated/no_topic`；锚点之后的消息都应有 `lines` 行
   - `batches` 由 `ready` 变 `sent`；`failed` 的批按 `max_revivals` 自动重来，`revivals = -1` 的旧批只能人工重发；`answers` 存决策应答
   - 已通过的行都有 `members`；`withheld` 行在同会话相邻行归属后才有；`members.via` 为 `adjacent`、`clue`、`choice`、`new`、`neighbour`、`legacy`
-  - `alerts` 由 `waiting` → `pending` → `analyzed` → `sent`，结论没变的停在 `quiet`；`topics.state` 为 `open`、`resolved`、`cancelled`、`archived`
+  - `alerts` 由 `waiting` → `pending` → `analyzed` → `sent`，结论没变或被新进展顶替的停在 `quiet`，被更新结论或合并取代的为 `merged`；`changes` 由 `pending` → `applied` 或 `dropped`；`topics.state` 为 `open`、`resolved`、`cancelled`、`archived`
   - 日志关键词：`batch formed`、`batch sealed`、`batch decided`、`alert analyzed`、`alert sent`、`failed batch revived`，WARN `decision failed`（带 `batch_id`、`attempt`、`revivals`、`exhausted`、`retry_in_ms`）、`alert analysis failed`、`alert step failed`（带 `key`、`attempt`、`exhausted`、`retry_in_ms`）、`line screening failed`（带 `key`、`attempt`、`reason`、`retry_in_ms`）、`lane backing off`（带 `lane`、`attempt`、`faults`、`retry_in_ms`）；采集重连 `dingtalk session ended`、`imap session ended`（带 `account`、`attempt`、`retry_in_ms`，`attempt` 为 `Backoff::streak()`，收到过消息的一轮后回到 1）
   - 等待原因只在变化时记一条 info（`Shift::noted` 按主题记上次原因）：`batch waiting`（`state` 为 `screening@<批号>` 或 `sending@<批号>`）；`batch claim skipped` 表示打包后库里出现了更新的规则、下轮重打包
 

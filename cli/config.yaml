@@ -107,6 +107,7 @@ triage:
     lookback_ms: 3600000
     max_attempts: 3
     max_revivals: 2
+    notice_cooldown_ms: 600000
     parallel: 4
     poll_ms: 5000
     retry_after_ms: 60000
@@ -116,12 +117,21 @@ triage:
   notice:
     late: "（消息实际发生于 {time}）"
     late_after_ms: 1800000
+    origins:
+      merge: "（已与另一话题合并）"
+      move: "（有消息移入或移出）"
+      split: "（已从原话题拆出）"
     states:
       cancelled: 已取消
       open: 进行中
       resolved: 已解决
+    summary:
+      item: "【{state}】{label}｜优先级 {score}"
+      template: |-
+        停机期间有 {count} 个话题的结论更新，详情见话题页：
+        {items}
     template: |-
-      【{state}】{label}｜优先级 {score}（紧急度 {urgency}，{people} 人、{conversations} 个会话、{sources} 个来源）{late}
+      【{state}】{label}｜优先级 {score}（紧急度 {urgency}，{people} 人、{conversations} 个会话、{sources} 个来源）{late}{origin}
       变化：{changes}
       {analysis}
   notify:
@@ -153,6 +163,9 @@ triage:
   notify_target: "${NOTIFY_TARGET}"
   prompts_dir: cli/prompts
   questions:
+    review:
+      name: review
+      threshold: 0.5
     threshold: 0.8
     topic:
       min_confidence: 0.6
@@ -241,11 +254,14 @@ triage:
         min_chars: 6
         prefixes: ["re:", "re：", "fw:", "fw：", "fwd:", "fwd：", "回复:", "回复：", "答复:", "答复：", "转发:", "转发："]
     max_open: 20
+    merge_after: 2
     reach:
       cap: 0.5
       conversations: 0.05
       people: 0.05
       sources: 0.1
+    review_max: 5
+    split_after: 2
 ingest:
   backoff_initial_ms: 3000
   backoff_max_ms: 60000

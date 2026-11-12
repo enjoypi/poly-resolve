@@ -1,12 +1,13 @@
 use super::{
     Http, Route, Trace, asked, bare, batches, changed, fallible, health, ingest, keyed, listed,
-    messages, outbound, prompts, sealed, triage, typed,
+    messages, outbound, prompts, sealed, topics, triage, typed,
 };
 use serde_json::to_string;
 
 use crate::AppError;
+use crate::topics::{Detail, Overview};
 
-pub(super) static ROUTES: [Route; 27] = [
+pub(super) static ROUTES: [Route; 31] = [
     Route {
         action: "list",
         call: |call, context| listed(call.params, context, batches::list),
@@ -168,6 +169,26 @@ pub(super) static ROUTES: [Route; 27] = [
         trace: Trace::Redacted,
     },
     Route {
+        action: "get",
+        call: |call, context| listed(call.params, context, topics::get),
+        failures: &[AppError::BadRequest, AppError::NotFound, AppError::Storage],
+        feature: "topics",
+        http: Http::Bound(
+            "get",
+            "/api/topics/{topic_id}",
+            asked::<topics::Key, Detail>,
+        ),
+        trace: Trace::Redacted,
+    },
+    Route {
+        action: "list",
+        call: |call, context| listed(call.params, context, topics::list),
+        failures: &[AppError::BadRequest, AppError::Storage],
+        feature: "topics",
+        http: Http::Bound("get", "/api/topics", asked::<topics::ListRequest, Overview>),
+        trace: Trace::Redacted,
+    },
+    Route {
         action: "brief",
         call: |call, context| sealed(call.request, context, triage::prompt::brief),
         failures: &[],
@@ -216,8 +237,24 @@ pub(super) static ROUTES: [Route; 27] = [
         trace: Trace::Redacted,
     },
     Route {
+        action: "recap",
+        call: |call, _context| typed(call.request, triage::prompt::recap),
+        failures: &[],
+        feature: "triage",
+        http: Http::Hidden,
+        trace: Trace::Redacted,
+    },
+    Route {
         action: "redact",
         call: |call, context| sealed(call.request, context, triage::redact::redact),
+        failures: &[],
+        feature: "triage",
+        http: Http::Hidden,
+        trace: Trace::Redacted,
+    },
+    Route {
+        action: "regroup",
+        call: |call, _context| typed(call.request, triage::regroup::regroup),
         failures: &[],
         feature: "triage",
         http: Http::Hidden,

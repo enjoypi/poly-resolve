@@ -60,6 +60,7 @@ fn check_accepts_each_placeholder_exactly_once() {
         ("followup", "{messages} b"),
         ("topic", "which {segment}"),
         ("urgent", "urgent {line}"),
+        ("review", "same {review}"),
         ("screen", "judge"),
     ] {
         assert_eq!(

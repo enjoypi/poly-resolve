@@ -4,6 +4,7 @@ pub(super) mod pack;
 pub(super) mod people;
 pub(super) mod prompt;
 pub(crate) mod redact;
+pub(super) mod regroup;
 pub(super) mod reply;
 pub(super) mod screen;
 pub(super) mod screened;

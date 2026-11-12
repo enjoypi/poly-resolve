@@ -7,7 +7,7 @@ use domain::prompts::{Library, Prompt};
 
 use super::config::Screen;
 
-const NAMES: [&str; 4] = ["followup", "session", "topic", "urgent"];
+const NAMES: [&str; 5] = ["followup", "review", "session", "topic", "urgent"];
 const SCREEN: &str = "screen";
 const SUFFIX: &str = "md";
 const TEMPORARY: &str = "md.tmp";

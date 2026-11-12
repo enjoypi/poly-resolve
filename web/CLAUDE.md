@@ -14,7 +14,7 @@
 
 ## 入口与模块
 
-- `index.html` 是入口，`<link>` 引入 `src/style.css` 与 `src/favicon.svg`；`src/main.ts` 用 `connect(location.origin)` 按 `location.hash` 调 `renderMessages`、（`OUTBOUND_HASH`）`renderOutbound` 或（`FAILED_HASH`）`renderFailed`、（`PROMPTS_HASH`）`renderPrompts`；消息页 `.bar` 追加外发记录页与提示词页链接，外发记录页追加失败批页链接，`hashchange` 时整页重载
+- `index.html` 是入口，`<link>` 引入 `src/style.css` 与 `src/favicon.svg`；`src/main.ts` 用 `connect(location.origin)` 按 `location.hash` 调 `renderMessages`、（`OUTBOUND_HASH`）`renderOutbound` 或（`FAILED_HASH`）`renderFailed`、（`PROMPTS_HASH`）`renderPrompts`、（`TOPICS_HASH`）`renderTopics`、（以 `TOPIC_HASH` 开头，其后为百分号编码的话题 ID）`renderTopic`；消息页 `.bar` 追加话题页、外发记录页与提示词页链接，外发记录页追加失败批页链接，`hashchange` 时整页重载
 - `bun run build` 把产物平铺写到 `dist/`（已忽略），由 `cli serve` 的 `web_dir` 托管，不清旧产物；`bun build` 会按哈希重命名资源并改写引用
 - `src/` 保持平铺（contract 测试只扫这一层；改成子目录须同步改扫描范围）；一个模块一件事，文件名即职责，以下几个需注明：
   - `messages.ts`：`renderMessages(client, root, timeZone?)`，只构造 `Board`
@@ -25,6 +25,8 @@
   - `outbound.ts`：`renderOutbound(client, root, timeZone?)`，只读的外发记录页
   - `failed.ts`：`renderFailed(client, root, timeZone?)`，失败批页
   - `prompts.ts`：`renderPrompts(client, root)`，提示词页
+  - `topics.ts`：`renderTopics(client, root, timeZone?)`，话题列表页
+  - `topic.ts`：`renderTopic(client, root, topic, timeZone?)`，话题详情页；`brief` 生成话题摘要（标题链接与一行说明），列表页复用
   - `dom.ts`：`area`、`button`，各卡片页共用
 - `config.ts` 是前端唯一的常量源：字段呈现表 `FIELDS`（标签、类型、默认隐藏、回退字段、占位、`look`、`primary`、`values` 显示值映射）、`DETAIL`、`PIN`、`TEXT` 及各项上限与时长；`PAGE_LIMIT` 须不超过 `cli/config.yaml` 的 `messages.max`
 - 字段：新增字段不必改 `config.ts`；已登记 `priority`（数字，默认显示）、`state`（处理状态，按 `STATES` 映射，默认显示）、`reason`、`topic` 与 `analysis`（默认隐藏）；未登记的字段按值推断（键以 `_ms` 结尾的整数为时间，全数值为数字，其余为文本）并默认显示
@@ -53,6 +55,13 @@
 - 安全：文字只经文本节点与 `span` 的 `textContent` 写入 `<pre>`，不渲染
 - happy-dom 无全局 `Option`，下拉项用 `createElement("option")`
 
+## 话题页
+
+- 只读，不自动轮询；列表 `GET /api/topics` 取 `CARD_LIMIT` 条，`state` 取下拉框（空为全部，其余为 `TOPIC_STATES`），页首三行：话题各状态数量、消息各状态数量（原因按 `HELD` 映射）、已知盲区 `TEXT.blind`
+- 每个话题一张卡片（类 `review topic`）：标题（空则用话题 ID）链到 `TOPIC_HASH` + 编码后的 ID，说明行为状态、优先级与紧急度（缺失显示 `TEXT.none`）、人数与会话数、来源、消息数、最近进展时间，再是最新分析（`<pre>` 文本）
+- 详情 `GET /api/topics/{topic_id}`：话题卡片、时间线（每条一张卡片：时间、来源、会话、发送人、角色、归入方式 `VIAS`；状态不是 `approved` 的加 `flagged` 并写状态与原因，没有正文的不放 `<pre>`）、自动调整记录（类 `review change`：时间、类型 `CHANGE_KINDS`、起止话题与条数、原因、状态）
+- 消息详情“全部字段”里 `DETAIL.topic` 的值是指向话题详情的链接（`detail.ts` 的 `jump`）
+
 ## 失败批页
 
 - `GET /api/batches` 取 `CARD_LIMIT` 条失败批，每批一张卡片（样式类 `review`，各卡片页共用）：批号、时间、`TEXT.failedMeta`（尝试次数、已通过条数、原因）与“重发”；重发 `PATCH /api/batches/{batch_id}` 请求体 `{state:"ready"}`，成功移除卡片，失败显示错误码；不自动轮询
@@ -75,5 +84,6 @@
 
 ## 测试
 
+- `test/rig.ts` 是消息页测试共用的假接口与取值函数（`messages.test.ts`、`picks.test.ts`、`topics.test.ts` 引用），不含用例
 - 测试放 `test/`，用 happy-dom 断言 DOM 与数据，不截图（`style.test.ts` 读 `style.css` 文本断言字号规则）；在测试文件内 `if (!GlobalRegistrator.isRegistered) GlobalRegistrator.register()`（多个文件共用同一进程），不用 bunfig.toml；点击后用轮询 `until` 等待异步完成，测试里的时间显式传 `timeZone`；请求路径取自 `api/openapi.json`，不手写
 - `test/contract.test.ts` 断言：生成物与 spec 同步、生成物无注释、`src/*.ts`（不含 `api.gen.ts`，不递归子目录）无 `fetch(`、`XMLHttpRequest`、`axios`

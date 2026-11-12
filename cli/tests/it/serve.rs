@@ -3,6 +3,7 @@ mod host;
 mod messages;
 mod outbound;
 mod prompts;
+mod topics;
 
 use core::ops::{Deref, DerefMut};
 use std::fs;

@@ -7,7 +7,7 @@ use futures_util::future::join_all;
 use serde_json::{Value, json};
 
 use super::TRIAGE;
-use super::desk::Brief;
+use super::desk::{Brief, Reply};
 use super::{ANALYZED, PENDING, QUIET, SENT, Shift, current, failure, number, retry_in, text};
 use crate::ingest::now_ms;
 use crate::pipe::{Job, feed};
@@ -81,31 +81,7 @@ fn analyze(shift: &Shift<'_>, job: &Analysis, done: &io::Result<Output>) {
             )
         });
     if let Some(found) = reply {
-        let recorded = shift.ledger.record_analysis(&json!({
-            "analysis": found.text(),
-            "at_ms": now_ms(),
-            "changes": found.changes(),
-            "key": key,
-            "status": found.status(),
-            "thread_id": found.thread_id(),
-            "title": found.title(),
-            "topic_id": topic,
-        }));
-        let advanced = (recorded > 0).then(|| {
-            shift.ledger.advance_alert(&json!({
-                "analysis": null,
-                "from": PENDING,
-                "key": key,
-                "state": if found.quiet() { QUIET } else { ANALYZED },
-            }))
-        });
-        tracing::info!(
-            recorded,
-            advanced,
-            quiet = found.quiet(),
-            len = found.text().len(),
-            "alert analyzed"
-        );
+        conclude(shift, job, &found);
     } else {
         let reason = failure(done);
         let failed = shift.ledger.fail_alert(&failed_of(&job.claim, &reason));
@@ -149,6 +125,43 @@ fn claim_of(shift: &Shift<'_>, alert: &Value, state: &str) -> Value {
     })
 }
 
+fn conclude(shift: &Shift<'_>, job: &Analysis, found: &Reply) {
+    let key = text(&job.claim, "key");
+    let topic = text(&job.alert, "topic_id");
+    let recorded = shift.ledger.record_analysis(&json!({
+        "analysis": found.text(),
+        "at_ms": now_ms(),
+        "changes": found.changes(),
+        "key": key,
+        "status": found.status(),
+        "thread_id": found.thread_id(),
+        "title": found.title(),
+        "topic_id": topic,
+    }));
+    let quiet = found.quiet()
+        || shift.ledger.superseded(&json!({
+            "created_at_ms": job.alert.get("created_at_ms"),
+            "key": key,
+            "topic_id": found.thread_id(),
+        }));
+    let advanced = (recorded > 0).then(|| {
+        shift.ledger.advance_alert(&json!({
+            "analysis": null,
+            "at_ms": now_ms(),
+            "from": PENDING,
+            "key": key,
+            "state": if quiet { QUIET } else { ANALYZED },
+        }))
+    });
+    tracing::info!(
+        recorded,
+        advanced,
+        quiet,
+        len = found.text().len(),
+        "alert analyzed"
+    );
+}
+
 fn deliver(shift: &Shift<'_>, job: &Delivery, done: &io::Result<Output>) {
     let key = text(&job.claim, "key");
     external(
@@ -159,6 +172,7 @@ fn deliver(shift: &Shift<'_>, job: &Delivery, done: &io::Result<Output>) {
     if done.as_ref().is_ok_and(|output| output.status.success()) {
         let rows = shift.ledger.advance_alert(&json!({
             "analysis": null,
+            "at_ms": now_ms(),
             "from": ANALYZED,
             "key": key,
             "state": SENT,
@@ -229,6 +243,23 @@ fn outcome(done: &io::Result<Output>, started: Instant, attempt: u64) -> Outcome
         .attempt(attempt)
 }
 
+pub(super) async fn recap(shift: &mut Shift<'_>) -> Option<()> {
+    let merged = shift.ledger.supersede_notices();
+    if merged > 0 {
+        tracing::info!(merged, "older notices merged");
+    }
+    let waiting = if shift.ticks == 0 {
+        shift.ledger.backlog()
+    } else {
+        Vec::new()
+    };
+    let claims = reserved(shift, &waiting);
+    if claims.is_empty() {
+        return Some(());
+    }
+    summarize(shift, &waiting, &claims).await
+}
+
 fn release(shift: &Shift<'_>, claim: &Value) {
     let released = shift.ledger.release_alert(claim);
     tracing::debug!(released, "alert claim released");
@@ -240,12 +271,33 @@ fn replay(shift: &Shift<'_>, alert: &Value) -> bool {
     }
     let advanced = shift.ledger.advance_alert(&json!({
         "analysis": null,
+        "at_ms": now_ms(),
         "from": PENDING,
         "key": text(alert, "key"),
         "state": ANALYZED,
     }));
     tracing::info!(advanced, replayed = true, "alert analyzed");
     true
+}
+
+fn reserved(shift: &Shift<'_>, waiting: &[Value]) -> Vec<Value> {
+    if waiting.len() < 2 {
+        return Vec::new();
+    }
+    let claims: Vec<Value> = waiting
+        .iter()
+        .map(|alert| claim_of(shift, alert, ANALYZED))
+        .collect();
+    if claims
+        .iter()
+        .any(|claim| shift.ledger.claim_alert(claim) == 0)
+    {
+        for claim in &claims {
+            release(shift, claim);
+        }
+        return Vec::new();
+    }
+    claims
 }
 
 pub(super) async fn run(
@@ -304,4 +356,42 @@ fn stopped(started: Instant, attempt: u64) -> Outcome<'static> {
     Outcome::new(0, "stopped".to_owned(), elapsed)
         .within(TRIAGE)
         .attempt(attempt)
+}
+
+async fn summarize(shift: &mut Shift<'_>, waiting: &[Value], claims: &[Value]) -> Option<()> {
+    let stamp = waiting
+        .iter()
+        .map(|alert| number(alert, "created_at_ms"))
+        .max()
+        .unwrap_or_default();
+    let extra = vec![
+        shift.triage.notify_target().value().unwrap_or_default(),
+        format!("--idempotency-key=summary@{stamp}"),
+    ];
+    let notice = shift.desk.recap(waiting);
+    let started = Instant::now();
+    let triage = shift.triage;
+    let work = join_all([feed(Job::new(triage.notify(), &extra, &notice))]);
+    let Some(outcomes) = race(&mut *shift.stop, pin!(work)).await else {
+        external("notify", notice.len(), &stopped(started, 1));
+        for claim in claims {
+            release(shift, claim);
+        }
+        return None;
+    };
+    for (done, claim) in outcomes
+        .iter()
+        .flat_map(|done| claims.iter().map(move |claim| (done, claim)))
+    {
+        let job = Delivery {
+            attempt: 1,
+            claim: claim.clone(),
+            extra: Vec::new(),
+            notice: String::new(),
+            started,
+        };
+        deliver(shift, &job, done);
+    }
+    tracing::info!(topics = claims.len(), "alerts summarized");
+    Some(())
 }

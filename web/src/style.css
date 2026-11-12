@@ -727,3 +727,14 @@ td.pick:hover .badge {
   flex-wrap: wrap;
   gap: 8px;
 }
+
+.reviews .section {
+  font-size: var(--fs-3);
+  margin: 8px 0 0;
+}
+
+.topic .title {
+  display: block;
+  font-size: var(--fs-3);
+  margin: 0 0 4px;
+}

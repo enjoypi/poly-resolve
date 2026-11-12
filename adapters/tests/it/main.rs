@@ -8,4 +8,5 @@ mod sandbox;
 mod sources;
 mod store;
 mod support;
+mod topics;
 mod triage;

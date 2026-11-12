@@ -137,6 +137,8 @@ impl<'desk> Desk<'desk> {
             "late": notice.late(),
             "late_ms": late.then(|| number(alert, "last_at_ms")),
             "max_chars": self.triage.result_max_chars(),
+            "origin": alert.get("origin"),
+            "origins": notice.origins(),
             "reach": alert.get("reach"),
             "score": alert.get("score"),
             "state": alert.get("state"),
@@ -167,6 +169,10 @@ impl<'desk> Desk<'desk> {
             "new_label": questions.topic().new_label(),
             "none_label": questions.topic().none_label(),
             "questions": {
+                "review": {
+                    "instructions": self.prompt("review")?,
+                    "name": questions.review().name(),
+                },
                 "topic": {
                     "instructions": self.prompt("topic")?,
                     "name": questions.topic().name(),
@@ -199,8 +205,36 @@ impl<'desk> Desk<'desk> {
             .map(|_reply| text)
     }
 
+    pub(crate) fn recap(&self, items: &[Value]) -> String {
+        let notice = self.triage.notice();
+        let request = json!({
+            "item": notice.summary().item(),
+            "items": items,
+            "states": notice.states(),
+            "template": notice.summary().template(),
+        });
+        self.call("recap", &request).map_or_default(|reply| {
+            from_str::<Value>(&reply).map_or_default(|rendered| {
+                rendered
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned()
+            })
+        })
+    }
+
     pub(crate) fn redact(&self, rules: &Value, text: &str) -> Result<String, AppError> {
         self.call("redact", &json!({"rules": rules, "text": text}))
+    }
+
+    pub(crate) fn regroup(&self, candidates: &[Value]) -> Vec<Value> {
+        self.call("regroup", &json!({"candidates": candidates}))
+            .map_or_default(|reply| from_str::<Value>(&reply).unwrap_or_default())
+            .get("changes")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default()
     }
 
     pub(crate) fn reply(&self, stdout: &str, state: &str) -> Option<Reply> {
@@ -381,6 +415,7 @@ impl Screened {
 pub(crate) struct Sorted {
     placements: Vec<Value>,
     relations: Vec<Value>,
+    reviews: Vec<Value>,
     topics: Vec<Value>,
 }
 
@@ -391,6 +426,10 @@ impl Sorted {
 
     pub(crate) fn relations(&self) -> &[Value] {
         &self.relations
+    }
+
+    pub(crate) fn reviews(&self) -> &[Value] {
+        &self.reviews
     }
 
     pub(crate) fn topics(&self) -> &[Value] {

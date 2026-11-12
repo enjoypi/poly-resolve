@@ -5,6 +5,7 @@ mod desk;
 pub(crate) mod endpoint;
 mod intake;
 pub mod prompts;
+mod regroup;
 mod screen;
 
 use alloc::collections::BTreeMap;
@@ -16,12 +17,13 @@ use domain::features::Context;
 use serde_json::{Value, json};
 use tokio::time::sleep;
 
-use self::alert::run as relay_alerts;
+use self::alert::{recap, run as relay_alerts};
 use self::batch::{seal, send};
 use self::config::Settings;
 use self::desk::Desk;
 use self::endpoint::Http;
 use self::intake::{form, identify, index, intake, rerender};
+use self::regroup::regroup;
 use self::screen::screen;
 use crate::config::Settings as Ingest;
 use crate::http::{Call, Client as HttpClient, Reply};
@@ -80,6 +82,7 @@ struct Shift<'shift> {
     notes: RefCell<BTreeMap<&'static str, String>>,
     seen: u64,
     stop: Stop<'shift>,
+    ticks: u64,
     triage: &'shift Settings,
 }
 
@@ -90,6 +93,7 @@ impl Shift<'_> {
 
     fn gate(&self, state: &str) -> Value {
         json!({
+            "cooldown_ms": self.triage.notice_cooldown_ms(),
             "max_attempts": self.triage.max_attempts(),
             "pace": pace(self),
             "parallel": self.triage.parallel(),
@@ -150,6 +154,8 @@ impl Shift<'_> {
         if woken > 0 {
             tracing::debug!(woken, "alerts activated");
         }
+        recap(self).await?;
+        self.ticks = self.ticks.saturating_add(1);
         let pending = self.waiting(PENDING);
         let analyzed = self.waiting(ANALYZED);
         relay_alerts(self, &pending, &analyzed).await
@@ -168,7 +174,9 @@ impl Shift<'_> {
             Lane::Alerts => self.relay().await,
             Lane::Batches => {
                 self.prepare().await?;
-                send(self).await
+                send(self).await?;
+                regroup(self);
+                Some(())
             }
         }
     }
@@ -252,6 +260,7 @@ pub async fn run(setup: Setup<'_>, lane: Lane, stop: Stop<'_>) {
                 notes: RefCell::default(),
                 seen: 0,
                 stop,
+                ticks: 0,
                 triage: setup.triage,
             }
             .serve()

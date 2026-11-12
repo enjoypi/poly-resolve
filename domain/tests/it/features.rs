@@ -5,6 +5,7 @@ mod mail;
 mod messages;
 mod outbound;
 mod prompts;
+mod topics;
 mod triage;
 
 use domain::features::{Call, Origin, Target};

@@ -58,7 +58,7 @@
 
 ## triage
 
-- 十一个路由，请求都带消息内容，均标 `Trace::Redacted`；`notice`、`screen`、`people` 为 `typed`，要脱敏的 `line`、`pack`、`brief`、`redact` 为 `sealed`（`fn(&Req, Option<&Seal>)`，密钥取自 `Context`），其余为 `fallible`；`notice` 按值收请求以满足 `needless_pass_by_value`，用解构消耗
+- 十三个路由，请求都带消息内容，均标 `Trace::Redacted`；`notice`、`screen`、`people` 为 `typed`，要脱敏的 `line`、`pack`、`brief`、`redact` 为 `sealed`（`fn(&Req, Option<&Seal>)`，密钥取自 `Context`），其余为 `fallible`；`notice` 按值收请求以满足 `needless_pass_by_value`，用解构消耗
 - `line`（`triage/line.rs`）：`{message{bulk?,conversation_id,sender_id,sender_name,text}, rules, max_chars, unknown_sender, self_sender_ids, notify_conversation_id, cipher_min_length}` → `{role, sender, skip, state, text}`；`self_sender_ids` 为空、后两项为 null（数据源无此概念）即不做该项判定；`role`：发送人与 `self_sender_ids` 任一项不区分大小写相等为 `own`，否则 `bulk` 非空为 `auto`，否则 null；`digest`：请求带 `digest_min_chars`、有密钥且原文不短于它时为 `Seal::digest(原文)`，否则空串（被跳过的行恒为空）；`skip` 依次判通知会话（`notice`，`state` 为 `skipped`）、空正文（`empty`）、仍是密文（`sealed`），后两者 `state` 为 `withheld`，都不编译规则、不给文字；其余 `state` 为 `queued`，发送人与正文过 `redact::Mask`，正文按 `max_chars` 截断
 - `clues`（`triage/clue.rs`，`fallible`）：`{message{raw?,text}, patterns[{kind,pattern}], subject{ignore,min_chars,prefixes}}` → `{clues[{kind,value}]}`（去重、按 kind 与 value 排序）；`raw` 里的 `message_id`、`in_reply_to`、`references` 各出一条 `mail`；`raw.subject` 去首尾空白转小写、反复去掉 `prefixes` 后不短于 `min_chars` 且不在 `ignore` 里出一条 `subject`；每条 `patterns` 在原文上取全部匹配（有第 1 分组取分组）；`raw` 不是对象时不取邮件线索；正则无效为 `BadRequest`；线索只留在本机，不外发
 - `pack`（`triage/pack.rs`）：`{lines[{key,conversation_id,occurred_at_ms,role?,sender,text,hints?}], attach[{conversation_id,last_ms,probability?,topic_id}], linked[{key,topic}]?, topics[{topic,label,probability?}], batch_id, gap_ms, label_chars, max_chars, model, new_label, none_label, questions{urgent,topic}, rules}` → `{body, layout, questions}`（`questions` 为问题总数，0 时 adapters 不外发）；布局类型 `Choice`、`Layout`、`Placed`、`Segment` 在 `triage/pack/layout.rs`，旧布局缺 `role` 按空串读
@@ -77,6 +77,9 @@
 - `transcript.rs`：`Row`（`key?`、`occurred_at_ms,sender,text`，可选 `omitted`、`role`、`source`；`render` 过 `Mask` 并按 `max` 截断）、`Style`
 - `people`（`triage/people.rs`，`typed`）：`{senders[{source,sender_id,name}]}` → `{identities[{source,sender_id,person_id,name}]}`；姓名折叠空白转小写；同一姓名出现在至少两个来源、且在每个来源里都只对应一个 `sender_id` 时 `person_id` 为 `name:<姓名>`，否则为 `<source>:<sender_id>`（同一邮箱在多个邮箱账号下 `source` 与 `sender_id` 相同，自然是同一人）；空名不对应
 - 脱敏（`triage/redact.rs`）：`Mask::new(&[Rule], Option<&Seal>)` 编译全部正则，任一无效、或有规则的 placeholder 含 `{hash}` 却没有密钥，返回 `BadRequest`（失败即不外发）；`apply` 按序 `replace_all`，placeholder 里可写 `${1}`；含 `{hash}` 的规则逐个匹配展开后把 `{hash}` 换成 `Seal::tag(值)`，值取 `Rule.group` 指定的分组（缺省整个匹配）；值本身已是这条规则产出的占位（`{hash}` 前后的字面量之间恰为 N 位十六进制）时原样保留，保证在已脱敏的文字上重复套用结果不变；日志用的 `Redactor` 没有密钥，把 `{hash}` 换成 `-`；`regex` 只开 `std`、`perf`、`unicode-perl`、`unicode-case`，无环视，规则里数字类用 `[0-9]`、不用 `\b`（CJK 属 word 字符）；每次调用现编译，不缓存：实测 `cli/config.yaml` 的 25 条规则 release 下每次约 3 ms，intake 每轮至多 `intake` 条，暂不改批量；学到的规则多到每轮耗时明显再改
+- 复核问题：`pack` 请求可带 `reviews[{left,right,tag}]` 与 `questions.review{instructions,name}`，每项出一道是非题（`{review}` 换成序号，两段文字按当前规则脱敏后放进输入），题目计入 `Layout::scored()`；`sort` 把各题概率连同原样的 `tag` 放回 `reviews[{probability,tag}]`，判定阈值与计数在 adapters
+- `regroup`（`triage/regroup.rs`，`typed`）：`{candidates[{from,into,keys,kind,size}]}` → `{changes[{from,into,keys,kind,reason}]}`；`apart` 且 `keys` 非空、少于 `size` 为 split，`clue` 且 `keys` 不到 `size` 一半为 move，其余为 merge（`keys` 清空）；一个话题一次只参与一条变更，按输入顺序先到先得
+- `recap`（`triage/prompt.rs`，`typed`）：`{item, items[{label,score?,state}], states, template}` → `{text}`，`{count}` 与 `{items}`（每项一行）代入汇总模板；`notice` 另代入 `{origin}`（按 `origins` 映射，没有为空）
 - 提示词模板里的“不可信数据”说明在配置里；domain 只做占位符替换
 
 ## outbound
@@ -95,10 +98,15 @@
   - `batches.update`（`keyed`，`PATCH /api/batches/{batch_id}`）：请求体 `{state:"ready"}` → `{state}`；返回状态为 `ready` 回 200（含重复提交），否则 `Conflict`，不存在 `NotFound`
 - 不含消息内容，标 `Trace::Full`
 
+## topics
+
+- `Board`（`topics.rs`，`Debug + Sync`）：`overview(&Listing)` → `Overview{items,lines,topics}`（话题摘要、消息与话题各状态的计数 `Tally{count,reason,state}`），`detail(topic_id)` → `Option<Detail{changes,timeline,topic}>`；失败返回 `AppError::Storage`；缺省实现 `Blank`（空列表、查无），由 `Context::with_board` 换成真实实现（`Ports` 按值传已到 64 字节上限，故不放进 `Ports`）
+- 路由（`features/topics.rs`），含消息内容，均标 `Trace::Redacted`：`topics.list`（`GET /api/topics`，查询参数 `state?, limit?`，`limit` 规则同 messages）、`topics.get`（`GET /api/topics/{topic_id}`，查无为 `NotFound`）
+
 ## prompts
 
 - `Library`（`prompts.rs`，`Debug + Sync`）：`list()` → `Vec<Prompt>`；`save(&Prompt)` → 未启用的名字为 `None`；失败返回 `AppError::Storage`；`Prompt{name,text}`
-- 名字与必含占位符只在 `features/prompts.rs` 的 `TABLE`：`session`、`followup` 为 `{messages}`，`topic` 为 `{segment}`，`urgent` 为 `{line}`，`screen` 无；占位符常量取自 `triage/prompt.rs`、`triage/pack.rs`（`pub(crate)`）；`verify`：名字不在表里 `NotFound`，正文 trim 后为空或任一占位符出现次数不为 1 为 `Unprocessable`（`brief` 只替换一次 `{messages}`，多出的会原样外发）
+- 名字与必含占位符只在 `features/prompts.rs` 的 `TABLE`：`session`、`followup` 为 `{messages}`，`topic` 为 `{segment}`，`urgent` 为 `{line}`，`review` 为 `{review}`，`screen` 无；占位符常量取自 `triage/prompt.rs`、`triage/pack.rs`（`pub(crate)`）；`verify`：名字不在表里 `NotFound`，正文 trim 后为空或任一占位符出现次数不为 1 为 `Unprocessable`（`brief` 只替换一次 `{messages}`，多出的会原样外发）
 - 路由，均标 `Trace::Redacted`：
   - `prompts.list`（`GET /api/prompts`，`bare`，闭包直接调）→ `{items[{name,required,text}]}`；不在表里的名字 `required` 为空
   - `prompts.update`（`keyed`，`PATCH /api/prompts/{name}`）：请求体 `{text}`，先 `verify` 再 `save`，`save` 得 `None` 为 `NotFound` → `{name}`

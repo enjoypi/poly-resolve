@@ -17,6 +17,8 @@ export type Preset = { back_ms?: number; label: string; today?: boolean };
 
 export const CARD_LIMIT = 200;
 
+export const CHANGE_KINDS: Record<string, string> = { merge: "合并", move: "移动", split: "拆分" };
+
 export const COPY_FEEDBACK_MS = 1500;
 
 export const DEFAULT_SORT = "occurred_at_ms";
@@ -30,6 +32,7 @@ export const DETAIL = {
   conversation: "conversation_id",
   sender: "sender_name",
   time: "occurred_at_ms",
+  topic: "topic",
 };
 
 export const SOURCES: Record<string, string> = { dingtalk: "钉钉", imap: "邮箱" };
@@ -76,6 +79,7 @@ export const PROMPTS: Record<string, { hint: string; label: string }> = {
   followup: { hint: "同一话题续写时只发新增消息的提示", label: "分析提示词（续写）" },
   urgent: { hint: "决策接口对每条消息提的是非问题", label: "紧急判断问题" },
   topic: { hint: "决策接口对每个会话段提的话题归属问题", label: "话题归属问题" },
+  review: { hint: "决策接口复核两个话题是否同一件事的是非问题", label: "话题复核问题" },
   screen: { hint: "本地模型复核脱敏的系统提示", label: "本地筛查指令" },
 };
 
@@ -93,6 +97,8 @@ export const FAILED_HASH = "#failed";
 export const HELD: Record<string, string> = {
   empty: "非文本消息",
   risky: "筛查判为高风险",
+  no_topic: "未归入话题",
+  screen: "筛查未通过",
   sealed: "仍是密文",
   unscreened: "筛查没有结论",
 };
@@ -101,14 +107,37 @@ export const OUTBOUND_HASH = "#outbound";
 
 export const OUTBOUND_STATES: Record<string, string> = { approved: "已外发", withheld: "未外发" };
 
-export const ROLES: Record<string, string> = { auto: "自动邮件", own: "本人" };
+export const ROLES: Record<string, string> = { auto: "自动邮件", copy: "重复转发", own: "本人" };
 
+export const TOPIC_HASH = "#topic/";
+
+export const TOPIC_STATES: Record<string, string> = {
+  open: "进行中",
+  resolved: "已解决",
+  cancelled: "已取消",
+  archived: "已归档",
+};
+
+export const TOPICS_HASH = "#topics";
+
+export const VIAS: Record<string, string> = {
+  adjacent: "相邻消息",
+  choice: "模型归属",
+  clue: "强线索",
+  legacy: "历史数据",
+  move: "自动移动",
+  neighbour: "同段带入",
+  new: "新话题",
+  split: "自动拆分",
+};
 
 export const TEXT = {
   all: "加载全部",
   back: "消息",
   batch: (id: number) => `批 ${id}`,
+  blind: "已知盲区：未外发、已跳过的消息不参与分析；邮件签名与钉钉资料里的邮箱未用于对应同一人。",
   brand: "Poly Resolve",
+  changes: (count: number) => `自动调整记录（${count}）`,
   capped: (max: number) => `已达 ${max} 条上限，请缩小时间范围。`,
   clear: "清除筛选",
   clearMark: "×",
@@ -120,15 +149,21 @@ export const TEXT = {
   dirty: "未保存",
   counts: (shown: number, loaded: number) => `显示 ${shown}／已加载 ${loaded} 条。`,
   empty: "没有消息。",
+  every: "全部",
   failed: "失败批",
   failedCount: (count: number) => `失败 ${count} 批`,
   failedMeta: (attempts: number, lines: number, reason: string) =>
     `已尝试 ${attempts} 次 · ${lines} 条 · ${reason}`,
   fields: "全部字段",
   held: (reason: string) => `未外发：${reason}`,
+  lineTally: (text: string) => `消息：${text}`,
+  members: (count: number) => `${count} 条消息`,
   more: "加载更多",
+  moved: (from: string, to: string, keys: number) => `${from} → ${to}（${keys} 条）`,
   noFailed: "没有失败的批。",
   noOutbound: "没有记录。",
+  noTopics: "没有话题。",
+  none: "无",
   outbound: "外发记录",
   outboundCount: (count: number) => `${count} 条`,
   outboundState: "状态",
@@ -137,15 +172,21 @@ export const TEXT = {
   promptNote: "保存后下一次调用生效；文件在 cli/prompts/，改动需自行提交。",
   prompts: "提示词",
   range: "时间范围",
+  reach: (people: number, conversations: number) => `${people} 人 ${conversations} 个会话`,
   rangeInvalid: "起止时间无效",
   refresh: "刷新",
   resend: "重发",
   revert: "撤销修改",
   save: "保存",
   saved: "已保存",
+  score: (score: string, urgency: string) => `优先级 ${score}（紧急 ${urgency}）`,
   search: "搜索全部字段",
   since: "起",
   span: (text: string) => `时间范围：${text}。`,
+  status: (state: string, reason: string) => (reason === "" ? state : `${state}：${reason}`),
+  timeline: (count: number) => `时间线（${count}）`,
+  topicTally: (text: string) => `话题：${text}`,
+  topics: "话题",
   unreachable: "unreachable",
   until: "止",
 };

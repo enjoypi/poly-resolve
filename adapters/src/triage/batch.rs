@@ -70,7 +70,10 @@ fn judge(shift: &Shift<'_>, batch: &Value, reply: Result<String, String>) {
                     "gap_ms": shift.triage.session_gap_ms(),
                     "placements": found.placements(),
                     "reach": shift.triage.topics().reach(),
+                    "merge_after": shift.triage.topics().merge_after(),
                     "relations": found.relations(),
+                    "review_threshold": shift.triage.questions().review().threshold(),
+                    "reviews": found.reviews(),
                     "topics": found.topics(),
                 }),
                 &alerts(shift, &found, batch_id),
@@ -110,11 +113,17 @@ fn packed(shift: &Shift<'_>, batch_id: u64, rules: &Value) -> Option<Packed> {
         .open_topics(&json!({"limit": shift.triage.topics().max_open()}));
     let attach = shift.ledger.attach(&json!({"batch_id": batch_id}));
     let linked = shift.ledger.linked(&json!({"batch_id": batch_id}));
+    let reviews = shift.ledger.reviews(&json!({
+        "limit": shift.triage.topics().review_max(),
+        "merge_after": shift.triage.topics().merge_after(),
+        "split_after": shift.triage.topics().split_after(),
+    }));
     shift.desk.pack(&json!({
         "attach": attach,
         "batch_id": batch_id,
         "lines": lines,
         "linked": linked,
+        "reviews": reviews,
         "rules": rules,
         "topics": topics,
     }))
