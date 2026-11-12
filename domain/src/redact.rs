@@ -2,7 +2,6 @@ use core::cmp::Reverse;
 
 use crate::AppError;
 use crate::features::triage::redact::{Mask, Rule as Step};
-use crate::review::Rule;
 
 #[derive(Debug)]
 pub struct Redactor {
@@ -18,11 +17,27 @@ impl Redactor {
     pub fn new(rules: &[Rule]) -> Result<Self, AppError> {
         let steps: Vec<Step> = rules
             .iter()
-            .map(|rule| Step::new(rule.pattern(), rule.placeholder()))
+            .map(|rule| Step::new(&rule.pattern, &rule.placeholder))
             .collect();
         Ok(Self {
             mask: Mask::new(&steps)?,
         })
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Rule {
+    pattern: String,
+    placeholder: String,
+}
+
+impl Rule {
+    #[must_use = "规则需交给日志脱敏"]
+    pub const fn new(pattern: String, placeholder: String) -> Self {
+        Self {
+            pattern,
+            placeholder,
+        }
     }
 }
 
@@ -49,7 +64,7 @@ fn literal(template: &str) -> String {
     out
 }
 
-#[must_use = "占位符需交给审核页"]
+#[must_use = "占位符需交给外发记录页"]
 pub fn marks(placeholders: &[&str]) -> Vec<String> {
     let mut found: Vec<String> = placeholders
         .iter()

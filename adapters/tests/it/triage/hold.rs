@@ -1,31 +1,13 @@
 use serde_json::json;
 
-use super::rig::{PICK, calls, draw, logged, one, seed, start};
+use super::rig::{calls, logged, one, seed, start, two_chats};
 use crate::support::Sandbox;
 
+const BACKOFF: u64 = 3_600_000;
 const BRIEF_RETRY: u64 = 300;
 const FEW: usize = 14;
-const NONE: u32 = 0;
+const ONE: u32 = 1;
 const QUICK_HOLD: u64 = 1_500;
-
-#[tokio::test]
-async fn decision_quota_is_logged_once() {
-    let sandbox = Sandbox::new("hold-decisions").unwrap();
-    seed(&sandbox, &one()).unwrap();
-    let patch = json!({"limits": {"max_decisions_per_hour": NONE}});
-    let logs = logged(&sandbox, &patch, QUICK_HOLD).await.unwrap();
-    assert_eq!(logs.matches("decision quota reached").count(), 1);
-}
-
-#[tokio::test]
-async fn handoff_hold_is_logged_once() {
-    let sandbox = Sandbox::new("hold-handoffs").unwrap();
-    seed(&sandbox, &one()).unwrap();
-    let patch = json!({"limits": {"max_handoffs_per_hour": NONE}});
-    let logs = logged(&sandbox, &patch, QUICK_HOLD).await.unwrap();
-    assert_eq!(logs.matches("handoff held").count(), 1);
-    assert!(logs.contains("quota"));
-}
 
 #[tokio::test]
 async fn ledger_faults_back_the_lane_off() {
@@ -80,13 +62,14 @@ async fn retries_are_logged_with_their_wait() {
 }
 
 #[tokio::test]
-async fn review_wait_is_logged_once() {
-    let sandbox = Sandbox::new("hold-review").unwrap();
-    seed(&sandbox, &one()).unwrap();
-    let patch = json!({"review": {"mode": "manual"}});
-    start(&sandbox, &patch, QUICK_HOLD).await.unwrap();
-    assert_eq!(draw(&sandbox, PICK).unwrap(), "1|1");
+async fn sending_wait_is_logged_once() {
+    let sandbox = Sandbox::new("hold-sending").unwrap();
+    seed(&sandbox, &two_chats()).unwrap();
+    let patch = json!({
+        "limits": {"batch": ONE, "retry_after_ms": BACKOFF},
+        "stub": {"decide": {"mode": "fail"}},
+    });
     let logs = logged(&sandbox, &patch, QUICK_HOLD).await.unwrap();
     assert_eq!(logs.matches("batch waiting").count(), 1);
-    assert!(logs.contains("review@1"));
+    assert!(logs.contains("sending@1"));
 }

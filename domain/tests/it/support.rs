@@ -1,39 +1,22 @@
 use domain::batches::{Item as Batch, Roster};
 use domain::features::{Call, Context, Origin, Ports, Rules, Target, dispatch};
 use domain::inbox::{Paging, Query, Reader, Row};
+use domain::outbound::{Item, Listing, Outbox};
 use domain::prompts::Library;
-use domain::review::{Docket, Draw, Drawn, Item, Listing, Pick, Reason, Ruling};
 use domain::{AppError, Errors};
 use serde_json::{Error, from_str, from_value, json};
 
 const BATCH: u64 = 1;
 pub(crate) const ERRORS: &str = r#"{"bad_request":{"code":"invalid"},"conflict":{"code":"clash"},"not_found":{"code":"absent"},"storage":{"code":"unavailable"},"unknown_action":{"code":"missing"},"unprocessable":{"code":"refused"}}"#;
-pub(crate) const LEAKED: &str = "the secret-token-123 here";
-const LEARNED: &str = r"secret\-token\-123";
-pub(crate) const LEARN_MIN: u32 = 4;
 pub(crate) const MARK: &str = "[x]";
 pub(crate) const PAGING: &str = r#"{"default":2,"max":3}"#;
-pub(crate) const REASONS: &str =
-    r#"[{"code":"leak","label":"Leaked","placeholder":"[x]"},{"code":"noise","label":"Noise"}]"#;
 const STAMP: u64 = 1_000;
 
 #[derive(Debug)]
 pub(crate) struct Broken;
 
-impl Docket for Broken {
-    fn draw(&self, _pick: Pick) -> Result<Option<Drawn>, AppError> {
-        Err(AppError::Storage)
-    }
-
+impl Outbox for Broken {
     fn list(&self, _listing: &Listing<'_>) -> Result<Vec<Item>, AppError> {
-        Err(AppError::Storage)
-    }
-
-    fn settle(&self, _ruling: &Ruling<'_>) -> Result<Option<String>, AppError> {
-        Err(AppError::Storage)
-    }
-
-    fn source(&self, _key: &str) -> Result<Option<String>, AppError> {
         Err(AppError::Storage)
     }
 }
@@ -54,104 +37,10 @@ impl Roster for Broken {
     }
 }
 
-#[derive(Debug, Default)]
-pub(crate) struct Dock(Vec<Entry>);
-
-impl Dock {
-    pub(crate) fn new(items: &[(&str, &str)]) -> Self {
-        Self(
-            items
-                .iter()
-                .map(|&(key, state)| Entry {
-                    key: key.to_owned(),
-                    state: state.to_owned(),
-                })
-                .collect(),
-        )
-    }
-}
-
-impl Docket for Dock {
-    fn draw(&self, pick: Pick) -> Result<Option<Drawn>, AppError> {
-        if self.0.iter().any(|entry| entry.state == "pending") {
-            return Ok(None);
-        }
-        let limit = usize::try_from(pick.limit()).unwrap_or(usize::MAX);
-        let lines = self
-            .0
-            .iter()
-            .filter(|entry| entry.state == "queued")
-            .take(limit)
-            .count();
-        let count = u64::try_from(lines).unwrap_or(u64::MAX);
-        let batch_id = if count > 0 { BATCH } else { 0 };
-        Ok(Some(Drawn::new(batch_id, count)))
-    }
-
-    fn list(&self, listing: &Listing<'_>) -> Result<Vec<Item>, AppError> {
-        let limit = usize::try_from(listing.limit()).unwrap_or(usize::MAX);
-        self.0
-            .iter()
-            .filter(|entry| entry.state == listing.state())
-            .take(limit)
-            .map(|entry| {
-                from_value(json!({
-                    "account": "default",
-                    "batch_id": BATCH,
-                    "conversation_id": "c1",
-                    "flag": "",
-                    "key": entry.key,
-                    "occurred_at_ms": STAMP,
-                    "reason": "",
-                    "sender": "alice",
-                    "source": "dingtalk",
-                    "state": entry.state,
-                    "text": LEAKED,
-                }))
-                .map_err(|_err| AppError::Storage)
-            })
-            .collect()
-    }
-
-    fn settle(&self, ruling: &Ruling<'_>) -> Result<Option<String>, AppError> {
-        Ok(self
-            .0
-            .iter()
-            .find(|entry| entry.key == ruling.key())
-            .map(|entry| {
-                if entry.state == "pending" {
-                    ruling
-                        .rule()
-                        .filter(|rule| (rule.pattern(), rule.placeholder()) != (LEARNED, "[x]"))
-                        .map_or_else(|| ruling.state(), |_| "mislearned")
-                        .to_owned()
-                } else {
-                    entry.state.clone()
-                }
-            }))
-    }
-
-    fn source(&self, key: &str) -> Result<Option<String>, AppError> {
-        Ok(self
-            .0
-            .iter()
-            .find(|entry| entry.key == key)
-            .map(|_| LEAKED.to_owned()))
-    }
-}
-
-#[derive(Debug)]
-struct Entry {
-    key: String,
-    state: String,
-}
-
 pub(crate) struct Fixture {
-    draw: Draw,
     errors: Errors,
     paging: Paging,
     placeholders: Vec<String>,
-    reasons: Vec<Reason>,
 }
 
 impl Fixture {
@@ -160,10 +49,16 @@ impl Fixture {
     }
 
     fn dispatch_both(&self, ports: Ports<'_>, call: &Call<'_>) -> Result<String, AppError> {
-        let rules = Rules::new(&self.paging, &self.reasons, LEARN_MIN)
-            .with_draw(&self.draw)
-            .with_placeholders(&self.placeholders);
+        let rules = Rules::new(&self.paging).with_placeholders(&self.placeholders);
         dispatch(&Context::new(&self.errors, rules, ports), call)
+    }
+
+    pub(crate) fn dispatch_outbox(
+        &self,
+        outbox: &dyn Outbox,
+        call: &Call<'_>,
+    ) -> Result<String, AppError> {
+        self.dispatch_both(Ports::new(&Rows::default(), outbox, &Pool::default()), call)
     }
 
     pub(crate) fn dispatch_prompts(
@@ -171,19 +66,11 @@ impl Fixture {
         library: &dyn Library,
         call: &Call<'_>,
     ) -> Result<String, AppError> {
-        let (reader, docket, roster) = (Rows::default(), Dock::default(), Pool::default());
+        let (reader, outbox, roster) = (Rows::default(), Sent::default(), Pool::default());
         self.dispatch_both(
-            Ports::new(&reader, &docket, &roster).with_library(library),
+            Ports::new(&reader, &outbox, &roster).with_library(library),
             call,
         )
-    }
-
-    pub(crate) fn dispatch_review(
-        &self,
-        docket: &dyn Docket,
-        call: &Call<'_>,
-    ) -> Result<String, AppError> {
-        self.dispatch_both(Ports::new(&Rows::default(), docket, &Pool::default()), call)
     }
 
     pub(crate) fn dispatch_roster(
@@ -191,7 +78,7 @@ impl Fixture {
         roster: &dyn Roster,
         call: &Call<'_>,
     ) -> Result<String, AppError> {
-        self.dispatch_both(Ports::new(&Rows::default(), &Dock::default(), roster), call)
+        self.dispatch_both(Ports::new(&Rows::default(), &Sent::default(), roster), call)
     }
 
     pub(crate) fn dispatch_with(
@@ -199,7 +86,7 @@ impl Fixture {
         reader: &dyn Reader,
         call: &Call<'_>,
     ) -> Result<String, AppError> {
-        self.dispatch_both(Ports::new(reader, &Dock::default(), &Pool::default()), call)
+        self.dispatch_both(Ports::new(reader, &Sent::default(), &Pool::default()), call)
     }
 
     pub(crate) const fn errors(&self) -> &Errors {
@@ -212,16 +99,10 @@ impl Fixture {
 
     pub(crate) fn with(errors: &str) -> Result<Self, Error> {
         Ok(Self {
-            draw: Draw::off(),
             errors: from_str(errors)?,
             paging: from_str(PAGING)?,
             placeholders: vec![MARK.to_owned()],
-            reasons: from_str(REASONS)?,
         })
-    }
-
-    pub(crate) fn with_draw(self, draw: Draw) -> Self {
-        Self { draw, ..self }
     }
 }
 
@@ -308,6 +189,49 @@ impl Reader for Rows {
             .take(limit)
             .cloned()
             .collect())
+    }
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct Sent(Vec<(String, String)>);
+
+impl Sent {
+    pub(crate) fn new(items: &[(&str, &str)]) -> Self {
+        Self(
+            items
+                .iter()
+                .map(|&(key, state)| (key.to_owned(), state.to_owned()))
+                .collect(),
+        )
+    }
+}
+
+impl Outbox for Sent {
+    fn list(&self, listing: &Listing<'_>) -> Result<Vec<Item>, AppError> {
+        let limit = usize::try_from(listing.limit()).unwrap_or(usize::MAX);
+        self.0
+            .iter()
+            .filter(|entry| entry.1 == listing.state())
+            .take(limit)
+            .map(|entry| {
+                let (key, state) = (&entry.0, &entry.1);
+                from_value(json!({
+                    "account": "default",
+                    "batch_id": BATCH,
+                    "conversation_id": "c1",
+                    "flag": "",
+                    "key": key,
+                    "occurred_at_ms": STAMP,
+                    "reason": "",
+                    "role": "",
+                    "sender": "alice",
+                    "source": "dingtalk",
+                    "state": state,
+                    "text": "hello",
+                }))
+                .map_err(|_err| AppError::Storage)
+            })
+            .collect()
     }
 }
 

@@ -1,19 +1,21 @@
-use domain::review::{Draw, Ruling};
 use serde_json::{Value, json};
 
 use super::rig::{
     ALERTS, BATCHES, KEY, LATER, LINES, NOTHING, PLACEMENTS, QUICK, SECOND, Seed, THIRD, calls,
-    decided, draw, input_of, logged, now, one, questions_of, rule, seed, seed_from, seed_stamped,
-    start, table, two,
+    decided, input_of, logged, now, one, questions_of, seed, seed_from, seed_stamped, start, table,
+    two,
 };
 use crate::support::{Fallible, Sandbox};
 
 const BACKOFF: u64 = 3_600_000;
 const BRIEF_LOOKBACK: u64 = 2_000;
-const NONE: u32 = 0;
 const QUIET: &str = "0.1";
 const SHORT_LOOKBACK: u64 = 1_000;
 const TWO: u32 = 2;
+
+fn brief_lookback() -> Value {
+    json!({"limits": {"lookback_ms": SHORT_LOOKBACK}})
+}
 
 #[tokio::test]
 async fn disabling_keeps_the_backlog() {
@@ -24,11 +26,14 @@ async fn disabling_keeps_the_backlog() {
     start(&sandbox, &json!({"mode": "disabled"}), QUICK)
         .await
         .unwrap();
-    start(&sandbox, &manual_lookback(), QUICK).await.unwrap();
-    assert_eq!(calls(&sandbox, "decide").unwrap(), 1);
+    start(&sandbox, &brief_lookback(), QUICK).await.unwrap();
+    assert_eq!(calls(&sandbox, "decide").unwrap(), 2);
     assert_eq!(
         table(&sandbox, LINES).unwrap(),
-        [format!("{KEY}|approved||1"), format!("{SECOND}|queued||0")]
+        [
+            format!("{KEY}|approved||1"),
+            format!("{SECOND}|approved||2")
+        ]
     );
 }
 
@@ -36,23 +41,32 @@ async fn disabling_keeps_the_backlog() {
 async fn empty_batches_close_while_the_previous_one_waits() {
     let sandbox = Sandbox::new("batch-overlap-empty").unwrap();
     seed(&sandbox, &three()).unwrap();
-    let manual = json!({"limits": {"batch": TWO}, "review": {"mode": "manual"}});
-    start(&sandbox, &manual, QUICK).await.unwrap();
-    assert_eq!(draw(&sandbox, Draw::reviewed(TWO)).unwrap(), "1|2");
-    for key in [SECOND, THIRD] {
-        let approved = rule(&sandbox, &Ruling::approve(key)).unwrap();
-        assert_eq!(approved.as_deref(), Some("approved"));
+    sandbox
+        .write(
+            "screen.json",
+            r#"{"lines":[{"line":"L1","risk":"high","spans":[],"topics":[]}]}"#,
+        )
+        .unwrap();
+    let mut held = sandbox.screen("");
+    if let Some(map) = held.as_object_mut() {
+        drop(map.insert(
+            "limits".to_owned(),
+            json!({"batch": TWO, "retry_after_ms": BACKOFF}),
+        ));
+        drop(map.insert(
+            "stub".to_owned(),
+            json!({"decide": {"mode": "fail"}, "screen": {"only": "again"}}),
+        ));
     }
-    let held = json!({
-        "limits": {"batch": TWO, "retry_after_ms": BACKOFF},
-        "review": {"mode": "manual"},
-        "stub": {"decide": {"mode": "fail"}},
-    });
     start(&sandbox, &held, QUICK).await.unwrap();
-    assert_eq!(draw(&sandbox, Draw::reviewed(TWO)).unwrap(), "2|1");
-    let rejected = rule(&sandbox, &Ruling::reject(KEY, "noise")).unwrap();
-    assert_eq!(rejected.as_deref(), Some("rejected"));
-    start(&sandbox, &held, QUICK).await.unwrap();
+    assert_eq!(
+        table(&sandbox, LINES).unwrap(),
+        [
+            format!("{KEY}|approved||1"),
+            format!("{SECOND}|approved||1"),
+            format!("{THIRD}|withheld|risky|2"),
+        ]
+    );
     assert_eq!(
         table(&sandbox, BATCHES).unwrap(),
         ["1|ready|1|http:500", "2|sent|0|"]
@@ -124,16 +138,16 @@ async fn late_decisions_do_not_hand_off() {
     let sandbox = Sandbox::new("batch-late").unwrap();
     let stamp = now().unwrap();
     seed_stamped(&sandbox, &[((KEY, "u1", "c1", "server down"), stamp)]).unwrap();
-    let held = json!({"limits": {
-        "lookback_ms": BRIEF_LOOKBACK,
-        "max_decisions_per_hour": NONE,
-    }});
+    let held = json!({
+        "limits": {"lookback_ms": BRIEF_LOOKBACK},
+        "stub": {"decide": {"mode": "slow"}},
+    });
     start(&sandbox, &held, QUICK).await.unwrap();
     assert_eq!(
         table(&sandbox, LINES).unwrap(),
         [format!("{KEY}|approved||1")]
     );
-    let open = json!({"limits": {"lookback_ms": BRIEF_LOOKBACK}});
+    let open = json!({"limits": {"lookback_ms": BRIEF_LOOKBACK}, "stub": {"decide": {}}});
     start(&sandbox, &open, QUICK).await.unwrap();
     assert_eq!(
         table(&sandbox, PLACEMENTS).unwrap(),
@@ -148,16 +162,15 @@ async fn lookback_continues_backlog_after_restart() {
     seed(&sandbox, &one()).unwrap();
     start(&sandbox, &json!({}), QUICK).await.unwrap();
     seed_from(&sandbox, &[(SECOND, "u1", "c1", "still down")], LATER).unwrap();
-    start(&sandbox, &manual_lookback(), QUICK).await.unwrap();
-    assert_eq!(calls(&sandbox, "decide").unwrap(), 1);
+    start(&sandbox, &brief_lookback(), QUICK).await.unwrap();
+    assert_eq!(calls(&sandbox, "decide").unwrap(), 2);
     assert_eq!(
         table(&sandbox, LINES).unwrap(),
-        [format!("{KEY}|approved||1"), format!("{SECOND}|queued||0")]
+        [
+            format!("{KEY}|approved||1"),
+            format!("{SECOND}|approved||2")
+        ]
     );
-}
-
-fn manual_lookback() -> Value {
-    json!({"limits": {"lookback_ms": SHORT_LOOKBACK}, "review": {"mode": "manual"}})
 }
 
 #[tokio::test]
@@ -168,37 +181,6 @@ async fn messages_before_the_lookback_are_ignored() {
     start(&sandbox, &patch, QUICK).await.unwrap();
     assert_eq!(table(&sandbox, LINES).unwrap(), NOTHING);
     assert_eq!(calls(&sandbox, "decide").unwrap(), 0);
-}
-
-#[tokio::test]
-async fn next_batch_is_reviewed_while_the_previous_one_is_stuck() {
-    let sandbox = Sandbox::new("batch-overlap-review").unwrap();
-    seed(&sandbox, &three()).unwrap();
-    let manual = json!({"limits": {"batch": TWO}, "review": {"mode": "manual"}});
-    start(&sandbox, &manual, QUICK).await.unwrap();
-    assert_eq!(draw(&sandbox, Draw::reviewed(TWO)).unwrap(), "1|2");
-    for key in [SECOND, THIRD] {
-        let approved = rule(&sandbox, &Ruling::approve(key)).unwrap();
-        assert_eq!(approved.as_deref(), Some("approved"));
-    }
-    let stuck = json!({
-        "limits": {"batch": TWO},
-        "review": {"mode": "manual"},
-        "stub": {"decide": {"mode": "slow"}},
-    });
-    start(&sandbox, &stuck, QUICK).await.unwrap();
-    assert_eq!(table(&sandbox, BATCHES).unwrap(), ["1|ready|0|"]);
-    assert_eq!(draw(&sandbox, Draw::reviewed(TWO)).unwrap(), "2|1");
-    start(&sandbox, &stuck, QUICK).await.unwrap();
-    assert_eq!(
-        table(&sandbox, LINES).unwrap(),
-        [
-            format!("{KEY}|pending||2"),
-            format!("{SECOND}|approved||1"),
-            format!("{THIRD}|approved||1"),
-        ]
-    );
-    assert_eq!(table(&sandbox, BATCHES).unwrap(), ["1|ready|0|"]);
 }
 
 #[tokio::test]

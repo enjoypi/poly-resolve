@@ -3,8 +3,8 @@ pub mod catalog;
 mod health;
 mod ingest;
 mod messages;
+mod outbound;
 mod prompts;
-mod review;
 mod routes;
 pub(crate) mod triage;
 
@@ -19,11 +19,10 @@ use serde_urlencoded::from_str as from_query;
 use self::routes::ROUTES;
 use crate::batches::Roster;
 use crate::inbox::{Paging, Reader};
+use crate::outbound::Outbox;
 use crate::prompts::{Library, Vacant};
-use crate::review::{Docket, Draw, Reason};
 use crate::{AppError, Errors};
 
-const OFF: Draw = Draw::off();
 static VACANT: Vacant = Vacant;
 
 type Binding = (&'static str, &'static str, Describer);
@@ -61,20 +60,8 @@ pub struct Context<'ctx> {
 }
 
 impl<'ctx> Context<'ctx> {
-    const fn docket(&self) -> &dyn Docket {
-        self.ports.docket
-    }
-
-    const fn draw(&self) -> Draw {
-        *self.rules.draw
-    }
-
     const fn errors(&self) -> &Errors {
         self.errors
-    }
-
-    const fn learn_min_chars(&self) -> u32 {
-        self.rules.learn_min_chars
     }
 
     const fn library(&self) -> &dyn Library {
@@ -90,6 +77,10 @@ impl<'ctx> Context<'ctx> {
         }
     }
 
+    const fn outbox(&self) -> &dyn Outbox {
+        self.ports.outbox
+    }
+
     const fn paging(&self) -> Paging {
         *self.rules.paging
     }
@@ -100,10 +91,6 @@ impl<'ctx> Context<'ctx> {
 
     const fn reader(&self) -> &dyn Reader {
         self.ports.reader
-    }
-
-    const fn reasons(&self) -> &[Reason] {
-        self.rules.reasons
     }
 
     const fn roster(&self) -> &dyn Roster {
@@ -158,8 +145,8 @@ impl<'call> Origin<'call> {
 
 #[derive(Clone, Copy, Debug)]
 pub struct Ports<'ports> {
-    docket: &'ports dyn Docket,
     library: &'ports dyn Library,
+    outbox: &'ports dyn Outbox,
     reader: &'ports dyn Reader,
     roster: &'ports dyn Roster,
 }
@@ -168,12 +155,12 @@ impl<'ports> Ports<'ports> {
     #[must_use = "端口需交给 Context"]
     pub const fn new(
         reader: &'ports dyn Reader,
-        docket: &'ports dyn Docket,
+        outbox: &'ports dyn Outbox,
         roster: &'ports dyn Roster,
     ) -> Self {
         Self {
-            docket,
             library: &VACANT,
+            outbox,
             reader,
             roster,
         }
@@ -198,32 +185,17 @@ struct Route {
 
 #[derive(Clone, Copy, Debug)]
 pub struct Rules<'rules> {
-    draw: &'rules Draw,
-    learn_min_chars: u32,
     paging: &'rules Paging,
     placeholders: &'rules [String],
-    reasons: &'rules [Reason],
 }
 
 impl<'rules> Rules<'rules> {
     #[must_use = "规则需交给 Context"]
-    pub const fn new(
-        paging: &'rules Paging,
-        reasons: &'rules [Reason],
-        learn_min_chars: u32,
-    ) -> Self {
+    pub const fn new(paging: &'rules Paging) -> Self {
         Self {
-            draw: &OFF,
-            learn_min_chars,
             paging,
             placeholders: &[],
-            reasons,
         }
-    }
-
-    #[must_use = "规则需交给 Context"]
-    pub const fn with_draw(self, draw: &'rules Draw) -> Self {
-        Self { draw, ..self }
     }
 
     #[must_use = "规则需交给 Context"]
@@ -351,6 +323,15 @@ where
     Ok(to_string(&resp).unwrap_or_default())
 }
 
+fn limit(requested: Option<u32>, context: &Context<'_>) -> Result<u32, AppError> {
+    let paging = context.paging();
+    let count = requested.unwrap_or_else(|| paging.default_limit());
+    if count == 0 || count > paging.max_limit() {
+        return Err(AppError::BadRequest);
+    }
+    Ok(count)
+}
+
 fn listed<Params, Resp>(
     query: &str,
     context: &Context<'_>,
@@ -371,35 +352,10 @@ where
     from_query(query).map_err(|_err| AppError::BadRequest)
 }
 
-fn posted<Req, Resp>(
-    request: &str,
-    context: &Context<'_>,
-    handler: Queried<Req, Resp>,
-) -> Result<String, AppError>
-where
-    Req: DeserializeOwned,
-    Resp: Serialize,
-{
-    let resp = handler(&decode(request)?, context)?;
-    Ok(to_string(&resp).unwrap_or_default())
-}
-
 fn route(target: Target<'_>) -> Option<&'static Route> {
     ROUTES
         .iter()
         .find(|hit| hit.feature == target.feature && hit.action == target.action)
-}
-
-fn sent<Req, Resp>(generator: &mut SchemaGenerator) -> Shapes
-where
-    Req: JsonSchema,
-    Resp: JsonSchema,
-{
-    (
-        None,
-        Some(generator.subschema_for::<Req>()),
-        generator.subschema_for::<Resp>(),
-    )
 }
 
 fn typed<Req, Resp>(request: &str, handler: fn(Req) -> Resp) -> Result<String, AppError>

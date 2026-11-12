@@ -102,14 +102,10 @@ triage:
     timeout_ms: 35000
     url: "${DECISIONS_URL}"
   limits:
-    backlog_max_ms: 21600000
     batch: 100
-    handoff_cooldown_ms: 600000
     intake: 200
     lookback_ms: 3600000
     max_attempts: 3
-    max_decisions_per_hour: 30
-    max_handoffs_per_hour: 3
     max_revivals: 2
     parallel: 4
     poll_ms: 5000
@@ -154,6 +150,7 @@ triage:
       min_confidence: 0.6
       name: topic
       new_label: 新话题
+      none_label: 不属于任何话题
     urgent:
       name: urgent
   redact:
@@ -209,35 +206,9 @@ triage:
       - pattern: '[A-Za-z0-9+/_=-]{24,}'
         placeholder: "[长串]"
     unknown_sender: 未知发送人
-  review:
-    learn_min_chars: 6
-    mode: manual
-    reasons:
-      - code: leak_secret
-        label: 漏脱敏·密钥令牌
-        placeholder: "[密钥]"
-      - code: leak_password
-        label: 漏脱敏·密码口令
-        placeholder: "[已隐藏]"
-      - code: leak_link
-        label: 漏脱敏·链接地址
-        placeholder: "[链接]"
-      - code: leak_file
-        label: 漏脱敏·文件路径
-        placeholder: "[文件]"
-      - code: leak_identity
-        label: 漏脱敏·身份金融
-        placeholder: "[数字]"
-      - code: leak_other
-        label: 漏脱敏·其他
-      - code: over_masked
-        label: 误伤·脱敏过度
-      - code: not_for_ai
-        label: 不该外发
-      - code: other
-        label: 其他
   session:
     fresh: ["-"]
+    omitted: "此处有 {count} 条消息未提供，原因：{reason}"
     resume: [resume, "{thread}", "-"]
   sizes:
     context_max_chars: 12000

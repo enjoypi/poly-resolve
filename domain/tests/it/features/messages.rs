@@ -63,10 +63,12 @@ fn first_page_uses_default_limit() {
             "key": "dingtalk:acct:m3",
             "occurred_at_ms": LATEST,
             "priority": null,
+            "reason": null,
             "received_at_ms": LATEST,
             "sender_id": "u1",
             "sender_name": "alice",
             "source": "dingtalk",
+            "state": null,
             "text": "hello",
             "topic": null,
         }))

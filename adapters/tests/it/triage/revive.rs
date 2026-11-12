@@ -1,6 +1,6 @@
 use adapters::store::Shelf;
 use domain::batches::Roster as _;
-use domain::review::Listing;
+use domain::outbound::Listing;
 use serde_json::{Value, json, to_value};
 use tracing::dispatcher::with_default;
 

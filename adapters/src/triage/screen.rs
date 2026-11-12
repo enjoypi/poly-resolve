@@ -20,12 +20,11 @@ const APPROVED: &str = "approved";
 const AUTO: &str = "auto";
 const BAD_ANSWER: &str = "bad_answer";
 const MISSING: &str = "missing";
-const PENDING: &str = "pending";
-const REJECTED: &str = "rejected";
+const RISKY: &str = "risky";
 const RULES: &str = "rules";
-const SCREEN: &str = "screen";
 const UNPREPARED: &str = "unprepared";
 const UNSCREENED: &str = "unscreened";
+const WITHHELD: &str = "withheld";
 
 struct Failure {
     line: Value,
@@ -71,10 +70,12 @@ fn abandon(shift: &Shift<'_>, failure: &Failure) {
 
 fn apply(shift: &Shift<'_>, verdict: &Screened) {
     let flagged = !verdict.flag().is_empty();
-    let (state, reviewer, reason) = match (shift.triage.review_auto(), flagged) {
-        (true, true) => (REJECTED, "", SCREEN),
-        (true, false) => (APPROVED, AUTO, ""),
-        (false, _) => (PENDING, "", ""),
+    let (state, reviewer, reason) = if !flagged {
+        (APPROVED, AUTO, "")
+    } else if verdict.flag() == UNSCREENED {
+        (WITHHELD, "", UNSCREENED)
+    } else {
+        (WITHHELD, "", RISKY)
     };
     let kind = if flagged {
         verdict.flag()
@@ -184,7 +185,7 @@ fn land(shift: &Shift<'_>, round: &Round<'_>, landing: Landing) -> Result<(), St
         .desk
         .screened(&json!({
             "lines": [candidate(&job.line)],
-            "min_chars": shift.triage.learn_min_chars(),
+            "min_chars": round.setup.min_chars(),
             "placeholder": round.setup.placeholder(),
             "response": reply.body(),
             "topics": round.topics,

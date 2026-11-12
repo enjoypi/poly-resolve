@@ -59,13 +59,7 @@ fn predicate(probability: f64) -> Value {
 }
 
 fn sort(response: &str) -> Result<Reply, Error> {
-    let request = json!({
-        "layout": layout(),
-        "min_confidence": MIN_CONFIDENCE,
-        "response": response,
-        "threshold": THRESHOLD,
-    });
-    call("sort", &request.to_string())
+    sort_with(&layout(), response)
 }
 
 #[test]
@@ -170,6 +164,40 @@ fn sort_keeps_historical_probability_but_judges_urgency_by_new_lines() {
 }
 
 #[test]
+fn sort_leaves_automatic_segments_unplaced_without_a_topic() {
+    let none = answers(&[
+        predicate(HIGH),
+        choice(&json!("none"), STRONG),
+        choice(&json!("S2"), STRONG),
+    ]);
+    let reply = sort_with(&tagged_layout(), &none).unwrap().unwrap();
+    assert_eq!(
+        reply.get("placements"),
+        Some(&json!([
+            {"key": "k1", "probability": null, "topic": "t7-0"},
+            {"key": "k2", "probability": HIGH, "topic": "t7-0"},
+            {"key": "k3", "probability": null, "topic": null},
+            {"key": "k4", "probability": null, "topic": null},
+        ]))
+    );
+    let topics = reply.get("topics").and_then(Value::as_array).unwrap();
+    assert_eq!(topics.len(), 1);
+    assert_eq!(
+        topics.first().and_then(|topic| topic.get("urgent")),
+        Some(&json!("urgent"))
+    );
+    let known = answers(&[
+        predicate(LOW),
+        choice(&json!("t-open"), STRONG),
+        choice(&json!("S2"), STRONG),
+    ]);
+    let placed = sort_with(&tagged_layout(), &known).unwrap().unwrap();
+    assert_eq!(topics_of(&placed), ["t7-0", "t7-0", "t-open", "t-open"]);
+    let extra = answers(&[predicate(LOW), predicate(LOW), Value::Null, Value::Null]);
+    assert_eq!(sort_with(&tagged_layout(), &extra).unwrap(), Err(400));
+}
+
+#[test]
 fn sort_picks_a_new_topic_for_each_new_choice() {
     let response = answers(&[
         predicate(LOW),
@@ -240,6 +268,51 @@ fn sort_treats_refusals_missing_fields_and_bad_probabilities_as_unanswered() {
     for topic in topics {
         assert_eq!(topic.get("urgent"), Some(&json!("normal")));
     }
+}
+
+fn sort_with(layout: &Value, response: &str) -> Result<Reply, Error> {
+    let request = json!({
+        "layout": layout,
+        "min_confidence": MIN_CONFIDENCE,
+        "response": response,
+        "threshold": THRESHOLD,
+    });
+    call("sort", &request.to_string())
+}
+
+fn tagged_layout() -> Value {
+    json!({
+        "batch_id": 7,
+        "lines": [
+            {"key": "k1", "occurred_at_ms": 1000, "role": "own", "segment": 0},
+            {"key": "k2", "occurred_at_ms": 2000, "segment": 0},
+            {"key": "k3", "occurred_at_ms": 3000, "role": "auto", "segment": 1},
+            {"key": "k4", "occurred_at_ms": 4000, "role": "auto", "segment": 2},
+        ],
+        "segments": [
+            {"attach": null, "choices": [], "label": "first", "question": null},
+            {
+                "attach": null,
+                "choices": [
+                    {"segment": null, "topic": "t-open", "value": "t-open"},
+                    {"segment": null, "topic": null, "value": "none"},
+                ],
+                "label": "second",
+                "question": 1,
+                "role": "auto",
+            },
+            {
+                "attach": null,
+                "choices": [
+                    {"segment": 1, "topic": null, "value": "S2"},
+                    {"segment": null, "topic": null, "value": "none"},
+                ],
+                "label": "third",
+                "question": 2,
+                "role": "auto",
+            },
+        ],
+    })
 }
 
 fn topics_of(reply: &Value) -> Vec<&str> {

@@ -4,7 +4,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, from_str};
 
-use super::pack::{Choice, Layout, Segment};
+use super::pack::layout::{Choice, Layout, Segment};
 use crate::AppError;
 
 const CHOICE: &str = "choice";
@@ -34,7 +34,7 @@ struct Group {
 pub(crate) struct Placement {
     key: String,
     probability: Option<f64>,
-    topic: String,
+    topic: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -48,7 +48,7 @@ struct Resolve<'resolve> {
 }
 
 impl Resolve<'_> {
-    fn chosen(&self, segment: &Segment, done: &[String]) -> Option<String> {
+    fn chosen(&self, segment: &Segment, done: &[Option<String>]) -> Option<String> {
         let answer = segment
             .question()
             .and_then(|index| self.answers.get(index))
@@ -61,19 +61,24 @@ impl Resolve<'_> {
         let pick = Choice::find(segment.choices(), value)?;
         pick.topic().map(str::to_owned).or_else(|| {
             let before = pick.segment()?;
-            done.get(before).cloned()
+            done.get(before).cloned().flatten()
         })
     }
 
-    fn topics(&self, layout: &Layout) -> Vec<String> {
+    fn topics(&self, layout: &Layout) -> Vec<Option<String>> {
         layout.segments().iter().enumerate().fold(
             Vec::new(),
-            |mut done: Vec<String>, (index, segment)| {
+            |mut done: Vec<Option<String>>, (index, segment)| {
                 let topic = segment
                     .attach()
                     .map(str::to_owned)
                     .or_else(|| self.chosen(segment, &done))
-                    .unwrap_or_else(|| format!("t{}-{index}", layout.batch_id()));
+                    .or_else(|| {
+                        segment
+                            .role()
+                            .is_empty()
+                            .then(|| format!("t{}-{index}", layout.batch_id()))
+                    });
                 done.push(topic);
                 done
             },
@@ -120,7 +125,7 @@ fn check(reply: &Reply, layout: &Layout) -> Result<(), AppError> {
     if reply.answers.len() != layout.questions() {
         return Err(AppError::BadRequest);
     }
-    let line_count = layout.lines().len();
+    let line_count = layout.predicates();
     for (index, answer) in reply.answers.iter().enumerate() {
         let expected = if index < line_count {
             PREDICATE
@@ -140,21 +145,18 @@ fn check(reply: &Reply, layout: &Layout) -> Result<(), AppError> {
 fn grouped(layout: &Layout, placements: &[Placement], threshold: f64) -> Vec<Touched> {
     let mut groups: BTreeMap<&str, Group> = BTreeMap::new();
     for (line, placement) in layout.lines().iter().zip(placements) {
-        let group = groups
-            .entry(placement.topic.as_str())
-            .or_insert_with(|| Group {
-                label: layout
-                    .segments()
-                    .get(line.segment())
-                    .map_or_default(|segment| segment.label().to_owned()),
-                last_ms: 0,
-                probability: layout
-                    .probabilities()
-                    .get(placement.topic.as_str())
-                    .copied()
-                    .flatten(),
-                score: None,
-            });
+        let Some(topic) = placement.topic.as_deref() else {
+            continue;
+        };
+        let group = groups.entry(topic).or_insert_with(|| Group {
+            label: layout
+                .segments()
+                .get(line.segment())
+                .map_or_default(|segment| segment.label().to_owned()),
+            last_ms: 0,
+            probability: layout.probabilities().get(topic).copied().flatten(),
+            score: None,
+        });
         group.last_ms = group.last_ms.max(line.occurred_at_ms());
         group.probability = group
             .probability
@@ -200,18 +202,24 @@ pub(crate) fn sort(req: &SortRequest) -> Result<SortResponse, AppError> {
         min: req.min_confidence,
     }
     .topics(layout);
+    let mut asked: usize = 0;
     let placements: Vec<Placement> = layout
         .lines()
         .iter()
-        .enumerate()
-        .map(|(index, line)| Placement {
-            key: line.key().to_owned(),
-            probability: reply
-                .answers
-                .get(index)
-                .and_then(Option::as_ref)
-                .and_then(probability),
-            topic: resolved.get(line.segment()).cloned().unwrap_or_default(),
+        .map(|line| {
+            let scored = line.role().is_empty().then(|| {
+                let slot = asked;
+                asked = asked.saturating_add(1);
+                slot
+            });
+            Placement {
+                key: line.key().to_owned(),
+                probability: scored
+                    .and_then(|slot| reply.answers.get(slot))
+                    .and_then(Option::as_ref)
+                    .and_then(probability),
+                topic: resolved.get(line.segment()).cloned().flatten(),
+            }
         })
         .collect();
     let topics = grouped(layout, &placements, req.threshold);

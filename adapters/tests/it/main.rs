@@ -3,7 +3,7 @@ mod feeds;
 mod http;
 mod imap;
 mod ingest;
-mod review;
+mod outbound;
 mod sandbox;
 mod sources;
 mod store;

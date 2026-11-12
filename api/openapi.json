@@ -164,6 +164,12 @@
               "null"
             ]
           },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "received_at_ms": {
             "format": "uint64",
             "minimum": 0,
@@ -177,6 +183,12 @@
           },
           "source": {
             "type": "string"
+          },
+          "state": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "text": {
             "type": "string"
@@ -256,6 +268,105 @@
         ],
         "type": "object"
       },
+      "OutboundItem": {
+        "properties": {
+          "account": {
+            "type": "string"
+          },
+          "batch_id": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "conversation_id": {
+            "type": "string"
+          },
+          "flag": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string"
+          },
+          "occurred_at_ms": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          },
+          "sender": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "account",
+          "batch_id",
+          "conversation_id",
+          "flag",
+          "key",
+          "occurred_at_ms",
+          "reason",
+          "role",
+          "sender",
+          "source",
+          "state",
+          "text"
+        ],
+        "type": "object"
+      },
+      "OutboundListRequest": {
+        "properties": {
+          "limit": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "state": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "OutboundListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/OutboundItem"
+            },
+            "type": "array"
+          },
+          "placeholders": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items",
+          "placeholders"
+        ],
+        "type": "object"
+      },
       "PromptsKey": {
         "properties": {
           "name": {
@@ -324,230 +435,6 @@
           "text"
         ],
         "type": "object"
-      },
-      "ReviewDrawRequest": {
-        "oneOf": [
-          {
-            "properties": {
-              "state": {
-                "const": "pending",
-                "type": "string"
-              }
-            },
-            "required": [
-              "state"
-            ],
-            "type": "object"
-          }
-        ]
-      },
-      "ReviewDrawResponse": {
-        "properties": {
-          "batch_id": {
-            "format": "uint64",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "lines": {
-            "format": "uint64",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "state": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "batch_id",
-          "lines",
-          "state"
-        ],
-        "type": "object"
-      },
-      "ReviewItem": {
-        "properties": {
-          "account": {
-            "type": "string"
-          },
-          "batch_id": {
-            "format": "uint64",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "conversation_id": {
-            "type": "string"
-          },
-          "flag": {
-            "type": "string"
-          },
-          "key": {
-            "type": "string"
-          },
-          "occurred_at_ms": {
-            "format": "uint64",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "reason": {
-            "type": "string"
-          },
-          "sender": {
-            "type": "string"
-          },
-          "source": {
-            "type": "string"
-          },
-          "state": {
-            "type": "string"
-          },
-          "text": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "account",
-          "batch_id",
-          "conversation_id",
-          "flag",
-          "key",
-          "occurred_at_ms",
-          "reason",
-          "sender",
-          "source",
-          "state",
-          "text"
-        ],
-        "type": "object"
-      },
-      "ReviewKey": {
-        "properties": {
-          "key": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "key"
-        ],
-        "type": "object"
-      },
-      "ReviewListRequest": {
-        "properties": {
-          "limit": {
-            "format": "uint32",
-            "minimum": 0,
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
-          "state": {
-            "type": [
-              "string",
-              "null"
-            ]
-          }
-        },
-        "type": "object"
-      },
-      "ReviewListResponse": {
-        "properties": {
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/ReviewItem"
-            },
-            "type": "array"
-          },
-          "placeholders": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
-          },
-          "reasons": {
-            "items": {
-              "$ref": "#/components/schemas/ReviewReason"
-            },
-            "type": "array"
-          }
-        },
-        "required": [
-          "items",
-          "placeholders",
-          "reasons"
-        ],
-        "type": "object"
-      },
-      "ReviewReason": {
-        "additionalProperties": false,
-        "properties": {
-          "code": {
-            "type": "string"
-          },
-          "label": {
-            "type": "string"
-          },
-          "placeholder": {
-            "default": null,
-            "type": [
-              "string",
-              "null"
-            ]
-          }
-        },
-        "required": [
-          "code",
-          "label"
-        ],
-        "type": "object"
-      },
-      "ReviewRulingResponse": {
-        "properties": {
-          "state": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "state"
-        ],
-        "type": "object"
-      },
-      "ReviewUpdateRequest": {
-        "oneOf": [
-          {
-            "properties": {
-              "state": {
-                "const": "approved",
-                "type": "string"
-              }
-            },
-            "required": [
-              "state"
-            ],
-            "type": "object"
-          },
-          {
-            "properties": {
-              "leak": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "reason": {
-                "type": "string"
-              },
-              "state": {
-                "const": "rejected",
-                "type": "string"
-              }
-            },
-            "required": [
-              "state",
-              "reason"
-            ],
-            "type": "object"
-          }
-        ]
       }
     }
   },
@@ -890,6 +777,89 @@
         }
       }
     },
+    "/api/outbound": {
+      "get": {
+        "parameters": [
+          {
+            "description": "set by the gateway",
+            "in": "header",
+            "name": "x-session-id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "set by the gateway",
+            "in": "header",
+            "name": "x-user",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "state",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OutboundListResponse"
+                }
+              }
+            },
+            "description": "success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "bad request"
+          },
+          "403": {
+            "description": "host not allowed"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "storage unavailable"
+          }
+        }
+      }
+    },
     "/api/prompts": {
       "get": {
         "parameters": [
@@ -1024,280 +994,7 @@
                 }
               }
             },
-            "description": "violates review rules"
-          },
-          "503": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "storage unavailable"
-          }
-        }
-      }
-    },
-    "/api/reviews": {
-      "get": {
-        "parameters": [
-          {
-            "description": "set by the gateway",
-            "in": "header",
-            "name": "x-session-id",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "description": "set by the gateway",
-            "in": "header",
-            "name": "x-user",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "limit",
-            "required": false,
-            "schema": {
-              "format": "uint32",
-              "minimum": 0,
-              "type": [
-                "integer",
-                "null"
-              ]
-            }
-          },
-          {
-            "in": "query",
-            "name": "state",
-            "required": false,
-            "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ReviewListResponse"
-                }
-              }
-            },
-            "description": "success"
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "bad request"
-          },
-          "403": {
-            "description": "host not allowed"
-          },
-          "503": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "storage unavailable"
-          }
-        }
-      },
-      "patch": {
-        "parameters": [
-          {
-            "description": "set by the gateway",
-            "in": "header",
-            "name": "x-session-id",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "description": "set by the gateway",
-            "in": "header",
-            "name": "x-user",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ReviewDrawRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ReviewDrawResponse"
-                }
-              }
-            },
-            "description": "success"
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "bad request"
-          },
-          "403": {
-            "description": "host not allowed"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "already settled differently"
-          },
-          "415": {
-            "description": "content-type is not application/json"
-          },
-          "503": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "storage unavailable"
-          }
-        }
-      }
-    },
-    "/api/reviews/{key}": {
-      "patch": {
-        "parameters": [
-          {
-            "description": "set by the gateway",
-            "in": "header",
-            "name": "x-session-id",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "description": "set by the gateway",
-            "in": "header",
-            "name": "x-user",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "key",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ReviewUpdateRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ReviewRulingResponse"
-                }
-              }
-            },
-            "description": "success"
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "bad request"
-          },
-          "403": {
-            "description": "host not allowed"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "not found"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "already settled differently"
-          },
-          "415": {
-            "description": "content-type is not application/json"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "violates review rules"
+            "description": "violates rules"
           },
           "503": {
             "content": {

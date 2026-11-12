@@ -15,10 +15,36 @@ const GAP: Duration = Duration::from_millis(600);
 const IDLE: u64 = 100;
 const NARROW: u32 = 64;
 const QUICK: u64 = 200;
+const REFUSE_BACKFILL: &str = "CREATE TRIGGER refuse_backfill BEFORE INSERT ON backfills BEGIN SELECT RAISE(ABORT, 'refused'); END;";
 const RESET: u64 = 3_000;
 const SHORT: u64 = 1_500;
 const STOP_IDLE: u64 = 60_000;
 const WATERMARK: &str = "CREATE TABLE messages (key TEXT PRIMARY KEY, source TEXT, account TEXT, occurred_at_ms TEXT); INSERT INTO messages VALUES ('k', 'imap', 'work', 'abc');";
+
+#[tokio::test]
+async fn backfill_mark_failure_stops_the_source() {
+    let sandbox = Sandbox::new("imap-backfill-mark").unwrap();
+    drop(Archive::open(&sandbox.database(), BRIEF).unwrap());
+    sandbox.seed(REFUSE_BACKFILL).unwrap();
+    let mut script = hello("");
+    script.push(after("UID SEARCH", "* SEARCH\r\n<tag> OK\r\n"));
+    let fake = serve(vec![script]).unwrap();
+    let config = settings(&sandbox, &fake.url(), &json!({})).unwrap();
+    let (code, _logs) = run_logged(&config, SHORT).await.unwrap();
+    assert_eq!(code, FAILURE);
+    drop(fake.finish());
+}
+
+#[tokio::test]
+async fn backfill_read_failure_stops_the_source() {
+    let sandbox = Sandbox::new("imap-backfill-read").unwrap();
+    sandbox.seed("CREATE TABLE backfills (x TEXT);").unwrap();
+    let fake = serve(vec![hello("")]).unwrap();
+    let config = settings(&sandbox, &fake.url(), &json!({})).unwrap();
+    let (code, _logs) = run_logged(&config, SHORT).await.unwrap();
+    assert_eq!(code, FAILURE);
+    drop(fake.finish());
+}
 
 #[tokio::test]
 async fn busy_store_backs_off() {
@@ -214,15 +240,5 @@ async fn store_write_failure_stops_the_source() {
     let config = settings(&sandbox, &fake.url(), &json!({})).unwrap();
     let (code, _logs) = run_logged(&config, SHORT).await.unwrap();
     assert_eq!(code, FAILURE);
-    drop(fake.finish());
-}
-
-#[tokio::test]
-async fn unusable_mailbox_name_ends_the_session() {
-    let sandbox = Sandbox::new("imap-mailbox").unwrap();
-    let fake = serve(vec![hello("")]).unwrap();
-    let config = settings(&sandbox, &fake.url(), &json!({"mailbox": "\u{6536}"})).unwrap();
-    let (_code, logs) = run_logged(&config, SHORT).await.unwrap();
-    assert!(logs.contains("imap:credential"));
     drop(fake.finish());
 }

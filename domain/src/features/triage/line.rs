@@ -20,9 +20,19 @@ pub(crate) struct LineRequest {
 #[derive(JsonSchema, Serialize)]
 #[schemars(rename = "TriageLineResponse")]
 pub(crate) struct LineResponse {
+    role: Option<Role>,
     sender: String,
     skip: Option<Skip>,
+    state: State,
     text: String,
+}
+
+#[derive(Clone, Copy, JsonSchema, Serialize)]
+#[schemars(rename = "TriageRole")]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum Role {
+    Auto,
+    Own,
 }
 
 #[derive(Clone, Copy, JsonSchema, Serialize)]
@@ -31,13 +41,32 @@ pub(crate) struct LineResponse {
 pub(crate) enum Skip {
     Empty,
     Notice,
-    Own,
     Sealed,
+}
+
+impl Skip {
+    const fn state(self) -> State {
+        match self {
+            Self::Notice => State::Skipped,
+            Self::Empty | Self::Sealed => State::Withheld,
+        }
+    }
+}
+
+#[derive(Clone, Copy, JsonSchema, Serialize)]
+#[schemars(rename = "TriageLineState")]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum State {
+    Queued,
+    Skipped,
+    Withheld,
 }
 
 #[derive(Deserialize, JsonSchema)]
 #[schemars(rename = "TriageSubject")]
 pub(crate) struct Subject {
+    #[serde(default)]
+    bulk: Option<String>,
     conversation_id: String,
     sender_id: String,
     sender_name: String,
@@ -45,10 +74,13 @@ pub(crate) struct Subject {
 }
 
 pub(crate) fn line(req: &LineRequest) -> Result<LineResponse, AppError> {
+    let role = role(req);
     if let Some(skip) = reason(req) {
         return Ok(LineResponse {
+            role,
             sender: String::new(),
             skip: Some(skip),
+            state: skip.state(),
             text: String::new(),
         });
     }
@@ -61,21 +93,17 @@ pub(crate) fn line(req: &LineRequest) -> Result<LineResponse, AppError> {
     };
     let max = usize::try_from(req.max_chars).unwrap_or(usize::MAX);
     Ok(LineResponse {
+        role,
         sender: mask.apply(name),
         skip: None,
+        state: State::Queued,
         text: mask.apply(&message.text).chars().take(max).collect(),
     })
 }
 
 fn reason(req: &LineRequest) -> Option<Skip> {
     let message = &req.message;
-    if req
-        .self_sender_ids
-        .iter()
-        .any(|own| own.eq_ignore_ascii_case(&message.sender_id))
-    {
-        Some(Skip::Own)
-    } else if req.notify_conversation_id.as_deref() == Some(message.conversation_id.as_str()) {
+    if req.notify_conversation_id.as_deref() == Some(message.conversation_id.as_str()) {
         Some(Skip::Notice)
     } else if message.text.trim().is_empty() {
         Some(Skip::Empty)
@@ -86,5 +114,18 @@ fn reason(req: &LineRequest) -> Option<Skip> {
         Some(Skip::Sealed)
     } else {
         None
+    }
+}
+
+fn role(req: &LineRequest) -> Option<Role> {
+    let message = &req.message;
+    if req
+        .self_sender_ids
+        .iter()
+        .any(|own| own.eq_ignore_ascii_case(&message.sender_id))
+    {
+        Some(Role::Own)
+    } else {
+        message.bulk.as_ref().map(|_| Role::Auto)
     }
 }

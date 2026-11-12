@@ -34,12 +34,7 @@ fn each_error_has_its_code_status_and_summary() {
         (AppError::NotFound, "absent", 404, "not found"),
         (AppError::Storage, "unavailable", 503, "storage unavailable"),
         (AppError::UnknownAction, "missing", 404, "unknown action"),
-        (
-            AppError::Unprocessable,
-            "refused",
-            422,
-            "violates review rules",
-        ),
+        (AppError::Unprocessable, "refused", 422, "violates rules"),
     ];
     for (err, code, status, summary) in cases {
         assert_eq!(err.body(errors), format!(r#"{{"code":"{code}"}}"#));

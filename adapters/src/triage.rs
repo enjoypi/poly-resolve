@@ -32,7 +32,6 @@ use crate::race::{Stop, race};
 use crate::trace::{Caller, failure};
 
 const ANALYZED: &str = "analyzed";
-const HOUR_MS: u64 = 3_600_000;
 const MAX_BATCH: u32 = 200;
 const MAX_CHOICES: u32 = 254;
 const MAX_DOUBLINGS: u32 = 20;
@@ -91,10 +90,7 @@ impl Shift<'_> {
     fn gate(&self, state: &str) -> Value {
         let now = now_ms();
         json!({
-            "cooldown_since_ms": now.saturating_sub(self.triage.handoff_cooldown_ms()),
-            "hour_since_ms": now.saturating_sub(HOUR_MS),
             "max_attempts": self.triage.max_attempts(),
-            "max_per_hour": self.triage.max_handoffs_per_hour(),
             "open_since_ms": now.saturating_sub(self.triage.session_max_ms()),
             "pace": pace(self),
             "parallel": self.triage.parallel(),
@@ -146,16 +142,6 @@ impl Shift<'_> {
         let woken = self.ledger.wake_alerts();
         if woken > 0 {
             tracing::debug!(woken, "alerts activated");
-        }
-        let held = self.ledger.held(&self.gate(PENDING));
-        let first = held.first();
-        let reason = first.map_or("", |row| text(row, "reason"));
-        if self.noted("handoff", reason) {
-            tracing::info!(
-                reason,
-                alerts = first.map_or(NONE, |row| number(row, "count")),
-                "handoff held"
-            );
         }
         let pending = self.waiting(PENDING);
         let analyzed = self.waiting(ANALYZED);
@@ -278,9 +264,6 @@ pub fn validate(setup: Setup<'_>) -> Result<(), String> {
         || triage.topics_max_open().saturating_add(triage.batch()) > MAX_CHOICES
     {
         return Err("triage.limits.batch or triage.sizes.topics_max_open too large".to_owned());
-    }
-    if triage.backlog_max_ms() < triage.lookback_ms() {
-        return Err("triage.limits.backlog_max_ms below lookback_ms".to_owned());
     }
     if triage.retry_max_ms() < triage.retry_after_ms() {
         return Err("triage.limits.retry_max_ms below retry_after_ms".to_owned());

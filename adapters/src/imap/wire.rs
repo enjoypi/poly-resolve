@@ -235,6 +235,10 @@ impl Response {
     }
 }
 
+pub(super) fn escaped(text: &str) -> String {
+    format!("\"{}\"", text.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
 fn literal(piece: &str) -> Option<usize> {
     let inner = piece.strip_suffix('}')?;
     let (_, size) = inner.rsplit_once('{')?;
@@ -248,10 +252,7 @@ pub(super) fn quoted(text: &str) -> Result<String, String> {
     {
         return Err("imap:credential".to_owned());
     }
-    Ok(format!(
-        "\"{}\"",
-        text.replace('\\', "\\\\").replace('"', "\\\"")
-    ))
+    Ok(escaped(text))
 }
 
 fn verb(body: &str) -> &str {

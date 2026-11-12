@@ -3,10 +3,11 @@ mod fake;
 mod target;
 
 use adapters::config::Settings;
+use adapters::store::Archive;
 use serde_json::{Value, from_value, json};
 
 use self::fake::{Step, fetched, hello, serve};
-use crate::support::{Fallible, Sandbox, keys, merge, run_logged};
+use crate::support::{BUSY, Fallible, Sandbox, keys, merge, run_logged};
 
 const BACKFILL: u64 = 86_400_000;
 const BATCH: u32 = 1;
@@ -14,6 +15,7 @@ const BYTES: u32 = 0x0001_0000;
 const CHARS: u32 = 1_000;
 const DEPTH: u32 = 8;
 const DMARC: &str = "Message-ID: <d@x.test>\r\nFrom: d@x.test\r\nAuthentication-Results: mx; dmarc=fail\r\nSubject: s\r\n\r\nspam\r\n";
+const FAR: u64 = 1_900_000_000_000;
 const FIRST: &str = "Message-ID: <a@x.test>\r\nFrom: A <a@x.test>\r\nSubject: hi\r\n\r\nbody\r\n";
 const IDLE: u64 = 200;
 const LINE: u32 = 0x1000;
@@ -43,6 +45,46 @@ const TRACED: [&str; 13] = [
 
 fn after(step: &'static str, reply: &str) -> Step {
     (step, reply.to_owned())
+}
+
+#[tokio::test]
+async fn first_session_backfills_before_the_watermark() {
+    let sandbox = Sandbox::new("imap-backfill").unwrap();
+    let archive = Archive::open(&sandbox.database(), BUSY).unwrap();
+    let kept = json!({
+        "account": "work",
+        "conversation_id": "mail:work:a@x.test",
+        "key": "imap:work:kept",
+        "occurred_at_ms": FAR,
+        "raw": "{}",
+        "received_at_ms": FAR,
+        "sender_id": "a@x.test",
+        "sender_name": "A",
+        "source": "imap",
+        "text": "kept",
+    });
+    assert_eq!(archive.save_event(&kept.to_string()).unwrap(), 1);
+    let mut once = hello("");
+    once.push(after("UID SEARCH", "* SEARCH\r\n<tag> OK\r\n"));
+    let fake = serve(vec![once.clone(), once]).unwrap();
+    let config = settings(&sandbox, &fake.url(), &json!({})).unwrap();
+    let (_code, logs) = run_logged(&config, LONG).await.unwrap();
+    assert_eq!(logs.matches("imap backfill finished").count(), 1);
+    let commands = fake.finish();
+    let searches: Vec<&String> = commands
+        .iter()
+        .filter(|command| command.starts_with("UID SEARCH"))
+        .collect();
+    assert_eq!(searches.len(), 2);
+    assert!(
+        searches
+            .first()
+            .is_some_and(|first| !first.contains("2030"))
+    );
+    assert_eq!(
+        searches.last().map(|last| last.as_str()),
+        Some("UID SEARCH SINCE 16-Mar-2030")
+    );
 }
 
 #[tokio::test]
@@ -104,6 +146,20 @@ async fn idle_session_fetches_new_mail_and_skips_unwanted() {
     let commands = fake.finish();
     assert!(commands.contains(&"LOGIN \"me@x.test\" \"s3cret\\\"pw\"".to_owned()));
     assert!(commands.contains(&"UID FETCH 6 (UID INTERNALDATE BODY.PEEK[]<0.65536>)".to_owned()));
+}
+
+#[tokio::test]
+async fn mailbox_names_are_sent_as_modified_utf7() {
+    let sandbox = Sandbox::new("imap-mailbox").unwrap();
+    let fake = serve(vec![hello("")]).unwrap();
+    let named = json!({"mailbox": "\u{6536}&\u{4ef6}\u{7bb1}\u{6536}"});
+    let config = settings(&sandbox, &fake.url(), &named).unwrap();
+    drop(run_logged(&config, SPAN).await.unwrap());
+    let commands = fake.finish();
+    assert!(
+        commands.contains(&"SELECT \"&ZTY-&-&TvZ7sWU2-\"".to_owned()),
+        "{commands:?}"
+    );
 }
 
 #[tokio::test]

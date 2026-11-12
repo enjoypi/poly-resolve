@@ -1,15 +1,18 @@
-use alloc::collections::BTreeMap;
+pub(super) mod layout;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json, to_string};
 
+use self::layout::{Choice, Layout, Placed, Segment};
 use super::redact::{Mask, Rule};
 use super::transcript::{Row, Style};
 use crate::AppError;
 
+const AUTO: &str = "auto";
 pub(crate) const LINE: &str = "{line}";
-pub(super) const NEW: &str = "new";
+const NEW: &str = "new";
+const NONE: &str = "none";
 pub(crate) const SEGMENT: &str = "{segment}";
 
 #[derive(Deserialize, JsonSchema)]
@@ -28,32 +31,14 @@ struct Block<'block> {
 }
 
 impl Block<'_> {
+    fn auto(&self) -> bool {
+        self.entries.iter().all(|entry| entry.row.role() == AUTO)
+    }
+
     fn first_ms(&self) -> u64 {
         self.entries
             .first()
             .map_or(0, |entry| entry.row.occurred_at_ms())
-    }
-}
-
-#[derive(Clone, Deserialize, JsonSchema, Serialize)]
-#[schemars(rename = "TriageChoice")]
-pub(crate) struct Choice {
-    segment: Option<usize>,
-    topic: Option<String>,
-    value: String,
-}
-
-impl Choice {
-    pub(super) fn find<'choice>(choices: &'choice [Self], value: &str) -> Option<&'choice Self> {
-        choices.iter().find(|choice| choice.value == value)
-    }
-
-    pub(super) const fn segment(&self) -> Option<usize> {
-        self.segment
-    }
-
-    pub(super) fn topic(&self) -> Option<&str> {
-        self.topic.as_deref()
     }
 }
 
@@ -74,43 +59,6 @@ pub(crate) struct Entry {
     key: String,
     #[serde(flatten)]
     row: Row,
-}
-
-#[derive(Deserialize, JsonSchema, Serialize)]
-#[schemars(rename = "TriageLayout")]
-pub(crate) struct Layout {
-    batch_id: u64,
-    lines: Vec<Placed>,
-    #[serde(default)]
-    probabilities: BTreeMap<String, Option<f64>>,
-    segments: Vec<Segment>,
-}
-
-impl Layout {
-    pub(super) const fn batch_id(&self) -> u64 {
-        self.batch_id
-    }
-
-    pub(super) fn lines(&self) -> &[Placed] {
-        &self.lines
-    }
-
-    pub(super) const fn probabilities(&self) -> &BTreeMap<String, Option<f64>> {
-        &self.probabilities
-    }
-
-    pub(super) fn questions(&self) -> usize {
-        self.lines.len().saturating_add(
-            self.segments
-                .iter()
-                .filter(|segment| segment.question.is_some())
-                .count(),
-        )
-    }
-
-    pub(super) fn segments(&self) -> &[Segment] {
-        &self.segments
-    }
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -147,6 +95,7 @@ pub(crate) struct PackRequest {
     max_chars: u32,
     model: String,
     new_label: String,
+    none_label: String,
     questions: Questions,
     rules: Vec<Rule>,
     topics: Vec<Open>,
@@ -157,6 +106,7 @@ pub(crate) struct PackRequest {
 pub(crate) struct PackResponse {
     body: String,
     layout: Layout,
+    questions: usize,
 }
 
 struct Pick {
@@ -165,28 +115,6 @@ struct Pick {
 }
 
 type Picks = Vec<Pick>;
-
-#[derive(Deserialize, JsonSchema, Serialize)]
-#[schemars(rename = "TriagePlaced")]
-pub(crate) struct Placed {
-    key: String,
-    occurred_at_ms: u64,
-    segment: usize,
-}
-
-impl Placed {
-    pub(super) fn key(&self) -> &str {
-        &self.key
-    }
-
-    pub(super) const fn occurred_at_ms(&self) -> u64 {
-        self.occurred_at_ms
-    }
-
-    pub(super) const fn segment(&self) -> usize {
-        self.segment
-    }
-}
 
 #[derive(Deserialize, JsonSchema)]
 #[schemars(rename = "TriageQuestion")]
@@ -200,33 +128,6 @@ pub(crate) struct Question {
 pub(crate) struct Questions {
     topic: Question,
     urgent: Question,
-}
-
-#[derive(Deserialize, JsonSchema, Serialize)]
-#[schemars(rename = "TriageSegment")]
-pub(crate) struct Segment {
-    attach: Option<String>,
-    choices: Vec<Choice>,
-    label: String,
-    question: Option<usize>,
-}
-
-impl Segment {
-    pub(super) fn attach(&self) -> Option<&str> {
-        self.attach.as_deref()
-    }
-
-    pub(super) fn choices(&self) -> &[Choice] {
-        &self.choices
-    }
-
-    pub(super) fn label(&self) -> &str {
-        &self.label
-    }
-
-    pub(super) const fn question(&self) -> Option<usize> {
-        self.question
-    }
 }
 
 pub(super) fn alias(prefix: &str, index: usize) -> String {
@@ -289,7 +190,7 @@ fn choice(question: &Question, index: usize, options: &[Pick]) -> Value {
     json!({
         "choices": options
             .iter()
-            .map(|pick| json!({"description": pick.text, "value": pick.choice.value}))
+            .map(|pick| json!({"description": pick.text, "value": pick.choice.value()}))
             .collect::<Vec<Value>>(),
         "instructions": question.instructions.replace(SEGMENT, &alias("S", index)),
         "name": format!("{}_{}", question.name, index.saturating_add(1)),
@@ -309,12 +210,13 @@ fn draft(req: &PackRequest, found: &[Block<'_>], style: &Style<'_>) -> Draft {
         for entry in &block.entries {
             let number = done.lines.len();
             shown.push(labelled(&entry.row.render(style), &alias("L", number)));
-            done.urgent.push(predicate(&req.questions.urgent, number));
-            done.lines.push(Placed {
-                key: entry.key.clone(),
-                occurred_at_ms: entry.row.occurred_at_ms(),
-                segment: index,
-            });
+            if entry.row.role().is_empty() {
+                done.urgent.push(predicate(&req.questions.urgent, number));
+            }
+            done.lines.push(
+                Placed::new(entry.key.clone(), entry.row.occurred_at_ms(), index)
+                    .with_role(entry.row.role()),
+            );
         }
         let conversation = block
             .entries
@@ -380,11 +282,7 @@ fn options(req: &PackRequest, found: &[Block<'_>], style: &Style<'_>) -> Vec<Pic
                 .iter()
                 .filter(|open| offered(req, block, open))
                 .map(|open| Pick {
-                    choice: Choice {
-                        segment: None,
-                        topic: Some(open.topic.clone()),
-                        value: open.topic.clone(),
-                    },
+                    choice: Choice::new(None, Some(open.topic.clone()), open.topic.clone()),
                     text: topic_label(req, open, style),
                 });
             let earlier = found
@@ -392,20 +290,17 @@ fn options(req: &PackRequest, found: &[Block<'_>], style: &Style<'_>) -> Vec<Pic
                 .take(index)
                 .enumerate()
                 .map(|(before, other)| Pick {
-                    choice: Choice {
-                        segment: Some(before),
-                        topic: None,
-                        value: alias("S", before),
-                    },
+                    choice: Choice::new(Some(before), None, alias("S", before)),
                     text: label_of(req, other, style),
                 });
+            let (value, text) = if block.auto() {
+                (NONE, &req.none_label)
+            } else {
+                (NEW, &req.new_label)
+            };
             let fresh = Pick {
-                choice: Choice {
-                    segment: None,
-                    topic: None,
-                    value: NEW.to_owned(),
-                },
-                text: req.new_label.clone(),
+                choice: Choice::new(None, None, value.to_owned()),
+                text: text.clone(),
             };
             let all: Picks = known.chain(earlier).chain([fresh]).collect();
             if block.attach.is_some() || all.len() < 2 {
@@ -424,7 +319,7 @@ pub(crate) fn pack(req: &PackRequest) -> Result<PackResponse, AppError> {
     let found = blocks(req);
     let drafted = draft(req, &found, &style);
     let options = options(req, &found, &style);
-    let mut next = drafted.lines.len();
+    let mut next = drafted.urgent.len();
     let segments: Vec<Segment> = found
         .iter()
         .zip(&options)
@@ -434,12 +329,13 @@ pub(crate) fn pack(req: &PackRequest) -> Result<PackResponse, AppError> {
                 next = next.saturating_add(1);
                 slot
             });
-            Segment {
-                attach: block.attach.map(str::to_owned),
-                choices: picks.iter().map(|pick| pick.choice.clone()).collect(),
-                label: label_of(req, block, &style),
-                question,
-            }
+            Segment::new(
+                block.attach.map(str::to_owned),
+                picks.iter().map(|pick| pick.choice.clone()).collect(),
+                label_of(req, block, &style),
+            )
+            .with_question(question)
+            .with_role(if block.auto() { AUTO } else { "" })
         })
         .collect();
     let asked = options
@@ -448,6 +344,7 @@ pub(crate) fn pack(req: &PackRequest) -> Result<PackResponse, AppError> {
         .filter(|&(_, picks)| !picks.is_empty())
         .map(|(index, picks)| choice(&req.questions.topic, index, picks));
     let questions: Vec<Value> = drafted.urgent.into_iter().chain(asked).collect();
+    let count = questions.len();
     let body = json!({
         "input": Value::Array(drafted.input).to_string(),
         "model": req.model,
@@ -455,11 +352,8 @@ pub(crate) fn pack(req: &PackRequest) -> Result<PackResponse, AppError> {
     });
     Ok(PackResponse {
         body: to_string(&body).unwrap_or_default(),
-        layout: Layout {
-            batch_id: req.batch_id,
-            lines: drafted.lines,
-            probabilities: req
-                .topics
+        layout: Layout::new(req.batch_id, drafted.lines, segments).with_probabilities(
+            req.topics
                 .iter()
                 .map(|topic| (topic.topic.clone(), topic.probability))
                 .chain(
@@ -468,8 +362,8 @@ pub(crate) fn pack(req: &PackRequest) -> Result<PackResponse, AppError> {
                         .map(|point| (point.topic_id.clone(), point.probability)),
                 )
                 .collect(),
-            segments,
-        },
+        ),
+        questions: count,
     })
 }
 

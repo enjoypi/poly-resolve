@@ -103,10 +103,12 @@ pub struct Row {
     key: String,
     occurred_at_ms: u64,
     priority: Option<f64>,
+    reason: Option<String>,
     received_at_ms: u64,
     sender_id: String,
     sender_name: String,
     source: String,
+    state: Option<String>,
     text: String,
     topic: Option<String>,
 }

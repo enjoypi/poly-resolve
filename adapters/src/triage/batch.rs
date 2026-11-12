@@ -4,13 +4,14 @@ use serde_json::{Value, from_str, json};
 
 use super::TRIAGE;
 use super::desk::{Packed, Sorted};
-use super::{HOUR_MS, NONE, Shift, current, number, pace, retry_in, text};
+use super::{NONE, Shift, current, number, pace, retry_in, text};
 use crate::http::Call;
 use crate::ingest::now_ms;
 use crate::trace::{Outcome, external};
 
 const READY: &str = "ready";
 const SENT: &str = "sent";
+const SILENT: &str = r#"{"answers":[]}"#;
 const URGENT: &str = "urgent";
 
 fn alerts(shift: &Shift<'_>, found: &Sorted, batch_id: u64) -> Vec<Value> {
@@ -64,6 +65,7 @@ fn judge(shift: &Shift<'_>, batch: &Value, reply: Result<String, String>) {
                 &json!({
                     "at_ms": now,
                     "batch_id": batch_id,
+                    "gap_ms": shift.triage.session_gap_ms(),
                     "placements": found.placements(),
                     "topics": found.topics(),
                 }),
@@ -116,18 +118,6 @@ fn packed(shift: &Shift<'_>, batch_id: u64, rules: &Value) -> Option<Packed> {
     }))
 }
 
-fn quota_full(shift: &Shift<'_>) -> bool {
-    let used = shift.ledger.requests_since(&json!({
-        "since_ms": now_ms().saturating_sub(HOUR_MS),
-    }));
-    let limit = u64::from(shift.triage.max_decisions_per_hour());
-    let full = if used >= limit { "full" } else { "" };
-    if shift.noted("decisions", full) {
-        tracing::info!(used, limit, "decision quota reached");
-    }
-    !full.is_empty()
-}
-
 fn repacked(shift: &Shift<'_>, batch: &Value) -> Option<Value> {
     let batch_id = number(batch, "id");
     let (rules, rev) = current(shift);
@@ -142,6 +132,7 @@ fn repacked(shift: &Shift<'_>, batch: &Value) -> Option<Value> {
         "revivals": number(batch, "revivals"),
         "layout": found.layout().to_string(),
         "payload": found.body(),
+        "questions": found.questions(),
         "rev": rev,
     }))
 }
@@ -263,17 +254,17 @@ pub(super) async fn send(shift: &mut Shift<'_>) -> Option<()> {
         "pace": pace(shift),
     }));
     for batch in &due {
-        let stored = batch.get("answer").and_then(Value::as_str);
-        if stored.is_none() && quota_full(shift) {
-            return Some(());
-        }
-        if let Some(body) = stored {
+        if let Some(body) = batch.get("answer").and_then(Value::as_str) {
             judge(shift, batch, Ok(body.to_owned()));
             continue;
         }
         let Some(fresh) = repacked(shift, batch) else {
             continue;
         };
+        if number(&fresh, "questions") == NONE {
+            judge(shift, &fresh, Ok(SILENT.to_owned()));
+            continue;
+        }
         if let Some(outcome) = request(shift, &fresh).await? {
             judge(shift, &fresh, outcome);
         }

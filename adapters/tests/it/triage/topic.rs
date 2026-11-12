@@ -1,15 +1,15 @@
+use std::fs;
+
 use serde_json::{Value, json};
 
 use super::rig::{
-    ALERTS, KEY, LATER, PLACEMENTS, QUICK, SECOND, SHORT, TOPICS, calls, decided, logged, one,
+    ALERTS, KEY, LATER, PLACEMENTS, QUICK, SECOND, TOPICS, calls, decided, logged, one,
     questions_of, seed, seed_from, seed_stamped, start, table, two_chats,
 };
 use crate::support::{Fallible, Sandbox};
 
 const BRIEF_SESSION: u64 = 1_000;
 const FIRST_TOPIC: &str = "t1-0";
-const NONE: u32 = 0;
-const ONE: u32 = 1;
 const OPENED: &str =
     "SELECT key || '|' || created_at_ms || '|' || score AS item FROM alerts ORDER BY key";
 const QUIET: &str = "0.1";
@@ -162,31 +162,14 @@ async fn new_topic_when_the_choice_is_new() {
 }
 
 #[tokio::test]
-async fn newest_handoff_goes_first() {
-    let sandbox = Sandbox::new("topic-newest").unwrap();
-    seed(&sandbox, &one()).unwrap();
-    let held = json!({"limits": {"max_handoffs_per_hour": NONE}});
-    start(&sandbox, &held, QUICK).await.unwrap();
-    seed_from(&sandbox, &[(SECOND, "u1", "c2", "db down")], LATER).unwrap();
-    start(&sandbox, &held, QUICK).await.unwrap();
-    let open = json!({"limits": {"max_handoffs_per_hour": ONE}});
-    start(&sandbox, &open, SHORT).await.unwrap();
-    assert_eq!(
-        table(&sandbox, ALERTS).unwrap(),
-        ["t1-0@1|pending|0||", "t2-0@2|sent|0|ANALYSIS|"]
-    );
-    assert_eq!(calls(&sandbox, "codex").unwrap(), 1);
-}
-
-#[tokio::test]
 async fn pending_handoff_absorbs_the_next_urgent_batch() {
     let sandbox = Sandbox::new("topic-absorb").unwrap();
     seed(&sandbox, &one()).unwrap();
-    let held = json!({"limits": {"max_handoffs_per_hour": NONE}});
-    start(&sandbox, &held, QUICK).await.unwrap();
+    fs::remove_file(sandbox.prompts().unwrap().join("session.md")).unwrap();
+    start(&sandbox, &json!({}), QUICK).await.unwrap();
     let before = table(&sandbox, OPENED).unwrap();
     seed_from(&sandbox, &[(SECOND, "u1", "c1", "still down")], LATER).unwrap();
-    start(&sandbox, &held, QUICK).await.unwrap();
+    start(&sandbox, &json!({}), QUICK).await.unwrap();
     let after = table(&sandbox, OPENED).unwrap();
     assert_eq!(table(&sandbox, ALERTS).unwrap(), ["t1-0@1|pending|0||"]);
     assert_ne!(before, after);

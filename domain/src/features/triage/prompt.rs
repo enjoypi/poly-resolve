@@ -1,14 +1,17 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
 
 use super::redact::{Mask, Rule};
 use super::transcript::{Row, Style, fit};
 use crate::AppError;
 
 const ANALYSIS: &str = "{analysis}";
+const COUNT: &str = "{count}";
 const LABEL: &str = "{label}";
 pub(crate) const MESSAGES: &str = "{messages}";
 const PROBABILITY: &str = "{probability}";
+const REASON: &str = "{reason}";
 const TOPIC: &str = "{topic}";
 
 #[derive(Deserialize, JsonSchema)]
@@ -16,6 +19,7 @@ const TOPIC: &str = "{topic}";
 pub(crate) struct BriefRequest {
     followup: String,
     max_chars: u32,
+    omitted: String,
     resume: Option<Resume>,
     rows: Vec<Row>,
     rules: Vec<Rule>,
@@ -77,13 +81,18 @@ pub(crate) fn brief(req: &BriefRequest) -> Result<BriefResponse, AppError> {
     });
     let mut sorted: Vec<&Row> = req.rows.iter().collect();
     sorted.sort_by_key(|row| (row.occurred_at_ms(), row.key()));
-    let lines = sorted
-        .into_iter()
-        .filter(|row| {
-            after.is_none_or(|(until, key)| (row.occurred_at_ms(), row.key()) > (until, key))
-        })
-        .map(|row| row.render(&style))
-        .collect();
+    sorted.retain(|row| {
+        after.is_none_or(|(until, key)| (row.occurred_at_ms(), row.key()) > (until, key))
+    });
+    let mut lines: Vec<Value> = Vec::new();
+    for run in
+        sorted.chunk_by(|left, right| left.omitted().is_some() && left.omitted() == right.omitted())
+    {
+        match run.first().and_then(|first| first.omitted()) {
+            Some(reason) => lines.push(note(&req.omitted, run.len(), reason)),
+            None => lines.extend(run.iter().map(|row| row.render(&style))),
+        }
+    }
     let last = req
         .rows
         .iter()
@@ -93,6 +102,14 @@ pub(crate) fn brief(req: &BriefRequest) -> Result<BriefResponse, AppError> {
         start,
         until_key: last.map_or_else(String::new, |row| row.key().to_owned()),
         until_ms: last.map_or(0, Row::occurred_at_ms),
+    })
+}
+
+fn note(template: &str, count: usize, reason: &str) -> Value {
+    json!({
+        "note": template
+            .replace(COUNT, &count.to_string())
+            .replace(REASON, reason),
     })
 }
 

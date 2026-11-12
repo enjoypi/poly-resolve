@@ -13,6 +13,8 @@ const KNOWN = [
   "source",
   "account",
   "priority",
+  "state",
+  "reason",
   "analysis",
   "topic",
 ];
@@ -30,6 +32,7 @@ test("没有数据时仍给出全部已知列，默认隐藏的列带标记", ()
     "key",
     "received_at_ms",
     "sender_id",
+    "reason",
     "analysis",
     "topic",
   ]);

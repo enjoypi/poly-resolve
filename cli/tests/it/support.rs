@@ -56,14 +56,10 @@ triage:
   codex: {args: [x], bin: /nonexistent/triage, env: {FAKE_DIR: /nonexistent}, sandbox: &fence {bin: /usr/bin/sandbox-exec, canary: /usr/bin/true, paths: {DIR: /nonexistent/sandbox-dir, FIXTURES: /nonexistent/fixtures}, probe: [noop], profile: /nonexistent/fake.sb, vars: {HOME: \"${HOME}\"}}, timeout_ms: 1000, vars: {PATH: \"${PATH}\"}}
   decide: {key: \"${CARGO_PKG_NAME}\", timeout_ms: 1000, url: \"http://localhost:15801/decisions\"}
   limits:
-    backlog_max_ms: 1000
     batch: 1
-    handoff_cooldown_ms: 0
     intake: 5
     lookback_ms: 1000
     max_attempts: 1
-    max_decisions_per_hour: 1
-    max_handoffs_per_hour: 1
     max_revivals: 1
     parallel: 2
     poll_ms: 10
@@ -75,14 +71,13 @@ triage:
   notify: {args: [x], bin: /nonexistent/triage, env: {FAKE_DIR: /nonexistent}, sandbox: *fence, timeout_ms: 1000, vars: {PATH: \"${PATH}\"}}
   notify_target: \"${HOME}\"
   prompts_dir: /nonexistent/prompts
-  questions: {threshold: 0.8, topic: {min_confidence: 0.6, name: topic, new_label: n}, urgent: {name: urgent}}
+  questions: {threshold: 0.8, topic: {min_confidence: 0.6, name: topic, new_label: n, none_label: z}, urgent: {name: urgent}}
   redact:
     patterns:
       - pattern: \"[0-9]{11,}\"
         placeholder: \"[num]\"
     unknown_sender: unknown
-  review: {learn_min_chars: 4, mode: manual, reasons: [{code: leak, label: Leaked, placeholder: \"[x]\"}, {code: noise, label: Noise}]}
-  session: {fresh: [\"-\"], resume: [resume, \"{thread}\", \"-\"]}
+  session: {fresh: [\"-\"], omitted: o, resume: [resume, \"{thread}\", \"-\"]}
   sizes:
     context_max_chars: 1000
     label_chars: 10

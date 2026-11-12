@@ -16,7 +16,6 @@ use tracing::Dispatch;
 use tracing_subscriber::filter::LevelFilter;
 
 use domain::redact::Redactor;
-use domain::review::Draw;
 
 use crate::log;
 
@@ -38,7 +37,6 @@ struct File {
 
 pub(crate) struct Settings {
     addr: SocketAddr,
-    draw: Draw,
     errors: Errors,
     ingest: Ingest,
     log: Dispatch,
@@ -61,13 +59,7 @@ impl Settings {
     pub(crate) const fn context<'ctx>(&'ctx self, reader: &'ctx Shelf<'ctx>) -> Context<'ctx> {
         Context::new(
             &self.errors,
-            Rules::new(
-                &self.messages,
-                self.triage.reasons(),
-                self.triage.learn_min_chars(),
-            )
-            .with_draw(&self.draw)
-            .with_placeholders(self.marks.as_slice()),
+            Rules::new(&self.messages).with_placeholders(self.marks.as_slice()),
             Ports::new(reader, reader, reader).with_library(&self.prompts),
         )
     }
@@ -128,7 +120,6 @@ pub(crate) fn load(path: &Path) -> Result<Settings, String> {
         .map_err(|err| format!("{}: {err}", path.display()))?;
     Ok(Settings {
         addr: file.addr,
-        draw: file.triage.draw(),
         errors: file.errors,
         ingest: file.ingest,
         log: log::dispatch(level, Redactor::new(&file.triage.patterns()).ok()),

@@ -47,14 +47,14 @@ fn writes_need_json_and_known_routes() {
     let server = start(&path).unwrap();
     let addr = &server.addr;
     let plain = format!(
-        "PATCH /api/reviews/a HTTP/1.1\r\nHost: {addr}\r\nContent-Type: text/plain\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{{}}"
+        "PATCH /api/prompts/a HTTP/1.1\r\nHost: {addr}\r\nContent-Type: text/plain\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{{}}"
     );
     assert!(raw(addr, &plain).unwrap().starts_with("HTTP/1.1 415"));
     let hidden = send(addr, ["GET", "/api/ingest", ""], "").unwrap();
     assert!(hidden.starts_with("HTTP/1.1 404"));
     let internal = send(addr, ["POST", "/triage/redact", ""], "{}").unwrap();
     assert!(internal.starts_with("HTTP/1.1 404"));
-    let post = send(addr, ["POST", "/api/reviews", ""], "{}").unwrap();
+    let post = send(addr, ["POST", "/api/outbound", ""], "{}").unwrap();
     assert!(post.starts_with("HTTP/1.1 405"));
     assert!(stop(server).unwrap());
 }

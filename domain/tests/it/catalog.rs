@@ -3,18 +3,16 @@ use serde_json::json;
 
 use crate::support::{Fixture, local};
 
-static ROUTES: [Bound; 9] = [
+static ROUTES: [Bound; 7] = [
     ("batches", "list", "get", "/api/batches"),
     ("batches", "update", "patch", "/api/batches/{batch_id}"),
     ("health", "check", "get", "/api/health"),
     ("messages", "list", "get", "/api/messages"),
+    ("outbound", "list", "get", "/api/outbound"),
     ("prompts", "list", "get", "/api/prompts"),
     ("prompts", "update", "patch", "/api/prompts/{name}"),
-    ("review", "draw", "patch", "/api/reviews"),
-    ("review", "list", "get", "/api/reviews"),
-    ("review", "update", "patch", "/api/reviews/{key}"),
 ];
-static SCHEMAS: [&str; 25] = [
+static SCHEMAS: [&str; 19] = [
     "BatchItem",
     "BatchKey",
     "BatchListRequest",
@@ -26,20 +24,14 @@ static SCHEMAS: [&str; 25] = [
     "MessagesListItem",
     "MessagesListRequest",
     "MessagesListResponse",
+    "OutboundItem",
+    "OutboundListRequest",
+    "OutboundListResponse",
     "PromptsKey",
     "PromptsListItem",
     "PromptsListResponse",
     "PromptsNameResponse",
     "PromptsUpdateRequest",
-    "ReviewDrawRequest",
-    "ReviewDrawResponse",
-    "ReviewItem",
-    "ReviewKey",
-    "ReviewListRequest",
-    "ReviewListResponse",
-    "ReviewReason",
-    "ReviewRulingResponse",
-    "ReviewUpdateRequest",
 ];
 
 type Bound = (&'static str, &'static str, &'static str, &'static str);
@@ -71,39 +63,31 @@ fn describes_health_route() {
 }
 
 #[test]
-fn describes_review_draw_route() {
+fn describes_outbound_list_route() {
     let listing = build();
-    let entry = listing.entries().get(6).unwrap();
-    assert_eq!(entry.params(), None);
+    let entry = listing.entries().get(4).unwrap();
     assert_eq!(
-        entry.body(),
-        Some(&json!({"$ref": "#/components/schemas/ReviewDrawRequest"}))
+        entry.params(),
+        Some(&json!({"$ref": "#/components/schemas/OutboundListRequest"}))
     );
+    assert_eq!(entry.body(), None);
     assert_eq!(
         entry.response(),
-        &json!({"$ref": "#/components/schemas/ReviewDrawResponse"})
+        &json!({"$ref": "#/components/schemas/OutboundListResponse"})
     );
 }
 
 #[test]
-fn describes_review_update_route() {
+fn describes_prompts_update_route() {
     let listing = build();
-    let entry = listing.entries().get(8).unwrap();
+    let entry = listing.entries().get(6).unwrap();
     assert_eq!(
         entry.params(),
-        Some(&json!({"$ref": "#/components/schemas/ReviewKey"}))
+        Some(&json!({"$ref": "#/components/schemas/PromptsKey"}))
     );
     assert_eq!(
         entry.body(),
-        Some(&json!({"$ref": "#/components/schemas/ReviewUpdateRequest"}))
-    );
-    let update = listing.schemas().get("ReviewUpdateRequest").unwrap();
-    assert_eq!(
-        update
-            .get("oneOf")
-            .and_then(|all| all.as_array())
-            .map(Vec::len),
-        Some(2)
+        Some(&json!({"$ref": "#/components/schemas/PromptsUpdateRequest"}))
     );
 }
 
@@ -123,7 +107,7 @@ fn lists_failures_per_route() {
             )
         })
         .collect();
-    let (head, tail) = failing.split_at(6);
+    let (head, tail) = failing.split_at(4);
     assert_eq!(
         head,
         [
@@ -131,16 +115,14 @@ fn lists_failures_per_route() {
             ("batches", vec![400, 404, 409, 503]),
             ("health", vec![]),
             ("messages", vec![400, 503]),
-            ("prompts", vec![503]),
-            ("prompts", vec![400, 404, 422, 503]),
         ]
     );
     assert_eq!(
         tail,
         [
-            ("review", vec![400, 409, 503]),
-            ("review", vec![400, 503]),
-            ("review", vec![400, 404, 409, 422, 503]),
+            ("outbound", vec![400, 503]),
+            ("prompts", vec![503]),
+            ("prompts", vec![400, 404, 422, 503]),
         ]
     );
 }

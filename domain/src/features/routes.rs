@@ -1,12 +1,12 @@
 use super::{
     Http, Route, Trace, asked, bare, batches, changed, fallible, health, ingest, keyed, listed,
-    messages, posted, prompts, review, sent, triage, typed,
+    messages, outbound, prompts, triage, typed,
 };
 use serde_json::to_string;
 
 use crate::AppError;
 
-pub(super) static ROUTES: [Route; 27] = [
+pub(super) static ROUTES: [Route; 25] = [
     Route {
         action: "list",
         call: |call, context| listed(call.params, context, batches::list),
@@ -121,6 +121,18 @@ pub(super) static ROUTES: [Route; 27] = [
         trace: Trace::Redacted,
     },
     Route {
+        action: "list",
+        call: |call, context| listed(call.params, context, outbound::list),
+        failures: &[AppError::BadRequest, AppError::Storage],
+        feature: "outbound",
+        http: Http::Bound(
+            "get",
+            "/api/outbound",
+            asked::<outbound::ListRequest, outbound::ListResponse>,
+        ),
+        trace: Trace::Redacted,
+    },
+    Route {
         action: "check",
         call: |call, _context| fallible(call.request, prompts::check),
         failures: &[],
@@ -152,48 +164,6 @@ pub(super) static ROUTES: [Route; 27] = [
             "patch",
             "/api/prompts/{name}",
             changed::<prompts::Key, prompts::UpdateRequest, prompts::NameResponse>,
-        ),
-        trace: Trace::Redacted,
-    },
-    Route {
-        action: "draw",
-        call: |call, context| posted(call.request, context, review::draw),
-        failures: &[AppError::BadRequest, AppError::Conflict, AppError::Storage],
-        feature: "review",
-        http: Http::Bound(
-            "patch",
-            "/api/reviews",
-            sent::<review::DrawRequest, review::DrawResponse>,
-        ),
-        trace: Trace::Full,
-    },
-    Route {
-        action: "list",
-        call: |call, context| listed(call.params, context, review::list),
-        failures: &[AppError::BadRequest, AppError::Storage],
-        feature: "review",
-        http: Http::Bound(
-            "get",
-            "/api/reviews",
-            asked::<review::ListRequest, review::ListResponse>,
-        ),
-        trace: Trace::Redacted,
-    },
-    Route {
-        action: "update",
-        call: |call, context| keyed(call, context, review::update),
-        failures: &[
-            AppError::BadRequest,
-            AppError::NotFound,
-            AppError::Conflict,
-            AppError::Unprocessable,
-            AppError::Storage,
-        ],
-        feature: "review",
-        http: Http::Bound(
-            "patch",
-            "/api/reviews/{key}",
-            changed::<review::Key, review::Update, review::RulingResponse>,
         ),
         trace: Trace::Redacted,
     },

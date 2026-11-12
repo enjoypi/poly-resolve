@@ -6,6 +6,7 @@ const FIRST_QUESTION: usize = 1;
 const HIGH: f64 = 0.9;
 const MINUTE: u64 = 60_000;
 const NOON: u64 = 1_783_483_235_000;
+const NO_PREDICATES: usize = 0;
 const OLD: f64 = 0.8;
 const ROOMY: u32 = 10_000;
 const SECOND_QUESTION: usize = 2;
@@ -39,6 +40,29 @@ fn input_of(body: &Value) -> Value {
 
 fn pack(lines: &Value, attach: &Value, topics: &Value) -> Result<Reply, Error> {
     call("pack", &request(lines, attach, topics).to_string())
+}
+
+#[test]
+fn pack_asks_no_urgency_for_tagged_lines() {
+    let lines = json!([
+        tagged(entry(["k1", "c1", "mine"], NOON), "own"),
+        entry(["k2", "c1", "reply"], NOON + MINUTE),
+    ]);
+    let reply = pack(&lines, &json!([]), &json!([])).unwrap().unwrap();
+    let body = body_of(&reply);
+    assert_eq!(
+        body.get("questions"),
+        Some(&json!([
+            {"instructions": "urgent L2", "name": "urgent_2", "type": "predicate"},
+        ]))
+    );
+    let input = input_of(&body);
+    assert_eq!(input.pointer("/0/lines/0/role"), Some(&json!("own")));
+    assert_eq!(input.pointer("/0/lines/1/role"), None);
+    let layout = reply.get("layout").unwrap();
+    assert_eq!(layout.pointer("/lines/0/role"), Some(&json!("own")));
+    assert_eq!(layout.pointer("/lines/1/role"), Some(&json!("")));
+    assert_eq!(layout.pointer("/segments/0/role"), Some(&json!("")));
 }
 
 #[test]
@@ -320,6 +344,35 @@ fn pack_offers_earlier_segments_of_the_batch() {
 }
 
 #[test]
+fn pack_offers_no_new_topic_to_automatic_segments() {
+    let lines = json!([tagged(entry(["k1", "c1", "alarm"], NOON), "auto")]);
+    let topics = json!([{"label": "old", "topic": "t3-0"}]);
+    let reply = pack(&lines, &json!([]), &topics).unwrap().unwrap();
+    assert_eq!(
+        body_of(&reply).get("questions"),
+        Some(&json!([
+            {
+                "choices": [
+                    {"description": "old", "value": "t3-0"},
+                    {"description": "no topic", "value": "none"},
+                ],
+                "instructions": "which S1",
+                "name": "topic_1",
+                "type": "choice",
+            },
+        ]))
+    );
+    let layout = reply.get("layout").unwrap();
+    assert_eq!(layout.pointer("/segments/0/role"), Some(&json!("auto")));
+    assert_eq!(
+        layout.pointer("/segments/0/question"),
+        Some(&json!(NO_PREDICATES))
+    );
+    let alone = pack(&lines, &json!([]), &json!([])).unwrap().unwrap();
+    assert_eq!(body_of(&alone).get("questions"), Some(&json!([])));
+}
+
+#[test]
 fn pack_rejects_invalid_rules_and_malformed_requests() {
     let lines = json!([entry(["k1", "c1", "hello"], NOON)]);
     let invalid = patched(
@@ -375,6 +428,7 @@ fn request(lines: &Value, attach: &Value, topics: &Value) -> Value {
         "max_chars": ROOMY,
         "model": "m",
         "new_label": "new topic",
+        "none_label": "no topic",
         "questions": {
             "topic": {"instructions": "which {segment}", "name": "topic"},
             "urgent": {"instructions": "urgent {line}", "name": "urgent"},
@@ -382,4 +436,8 @@ fn request(lines: &Value, attach: &Value, topics: &Value) -> Value {
         "rules": [],
         "topics": topics,
     })
+}
+
+fn tagged(entry: Value, role: &str) -> Value {
+    patched(entry, "role", &json!(role))
 }

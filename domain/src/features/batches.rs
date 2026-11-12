@@ -1,11 +1,11 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use super::review::limit;
+use super::limit;
 use crate::AppError;
 use crate::batches::Item;
 use crate::features::Context;
-use crate::review::Listing;
+use crate::outbound::Listing;
 
 const FAILED: &str = "failed";
 const READY: &str = "ready";

@@ -3,9 +3,9 @@ extern crate alloc;
 pub mod batches;
 pub mod features;
 pub mod inbox;
+pub mod outbound;
 pub mod prompts;
 pub mod redact;
-pub mod review;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -59,7 +59,7 @@ impl AppError {
             Self::NotFound => "not found",
             Self::Storage => "storage unavailable",
             Self::UnknownAction => "unknown action",
-            Self::Unprocessable => "violates review rules",
+            Self::Unprocessable => "violates rules",
         }
     }
 }

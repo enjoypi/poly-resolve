@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 
 use super::TRIAGE;
 use super::desk::Brief;
-use super::{ANALYZED, HOUR_MS, PENDING, SENT, Shift, current, failure, number, retry_in, text};
+use super::{ANALYZED, PENDING, SENT, Shift, current, failure, number, retry_in, text};
 use crate::ingest::now_ms;
 use crate::pipe::{Job, feed};
 use crate::race::race;
@@ -139,13 +139,10 @@ fn claim_of(shift: &Shift<'_>, alert: &Value, state: &str) -> Value {
     let now = now_ms();
     json!({
         "at_ms": now,
-        "cooldown_since_ms": now.saturating_sub(shift.triage.handoff_cooldown_ms()),
         "created_at_ms": alert.get("created_at_ms"),
-        "hour_since_ms": now.saturating_sub(HOUR_MS),
         "key": alert.get("key"),
         "kind": if state == PENDING { "analysis" } else { "notify" },
         "max_attempts": shift.triage.max_attempts(),
-        "max_per_hour": shift.triage.max_handoffs_per_hour(),
         "state": state,
     })
 }

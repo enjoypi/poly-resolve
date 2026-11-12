@@ -1,4 +1,5 @@
 pub(crate) mod config;
+mod utf7;
 mod wire;
 
 use core::convert::Infallible;
@@ -13,16 +14,18 @@ use serde_json::{Value, from_str, json};
 use tokio::time::{Instant, sleep, timeout, timeout_at};
 
 use self::config::Settings;
-use self::wire::{Conn, Reply, quoted};
+use self::utf7::encode;
+use self::wire::{Conn, Reply, escaped, quoted};
 use crate::config::Settings as Shared;
 use crate::ingest::cycle::{Backoff, Halt, Retry, fault};
 use crate::ingest::{Site, now_ms};
 use crate::net::{Dial, Layer, Link, open};
 use crate::race::{Stop, race};
-use crate::store::Archive;
+use crate::store::{Archive, Scope};
 use crate::trace::{Caller, Outcome, external};
 
 const AUTH: &str = "imap:auth";
+const BACKFILL: u32 = 1;
 static CONNECTIONS: AtomicU64 = AtomicU64::new(0);
 const DAY_MS: u64 = 86_400_000;
 pub(crate) const SOURCE: &str = "imap";
@@ -119,6 +122,19 @@ impl Worker<'_> {
         from_str(&reply).ok()
     }
 
+    fn caught_up(&self) -> Result<(), Cut> {
+        let marked = self
+            .store
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .mark_backfilled(self.scope(), BACKFILL)
+            .map_err(|err| Cut::Halt(fault(self.shared, &err)))?;
+        if marked > 0 {
+            tracing::info!(account = self.config.account(), "imap backfill finished");
+        }
+        Ok(())
+    }
+
     async fn fetch(&self, mailbox: &mut Mailbox, set: &str) -> Result<u64, Cut> {
         let bytes = self.config.limits().message_bytes();
         let command = format!("UID FETCH {set} (UID INTERNALDATE BODY.PEEK[]<0.{bytes}>)");
@@ -179,6 +195,7 @@ impl Worker<'_> {
             tally.received = tally.received.saturating_add(saved);
         }
         mailbox.seen = mailbox.seen.max(base);
+        self.caught_up()?;
         loop {
             self.wait(&mut mailbox).await?;
             tally.rounds = tally.rounds.saturating_add(1);
@@ -280,7 +297,7 @@ impl Worker<'_> {
 
     async fn open(&self) -> Result<Mailbox, Cut> {
         let (mut conn, capabilities) = login(self.config).await.map_err(Cut::Net)?;
-        let folder = quoted(self.config.mailbox()).map_err(Cut::Net)?;
+        let folder = escaped(&encode(self.config.mailbox()));
         let selected = conn
             .ask(&format!("SELECT {folder}"), self.limit())
             .await
@@ -299,6 +316,10 @@ impl Worker<'_> {
             seen: code("[UIDNEXT ").saturating_sub(1),
             validity: code("[UIDVALIDITY "),
         })
+    }
+
+    fn scope(&self) -> Scope<'_> {
+        Scope::new(SOURCE, self.config.account())
     }
 
     async fn session(&self) -> Result<Retry, Halt> {
@@ -325,12 +346,15 @@ impl Worker<'_> {
     }
 
     fn since(&self) -> Result<String, Cut> {
-        let mark = self
-            .store
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .watermark(SOURCE, self.config.account())
+        let store = self.store.lock().unwrap_or_else(PoisonError::into_inner);
+        let caught = store
+            .backfilled(self.scope(), BACKFILL)
             .map_err(|err| Cut::Halt(fault(self.shared, &err)))?;
+        let mark = store
+            .watermark(SOURCE, self.config.account())
+            .map_err(|err| Cut::Halt(fault(self.shared, &err)))?
+            .filter(|_| caught);
+        drop(store);
         let at_ms = mark
             .map_or_else(
                 || now_ms().saturating_sub(self.config.initial_backfill_ms()),

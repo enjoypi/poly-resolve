@@ -6,9 +6,9 @@
 
 ## 调用
 
-- 业务只经 `features::dispatch(&Context, &Call)` 调用（唯一例外：`redact::Redactor::new(&[review::Rule])`、`apply(text)` 供 cli 的日志写出口脱敏，与 `triage.redact` 共用 `Mask`；日志写出口不能走 dispatch，否则 dispatch 自身的日志会递归）；`Call` 由 `Origin`（transport、session_id、user）、`Target`（feature、action）与 request（JSON 请求体）经各自的 `new` 构造，HTTP 的路径与查询参数经 `with_params` 以 urlencoded 字符串传入
-- `Context::new(errors, Rules, Ports)` 由调用方（cli、adapters）构造：`Rules::new(&Paging, &[Reason], learn_min_chars)`，可选 `with_draw(Draw)`（缺省 `Draw::off()`）与 `with_placeholders(&[String])`（缺省空）；`Ports::new(reader, docket, roster)`，`reader` 是 `inbox::Reader`（存储读取），`docket` 是 `review::Docket`（审核台读写），`roster` 是 `batches::Roster`（失败批读写），均由 adapters 实现；可选 `with_library(&dyn prompts::Library)`（提示词读写，缺省为空实现：列表为空、保存得 `None`）
-- handler 包装：`typed`（`fn(Req) -> Resp`）、`fallible`（`fn(&Req) -> Result`）解 JSON 请求体，供内部动作；`listed`（`fn(&Params, &Context) -> Result`）只解 params；`keyed`（`fn(&Params, Req, &Context) -> Result`）解 params 与请求体；`posted`（`fn(&Req, &Context) -> Result`，描述函数 `sent`）只解请求体；JSON 共用 `decode`，urlencoded 共用 `params`（`serde_urlencoded`）；health 不解码；`Route.call` 为 `fn(&Call, &Context)`，不需要上下文的路由闭包忽略第二个参数
+- 业务只经 `features::dispatch(&Context, &Call)` 调用（唯一例外：`redact::Redactor::new(&[redact::Rule])`、`apply(text)` 供 cli 的日志写出口脱敏，与 `triage.redact` 共用 `Mask`；日志写出口不能走 dispatch，否则 dispatch 自身的日志会递归）；`Call` 由 `Origin`（transport、session_id、user）、`Target`（feature、action）与 request（JSON 请求体）经各自的 `new` 构造，HTTP 的路径与查询参数经 `with_params` 以 urlencoded 字符串传入
+- `Context::new(errors, Rules, Ports)` 由调用方（cli、adapters）构造：`Rules::new(&Paging)`，可选 `with_placeholders(&[String])`（缺省空）；`Ports::new(reader, outbox, roster)`，`reader` 是 `inbox::Reader`（存储读取），`outbox` 是 `outbound::Outbox`（外发记录读取），`roster` 是 `batches::Roster`（失败批读写），均由 adapters 实现；可选 `with_library(&dyn prompts::Library)`（提示词读写，缺省为空实现：列表为空、保存得 `None`）
+- handler 包装：`typed`（`fn(Req) -> Resp`）、`fallible`（`fn(&Req) -> Result`）解 JSON 请求体，供内部动作；`listed`（`fn(&Params, &Context) -> Result`）只解 params；`keyed`（`fn(&Params, Req, &Context) -> Result`）解 params 与请求体；`features::limit(requested, context)` 是各列表接口共用的条数校验；JSON 共用 `decode`，urlencoded 共用 `params`（`serde_urlencoded`）；health 不解码；`Route.call` 为 `fn(&Call, &Context)`，不需要上下文的路由闭包忽略第二个参数
 - `route` 的 `&&` 两侧都要有用例：功能不存在、功能存在而动作不存在、两者都存在
 - `catalog::build` 供 cli 拼路由与 OpenAPI：只列 `Http::Bound(方法, 路径模板, 描述)` 的路由，`Entry` 给出 `method`、`path`、`params`、`body`、`response`；描述函数 `bare`（无参数无请求体）、`asked`（只有 params）、`changed`（params 加请求体）；schema 引用路径为 `/components/schemas`，错误体 `ErrorBody` 取自 `Body`
 
@@ -43,13 +43,13 @@
 - `fragments`（`ingest/cipher.rs`）：正文任一行（trim 后）整行只含字母数字与 `+/=` 且不短于 `cipher_min_length`，即视为留有密文片段；`parse_event`、`parse_page` 据此给 envelope 填 `lookup`（消息 ID，否则空）
 - `assemble`（`typed`）：`{envelope, children: [{sender, text}]}`，正文重组为“原正文首行 + 每条子消息的 `sender:text`”，`lookup` 置空；子消息由 adapters 向钉钉工具查询
 - `cipher`、`reveal`、`assemble` 标 `Trace::Redacted`
-- `parse_mail`（`fallible`，`Trace::Redacted`）：`{account, source, raw: 字节数组, internal, uid, uid_validity, received_at_ms, limits{chars,depth,parts}, style{attachment,quote_starts,quote_ends}}` → `{envelope, skip}`；用 mail-parser（`full_encoding`，GBK 等）；`occurred_at_ms` 取 `internal`（`%d-%b-%Y %H:%M:%S %z`），解析不了用 `received_at_ms`；`key` 为 `<source>:<account>:<Message-ID>`，无则 `uid:<uid_validity>:<uid>`；`conversation_id` 为 `mail:<account>:<小写发件地址>`；正文为主题 + `body_text(0)`（只有 html 时转文字），删 `>` 行，遇 `quote_starts` 前缀或 `quote_ends` 结尾的行截断，附件按模板追加，去控制字符后截断到 `chars`；`skip`：首个 `Authentication-Results` 含 `dmarc=fail` 为 `dmarc`，`Auto-Submitted` 非 `no` 为 `auto`，有 `List-Id` 或 `Precedence` 为 bulk、junk、list 为 `list`；`raw` 只存标识、日期、发件地址、主题、回复关系、`internal`、大小与 UID；邮件解析失败为 `BadRequest`
+- `parse_mail`（`fallible`，`Trace::Redacted`）：`{account, source, raw: 字节数组, internal, uid, uid_validity, received_at_ms, limits{chars,depth,parts}, style{attachment,quote_starts,quote_ends}}` → `{envelope, skip}`；用 mail-parser（`full_encoding`，GBK 等）；`occurred_at_ms` 取 `internal`（`%d-%b-%Y %H:%M:%S %z`），解析不了用 `received_at_ms`；`key` 为 `<source>:<account>:<Message-ID>`，无则 `uid:<uid_validity>:<uid>`；`conversation_id` 为 `mail:<account>:<小写发件地址>`；正文为主题 + `body_text(0)`（只有 html 时转文字），删 `>` 行，遇 `quote_starts` 前缀或 `quote_ends` 结尾的行截断，附件按模板追加，去控制字符后截断到 `chars`；`skip` 只有一种：首个 `Authentication-Results` 含 `dmarc=fail` 为 `dmarc`；自动与群发邮件照收，在 `raw.bulk` 里标 `auto`（`Auto-Submitted` 非 `no`）或 `list`（有 `List-Id` 或 `Precedence` 为 bulk、junk、list）；`raw` 只存标识、日期、发件地址、主题、回复关系、`internal`、大小与 UID；邮件解析失败为 `BadRequest`
 - `since`（`typed`）：`{at_ms}` → `{date}`，IMAP `SEARCH SINCE` 用的 `%-d-%b-%Y`（UTC）
 
 ## messages
 
 - `messages.list`（`listed`，`GET /api/messages`）：查询参数 `cursor?, limit?, from_ms?, to_ms?` → `{items, next_cursor}`；`items` 为 `inbox::Row`（不含 raw），标 `Trace::Redacted`
-- `inbox::Row` 的 `priority`（该消息的决策概率）、`topic`（话题 ID）、`analysis`（话题最近一次转交的分析）可空，由 adapters 连表填入；其他 reader 留空
+- `inbox::Row` 的 `priority`（该消息的决策概率）、`topic`（话题 ID）、`analysis`（话题最近一次转交的分析）、`state` 与 `reason`（处理状态及原因）可空，由 adapters 连表填入；其他 reader 留空
 - `inbox::Reader` 是 domain 定义、adapters 实现的读取接口（`Debug + Sync`：`Context` 持有 `&dyn Reader` 跨 await 时须 Send）；契约：按 `occurred_at_ms` 降序、同值按 `key` 降序，返回严格小于游标的至多 `limit` 条；读失败返回 `AppError::Storage`
 - 分页规则在 domain：`limit` 缺省取 `Paging.default`，为 0 或超过 `Paging.max` 拒绝；向 reader 多取 1 条判断是否有下一页，有才给 `next_cursor`
 - 时间范围 `from_ms`、`to_ms`（UTC 毫秒）是半开区间 `[from_ms, to_ms)`，可只给一端；两端都给且 `from_ms >= to_ms` 按请求无效；经 `inbox::Window`（字段 `since`、`until`，`min_ident_chars` 不允许 `to`）放进 `Query`，由 reader 与游标条件叠加过滤
@@ -58,47 +58,36 @@
 ## triage
 
 - 九个路由，请求都带消息内容，均标 `Trace::Redacted`；`notice`、`screen` 为 `typed`，其余为 `fallible`；`notice` 按值收请求以满足 `needless_pass_by_value`，用解构消耗
-- `line`（`triage/line.rs`）：`{message{conversation_id,sender_id,sender_name,text}, rules, max_chars, unknown_sender, self_sender_ids, notify_conversation_id, cipher_min_length}` → `{sender, text, skip}`；`self_sender_ids` 为空、后两项为 null（数据源无此概念）即不做该项判定；依次判本人发送（`own`，与列表任一项不区分大小写相等）、通知会话（`notice`）、空正文（`empty`）、仍是密文（`sealed`）则只给 `skip`（此时不编译规则），否则发送人与正文过 `redact::Mask`，正文按 `max_chars` 截断
-- `pack`（`triage/pack.rs`）：`{lines[{key,conversation_id,occurred_at_ms,sender,text,hints?}], attach[{conversation_id,last_ms,probability?,topic_id}], topics[{topic,label,probability?}], batch_id, gap_ms, label_chars, max_chars, model, new_label, questions{urgent,topic}, rules}` → `{body, layout}`
+- `line`（`triage/line.rs`）：`{message{bulk?,conversation_id,sender_id,sender_name,text}, rules, max_chars, unknown_sender, self_sender_ids, notify_conversation_id, cipher_min_length}` → `{role, sender, skip, state, text}`；`self_sender_ids` 为空、后两项为 null（数据源无此概念）即不做该项判定；`role`：发送人与 `self_sender_ids` 任一项不区分大小写相等为 `own`，否则 `bulk` 非空为 `auto`，否则 null；`skip` 依次判通知会话（`notice`，`state` 为 `skipped`）、空正文（`empty`）、仍是密文（`sealed`），后两者 `state` 为 `withheld`，都不编译规则、不给文字；其余 `state` 为 `queued`，发送人与正文过 `redact::Mask`，正文按 `max_chars` 截断
+- `pack`（`triage/pack.rs`）：`{lines[{key,conversation_id,occurred_at_ms,role?,sender,text,hints?}], attach[{conversation_id,last_ms,probability?,topic_id}], topics[{topic,label,probability?}], batch_id, gap_ms, label_chars, max_chars, model, new_label, none_label, questions{urgent,topic}, rules}` → `{body, layout, questions}`（`questions` 为问题总数，0 时 adapters 不外发）；布局类型 `Choice`、`Layout`、`Placed`、`Segment` 在 `triage/pack/layout.rs`，旧布局缺 `role` 按空串读
   - 行按会话、时间切段（相邻间隔 `<= gap_ms`），再按首行时间排序
-  - 每行一个 `predicate`（`name` 为 `<urgent.name>_<行号>`）
-  - `attach` 里同会话且间隔内的段直接并入该话题、不提问；其余段在“开放话题（值为话题 ID）、更早的段（`S<n>`）、`new`”里出 `choice`，选项不足 2 个不出；`hints` 非空的段只列这些话题
+  - `role` 为空的行各一个 `predicate`（`name` 为 `<urgent.name>_<行号>`）；带 `role` 的行不出题、外发时带 `role` 字段
+  - `attach` 里同会话且间隔内的段直接并入该话题、不提问；其余段在“开放话题（值为话题 ID）、更早的段（`S<n>`）、`new`”里出 `choice`，选项不足 2 个不出；`hints` 非空的段只列这些话题；全是 `auto` 行的段把 `new` 换成 `none`（说明取 `none_label`），段的 `role` 记 `auto`
   - `body` 的 `input` 只含别名（`C<n>` 会话、`L<n>` 行、`S<n>` 段），外发前对每行再套 `rules`；`layout` 记行序、段与题号，供 `sort` 对号入座
-- `sort`（`triage/sort.rs`）：`{layout, response, min_confidence, threshold}` → `{placements[{key,probability,topic}], topics[{topic,label,last_ms,probability,score,urgent}]}`；答案数量须等于 `layout.questions()`，否则请求无效；按位置核对类型，类型不符整批失败，单项 null、缺字段、`refusal`、概率不在 [0,1]、置信度低于下限、选项不在列表只当未作答（无概率或新话题）；新话题 ID 为 `t<批号>-<段序号>`，话题概率取 `layout.probabilities` 的历史分与当前成员分的最大值；`score` 只取当前成员分的最大值，`urgent` 只看 `score`（历史高分不再触发转交）
-- `brief`（`triage/prompt.rs`）：`{rows[{key?,occurred_at_ms,sender,text}], rules, max_chars, template, followup, resume?{until,until_key?}}` → `{prompt, start, until_ms, until_key}`；有 `resume` 时用 `followup` 且只含 `(occurred_at_ms, key)` 位于游标之后的行；`{messages}` 只替换一次
+- `sort`（`triage/sort.rs`）：`{layout, response, min_confidence, threshold}` → `{placements[{key,probability,topic?}], topics[{topic,label,last_ms,probability,score,urgent}]}`；答案数量须等于 `layout.questions()`（紧急题只数 `role` 为空的行，按这些行的顺序对号），否则请求无效；按位置核对类型，类型不符整批失败，单项 null、缺字段、`refusal`、概率不在 [0,1]、置信度低于下限、选项不在列表只当未作答（无概率或新话题）；新话题 ID 为 `t<批号>-<段序号>`，`auto` 段没选到话题时 `topic` 为 null（不新建话题，adapters 记为无关），话题概率取 `layout.probabilities` 的历史分与当前成员分的最大值；`score` 只取当前成员分的最大值，`urgent` 只看 `score`（历史高分不再触发转交）
+- `brief`（`triage/prompt.rs`）：`{rows[{key?,occurred_at_ms,omitted?,role?,sender,text}], rules, max_chars, omitted, template, followup, resume?{until,until_key?}}` → `{prompt, start, until_ms, until_key}`；有 `resume` 时用 `followup` 且只含 `(occurred_at_ms, key)` 位于游标之后的行；`{messages}` 只替换一次；带 `omitted`（未外发原因）的行不渲染，相邻且原因相同的合成一项 `{"note": …}`，文字取 `omitted` 模板（`{count}`、`{reason}`）；带 `role` 的行多一个 `role` 字段
 - `notice`：代入 `{topic}`、`{probability}`（两位小数）、`{label}`，最后才代入截断后的 `{analysis}`
 - `reply`：`{stdout, max_chars}` → `{thread_id, text}`；从 `codex exec --json` 的 JSONL 取首个 `thread.started` 的 `thread_id` 与最后一条 `item.completed` 里 `agent_message` 的文本，缺任一或文本为空按请求无效
 - `redact`：`{text, rules}` → `{text}`，供启动自检；`tests/it/redact.rs` 读取真实的 `cli/config.yaml` 里 `triage.redact.patterns` 跑样例表：每条规则至少一例必须被替换、几例明文必须原样；规则是数据，改规则必须同步样例，源码里的中文用 `\u{…}` 转义（`non_ascii_literal`）
 - `screen`（`triage/screen.rs`）：`{instructions, lines[{key,text}], max_tokens, model, topics[{topic,label}]}` → `{body}`；OpenAI 兼容的 chat 请求体（`system` 放指令，第一条 `user` 只放话题 JSON，第二条 `user` 只放别名 `L<n>` 的行 JSON，让指令加话题成为可缓存的公共前缀；`response_format` 为 `json_object`，温度 0，带 `max_tokens`），不含消息键；adapters 每次只传一行，探测模型是否可用时传空 `lines`
 - `screened`（`triage/screened.rs`）：`{lines, min_chars, placeholder, response, topics}` → `{lines[{key,text,flag,hints,spans}]}`（`spans` 为通过校验并用于遮盖的片段，供 adapters 存漏判样本）；从 `choices[0].message.content` 解出 `{lines[{line,risk,spans,topics}]}`；片段去空白后须不短于 `min_chars` 且是该行文字的子串才用 `placeholder` 遮盖；话题须在给定话题内且去重；`risk == high` 且无可用片段 `flag = unmasked`，缺该行的判断 `flag = missing`；响应无法解析按请求无效
-- `learn`（`triage/learn.rs`，不是路由，供 `review.update`）：粘贴的原文去空白后须不短于 `min_chars` 且是该行文字的子串，转义成字面量正则，否则 `Unprocessable`
-- `transcript.rs`：`Row`（`key?`、`occurred_at_ms,sender,text`，`render` 过 `Mask` 并按 `max` 截断）、`Style`、`fit`（整个 JSON 数组超 `max_chars` 就丢最旧的行，至少留最后一条）
+- `transcript.rs`：`Row`（`key?`、`occurred_at_ms,sender,text`，可选 `omitted`、`role`；`render` 过 `Mask` 并按 `max` 截断）、`Style`、`fit`（整个 JSON 数组超 `max_chars` 就丢最旧的行，至少留最后一条）
 - 脱敏（`triage/redact.rs`）：`Mask::new(&[Rule])` 编译全部正则，任一无效返回 `BadRequest`（失败即不外发）；`apply` 按序 `replace_all`，placeholder 里可写 `${1}`；`regex` 只开 `std`、`perf`、`unicode-perl`、`unicode-case`，无环视，规则里数字类用 `[0-9]`、不用 `\b`（CJK 属 word 字符）；每次调用现编译，不缓存：实测 `cli/config.yaml` 的 25 条规则 release 下每次约 3 ms，intake 每轮至多 `intake` 条，暂不改批量；学到的规则多到每轮耗时明显再改
 - 提示词模板里的“不可信数据”说明在配置里；domain 只做占位符替换
 
-## review
+## outbound
 
-- `Docket`（`review.rs`，`Debug + Sync`），四个方法失败都返回 `AppError::Storage`：
-  - `draw(Pick)` → `Option<Drawn{batch_id, lines}>`，还有未审完的批为 `None`
-  - `list(&Listing)` → `Vec<Item>`
-  - `settle(&Ruling)` → 裁决后的当前状态，只裁决待审核项，键不存在为 `None`
-  - `source(key)` → 该行当前文字，供漏脱敏拒绝校验粘贴的原文
-- `Ruling::approve(key)`、`Ruling::reject(key, reason)` 加 `learned(&Rule)`，不记审核人；`state()` 给 `approved`｜`rejected`｜`leaked`；跨 crate 不 match 变体
-- `Reason{code,label,placeholder?}` 来自配置；带 `placeholder` 的是漏脱敏类，拒绝时必须带 `leak`，经 `learn` 生成 `Rule(pattern, placeholder)` 交 `settle`；不带 `placeholder` 的必须不带 `leak`；原因未知或组合不符为 `Unprocessable`
-- `redact::marks(&[&str])`：占位符去掉 `$name`、`${name}` 分组引用（`$` 为 `$$`），去空、去重、长的在前，供审核页标红
-- 路由（`features/review.rs`）：
-  - `review.draw`（`posted`，`PATCH /api/reviews`，`Trace::Full`）：请求体 `{"state":"pending"}` → `{batch_id, lines, state}`；`Draw` 为 `off` 或 `draw` 返回 `None` 都是 `Conflict`
-  - `review.list`（`listed`，`GET /api/reviews`）：查询参数 `limit?, state?`（缺省列 `pending`，条数规则同 `messages.list`）→ `{items, placeholders, reasons}`；`Item{batch_id,conversation_id,flag,key,occurred_at_ms,reason,sender,state,text}`
-  - `review.update`（`keyed`，`PATCH /api/reviews/{key}`）：params `Key{key}`，请求体 `Update`（按 `state` 打标签：`approved`，或 `rejected` 带 `reason`、`leak?`）→ `{state}`
-- `settle`：键不存在 `NotFound`；返回状态与本次裁决的 `ruling.state()` 相同回 200（含重复提交），不同即 `Conflict`；请求格式错 `BadRequest`
-- 拒绝的日志只记 `redacted:<字节数>`，粘贴的原文不入日志
+- `Outbox`（`outbound.rs`，`Debug + Sync`）：`list(&Listing)` → `Vec<Item>`，失败返回 `AppError::Storage`；`Listing{state, limit}` 也供 `batches::Roster`
+- `Item{account,batch_id,conversation_id,flag,key,occurred_at_ms,reason,role,sender,source,state,text}`
+- `redact::marks(&[&str])`：占位符去掉 `$name`、`${name}` 分组引用（`$` 为 `$$`），去空、去重、长的在前，供外发记录页标红；`redact::Rule` 是日志脱敏用的规则
+- 路由（`features/outbound.rs`）：`outbound.list`（`listed`，`GET /api/outbound`，`Trace::Redacted`）：查询参数 `limit?, state?`（缺省列 `approved`，条数规则同 `messages.list`）→ `{items, placeholders}`；只读，没有裁决
 
 ## batches
 
 - `Roster`（`batches.rs`，`Debug + Sync`）：`list(&Listing)` → `Vec<Item>`；`revive(batch_id)` → 该批当前状态，不存在为 `None`；失败返回 `AppError::Storage`
 - `Item{attempts,batch_id,lines,reason,state,updated_at_ms}`，`lines` 为已通过的行数
 - 路由（`features/batches.rs`）：
-  - `batches.list`（`listed`，`GET /api/batches`）：查询参数 `limit?, state?`（缺省列 `failed`，条数规则同 `review.list`，共用 `review::limit`）→ `{items}`
+  - `batches.list`（`listed`，`GET /api/batches`）：查询参数 `limit?, state?`（缺省列 `failed`，条数规则同 `outbound.list`，共用 `features::limit`）→ `{items}`
   - `batches.update`（`keyed`，`PATCH /api/batches/{batch_id}`）：请求体 `{state:"ready"}` → `{state}`；返回状态为 `ready` 回 200（含重复提交），否则 `Conflict`，不存在 `NotFound`
 - 不含消息内容，标 `Trace::Full`
 
@@ -125,7 +114,7 @@
 
 ## 测试
 
-- `tests/it/support.rs`：`local` 构造 adapters 来源的 `Call`（需要参数时 `.with_params`）；`Fixture` 持有 `Errors`、`Paging`、`Draw`（`with_draw` 换）与占位符 `[x]`，`dispatch` 用空 reader，`dispatch_with(&reader, &call)` 换 reader，`dispatch_review(&docket, &call)` 换审核台，`dispatch_prompts(&library, &call)` 换提示词存储
-- 替身：`Rows`（按契约过滤并截断的内存 reader）；`Broken`（`Reader`、`Docket`、`Roster` 都恒返回 `Storage`）；`Pool`（内存 `Roster`，`failed` 重发得 `ready`，其余返回原状态）；`dispatch_roster(&roster, &call)` 换失败批端口；`Dock`（内存 `Docket`，按键与状态存项，有 `pending` 项时 `draw` 为 `None`，否则取至多 `limit` 条 `queued`，`source` 返回固定的 `LEAKED` 文字，带规则的裁决只在规则为 `LEARNED` 与 `[x]` 时返回 `leaked`，否则 `mislearned`）
+- `tests/it/support.rs`：`local` 构造 adapters 来源的 `Call`（需要参数时 `.with_params`）；`Fixture` 持有 `Errors`、`Paging` 与占位符 `[x]`，`dispatch` 用空 reader，`dispatch_with(&reader, &call)` 换 reader，`dispatch_outbox(&outbox, &call)` 换外发记录，`dispatch_prompts(&library, &call)` 换提示词存储
+- 替身：`Rows`（按契约过滤并截断的内存 reader）；`Broken`（`Reader`、`Outbox`、`Roster` 都恒返回 `Storage`）；`Pool`（内存 `Roster`，`failed` 重发得 `ready`，其余返回原状态）；`dispatch_roster(&roster, &call)` 换失败批端口；`Sent`（内存 `Outbox`，按键与状态存项）
 - triage 测试按动作一文件，放 `tests/it/features/triage/`，与 `src/features/triage/` 对应
 - 用 scoped subscriber 捕获日志前先确保常驻占位 `Dispatch`（`tests/it/log.rs` 的 `ANCHOR`）：tracing-core 只注册 1 个 dispatcher 时按当前线程算 callsite interest，并行测试中无 subscriber 的线程会把 interest 缓存成 never，日志丢失

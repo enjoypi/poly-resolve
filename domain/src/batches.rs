@@ -4,7 +4,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::AppError;
-use crate::review::Listing;
+use crate::outbound::Listing;
 
 #[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
 #[schemars(rename = "BatchItem")]

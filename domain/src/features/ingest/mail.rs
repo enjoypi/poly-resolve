@@ -95,6 +95,18 @@ fn body(message: &Message<'_>, style: &Style) -> String {
     kept.join("\n").trim().to_owned()
 }
 
+fn bulk(message: &Message<'_>) -> Option<&'static str> {
+    if header(message, "Auto-Submitted").is_some_and(|found| found != "no") {
+        Some(AUTO)
+    } else if header(message, "List-Id").is_some()
+        || header(message, "Precedence").is_some_and(|found| BULK.contains(&found.as_str()))
+    {
+        Some(LIST)
+    } else {
+        None
+    }
+}
+
 fn clean(text: &str) -> String {
     text.chars().filter(|letter| !letter.is_control()).collect()
 }
@@ -183,24 +195,14 @@ pub(crate) fn since(req: SinceRequest) -> SinceResponse {
 }
 
 fn skip(message: &Message<'_>) -> Option<String> {
-    let reason = if header(message, "Authentication-Results")
-        .is_some_and(|found| found.contains(DMARC_FAIL))
-    {
-        Some(DMARC)
-    } else if header(message, "Auto-Submitted").is_some_and(|found| found != "no") {
-        Some(AUTO)
-    } else if header(message, "List-Id").is_some()
-        || header(message, "Precedence").is_some_and(|found| BULK.contains(&found.as_str()))
-    {
-        Some(LIST)
-    } else {
-        None
-    };
-    reason.map(str::to_owned)
+    header(message, "Authentication-Results")
+        .filter(|found| found.contains(DMARC_FAIL))
+        .map(|_| DMARC.to_owned())
 }
 
 fn summary(message: &Message<'_>, req: &MailRequest) -> Value {
     json!({
+        "bulk": bulk(message),
         "date": message.date().map(|stamp| stamp.to_rfc3339()),
         "from": message.from().and_then(|list| list.first()).and_then(|mailbox| mailbox.address().map(str::to_owned)),
         "in_reply_to": message.in_reply_to().and_then(|list| list.first()),

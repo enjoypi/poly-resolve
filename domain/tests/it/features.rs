@@ -3,8 +3,8 @@ mod health;
 mod ingest;
 mod mail;
 mod messages;
+mod outbound;
 mod prompts;
-mod review;
 mod triage;
 
 use domain::features::{Call, Origin, Target};

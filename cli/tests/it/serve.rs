@@ -1,8 +1,8 @@
 mod assets;
 mod host;
 mod messages;
+mod outbound;
 mod prompts;
-mod reviews;
 
 use core::ops::{Deref, DerefMut};
 use std::fs;
@@ -90,7 +90,7 @@ fn partial(addr: &str) -> io::Result<TcpStream> {
     let mut stream = TcpStream::connect(addr)?;
     write!(
         stream,
-        "PATCH /api/reviews/zz HTTP/1.1\r\nHost: {addr}\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{{"
+        "PATCH /api/prompts/zz HTTP/1.1\r\nHost: {addr}\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{{"
     )?;
     Ok(stream)
 }
@@ -132,7 +132,7 @@ fn serves_http_until_signal() {
             ),
             (
                 "HTTP/1.1 400",
-                send(addr, ["GET", "/api/reviews?limit=0", ""], "").unwrap(),
+                send(addr, ["GET", "/api/outbound?limit=0", ""], "").unwrap(),
             ),
         ];
         terminate(&server.child, signal).unwrap();
@@ -161,8 +161,7 @@ fn serves_with_triage_enabled() {
     fs::write(format!("{dir}/listen.txt"), format!("{EVENT}\n")).unwrap();
     let yaml = live(&dir)
         .replace("mode: disabled", "mode: enabled")
-        .replace("lookback_ms: 1000\n", "lookback_ms: 1000000000000\n")
-        .replace("backlog_max_ms: 1000\n", "backlog_max_ms: 1000000000000\n");
+        .replace("lookback_ms: 1000\n", "lookback_ms: 1000000000000\n");
     let path = config("serve-triage.yaml", &yaml).unwrap();
     let mut server = start(&path).unwrap();
     await_log(&mut server.lines, "\"target\":\"dispatch\"").unwrap();

@@ -9,10 +9,11 @@ use crate::support::{
 
 const OTHER: &str = "INSERT INTO messages (key, source, account, conversation_id, sender_id, sender_name, text, occurred_at_ms, received_at_ms, raw) VALUES ('x1', 'dingtalk', 'other', 'c1', 'u1', 'bob', 'hi', 9, 9, '{}'), ('x2', 'slack', 'acct', 'c1', 'u1', 'bob', 'hi', 9, 9, '{}');";
 const PAGE: u32 = 10;
+const PLACED: &str = "SELECT group_concat(key, ',') FROM (SELECT key FROM placements ORDER BY key)";
 const PRIORITY: f64 = 0.5;
 const REMAINING: &str =
     "SELECT group_concat(key || '|' || reason, ',') FROM (SELECT * FROM lines ORDER BY key)";
-const SKIPPED: &str = "INSERT INTO lines (key, conversation_id, occurred_at_ms, sender, text, state, reason, reviewer, flag, hints, rules_rev, batch_id, created_at_ms, updated_at_ms) VALUES ('k1', 'c1', 1, '', '', 'skipped', 'sealed', '', '', '[]', 0, 0, 1, 1), ('k2', 'c1', 1, '', '', 'skipped', 'sealed', '', '', '[]', 0, 0, 1, 1), ('k3', 'c1', 1, '', '', 'skipped', 'own', '', '', '[]', 0, 0, 1, 1);";
+const SKIPPED: &str = "INSERT INTO lines (key, conversation_id, occurred_at_ms, sender, text, state, reason, reviewer, flag, hints, rules_rev, batch_id, created_at_ms, updated_at_ms) VALUES ('k1', 'c1', 1, '', '', 'withheld', 'sealed', '', '', '[]', 0, 0, 1, 1), ('k2', 'c1', 1, '', '', 'withheld', 'sealed', '', '', '[]', 0, 0, 1, 1), ('k3', 'c1', 1, '', '', 'skipped', 'notice', '', '', '[]', 0, 0, 1, 1); INSERT INTO placements VALUES ('k1', 't', NULL, 1), ('k3', 't', NULL, 1);";
 
 fn ids(rows: &[Row]) -> Vec<&str> {
     rows.iter().map(Row::key).collect()
@@ -135,7 +136,7 @@ fn open_fails_when_topics_cannot_gain_cursor_key() {
 }
 
 #[test]
-fn replace_reopens_only_lines_skipped_as_sealed() {
+fn replace_reopens_only_lines_withheld_as_sealed() {
     let sandbox = Sandbox::new("store-reopen").unwrap();
     let store = Archive::open(&sandbox.database(), BUSY).unwrap();
     let stale = sealed_envelope("k1", NOON);
@@ -145,7 +146,11 @@ fn replace_reopens_only_lines_skipped_as_sealed() {
     let left: Result<String, Box<Error>> = Connection::open(sandbox.database())
         .unwrap()
         .query_row_and_then(REMAINING, [], |row| row.get(0).map_err(Box::new));
-    assert_eq!(left.unwrap(), "k2|sealed,k3|own");
+    assert_eq!(left.unwrap(), "k2|sealed,k3|notice");
+    let placed: Result<String, Box<Error>> = Connection::open(sandbox.database())
+        .unwrap()
+        .query_row_and_then(PLACED, [], |row| row.get(0).map_err(Box::new));
+    assert_eq!(placed.unwrap(), "k3");
 }
 
 #[test]
@@ -276,14 +281,14 @@ fn shelf_filters_by_half_open_window() {
 }
 
 #[test]
-fn shelf_joins_priority_and_analysis() {
+fn shelf_joins_priority_analysis_and_state() {
     let sandbox = Sandbox::new("shelf-join").unwrap();
     let store = Archive::open(&sandbox.database(), BUSY).unwrap();
     for key in ["k1", "k2"] {
         assert_eq!(store.save_event(&envelope(key, NOON)).unwrap(), 1);
     }
     sandbox
-        .seed("INSERT INTO placements VALUES ('k1', 't1-0', 0.5, 1); INSERT INTO alerts VALUES ('t1-0@1', 't1-0', 'sent', 0, 'mulled', '', 1, 0, NULL);")
+        .seed("INSERT INTO placements VALUES ('k1', 't1-0', 0.5, 1); INSERT INTO alerts VALUES ('t1-0@1', 't1-0', 'sent', 0, 'mulled', '', 1, 0, NULL); INSERT INTO lines (key, conversation_id, occurred_at_ms, sender, text, state, reason, reviewer, flag, hints, rules_rev, batch_id, created_at_ms, updated_at_ms) VALUES ('k2', 'c1', 1, '', '', 'withheld', 'sealed', '', '', '[]', 0, 0, 1, 1);")
         .unwrap();
     let path = sandbox.database();
     let rows = Shelf::new(&path, BUSY)
@@ -296,6 +301,10 @@ fn shelf_joins_priority_and_analysis() {
     assert_eq!(priority, [Some(&Value::Null), Some(&json!(PRIORITY))]);
     assert_eq!(analysis, [Some(&Value::Null), Some(&json!("mulled"))]);
     assert_eq!(topic, [Some(&Value::Null), Some(&json!("t1-0"))]);
+    let state: Vec<Option<&Value>> = shown.iter().map(|row| row.get("state")).collect();
+    let reason: Vec<Option<&Value>> = shown.iter().map(|row| row.get("reason")).collect();
+    assert_eq!(state, [Some(&json!("withheld")), Some(&Value::Null)]);
+    assert_eq!(reason, [Some(&json!("sealed")), Some(&Value::Null)]);
 }
 
 #[test]

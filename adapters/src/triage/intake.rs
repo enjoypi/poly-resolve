@@ -5,9 +5,7 @@ use crate::ingest::now_ms;
 
 const APPROVED: &str = "approved";
 const AUTO: &str = "auto";
-const QUEUED: &str = "queued";
 const SCREENING: &str = "screening";
-const SKIPPED: &str = "skipped";
 
 struct Stamp<'stamp> {
     at_ms: u64,
@@ -16,9 +14,6 @@ struct Stamp<'stamp> {
 }
 
 pub(super) fn form(shift: &Shift<'_>) {
-    if !shift.triage.review_auto() {
-        return;
-    }
     let screening = shift.triage.screen().is_some();
     let (state, reviewer) = if screening {
         (SCREENING, "")
@@ -26,13 +21,6 @@ pub(super) fn form(shift: &Shift<'_>) {
         (APPROVED, AUTO)
     };
     let now = now_ms();
-    let expired = shift.ledger.expire(&json!({
-        "at_ms": now,
-        "before_ms": now.saturating_sub(shift.triage.lookback_ms()),
-    }));
-    if expired > 0 {
-        tracing::info!(expired, "lines expired");
-    }
     let formed = shift.ledger.form(&json!({
         "at_ms": now,
         "limit": shift.triage.batch(),
@@ -51,18 +39,9 @@ pub(super) fn intake(shift: &Shift<'_>) {
         "since_ms": now.saturating_sub(shift.triage.lookback_ms()),
     }));
     let messages = since.map_or_default(|since_ms| {
-        let floor = since_ms.max(now.saturating_sub(shift.triage.backlog_max_ms()));
-        let capped = if floor > since_ms { "capped" } else { "" };
-        if shift.noted("backlog", capped) {
-            tracing::info!(
-                since_ms,
-                floor,
-                "backlog older than backlog_max_ms left out"
-            );
-        }
         shift.ledger.unlined(&json!({
             "limit": shift.triage.intake(),
-            "since_ms": floor,
+            "since_ms": since_ms,
         }))
     });
     let (rules, rev) = current(shift);
@@ -82,19 +61,19 @@ fn open(shift: &Shift<'_>, message: &Value, stamp: &Stamp<'_>) {
         shift.fault();
         return;
     };
-    let skip = line.skip();
     let opened = shift.ledger.open_line(&json!({
         "at_ms": stamp.at_ms,
         "conversation_id": text(message, "conversation_id"),
         "key": text(message, "key"),
         "occurred_at_ms": number(message, "occurred_at_ms"),
-        "reason": skip.unwrap_or_default(),
+        "reason": line.skip(),
+        "role": line.role(),
         "rules_rev": stamp.rev,
         "sender": line.sender(),
-        "state": if skip.is_some() { SKIPPED } else { QUEUED },
+        "state": line.state(),
         "text": line.text(),
     }));
-    tracing::debug!(opened, skipped = skip.is_some(), "line opened");
+    tracing::debug!(opened, state = line.state(), "line opened");
 }
 
 pub(super) fn rerender(shift: &Shift<'_>) {

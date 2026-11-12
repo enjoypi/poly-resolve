@@ -4,8 +4,7 @@ use core::num::{NonZeroU32, NonZeroU64};
 use std::env;
 use std::path::PathBuf;
 
-use domain::redact::marks;
-use domain::review::{Draw, Reason, Rule as Pattern};
+use domain::redact::{Rule as Pattern, marks};
 use futures_util::future::join_all;
 use serde::{Deserialize, Serialize};
 
@@ -16,13 +15,6 @@ use crate::pipe::probe;
 use crate::seatbelt::Sandbox;
 
 const THREAD: &str = "{thread}";
-
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
-#[serde(rename_all = "lowercase")]
-enum Approval {
-    Auto,
-    Manual,
-}
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -76,14 +68,10 @@ impl Exec {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Limits {
-    backlog_max_ms: u64,
     batch: NonZeroU32,
-    handoff_cooldown_ms: u64,
     intake: NonZeroU32,
     lookback_ms: u64,
     max_attempts: NonZeroU32,
-    max_decisions_per_hour: u32,
-    max_handoffs_per_hour: u32,
     max_revivals: u32,
     parallel: NonZeroU32,
     poll_ms: NonZeroU64,
@@ -139,14 +127,6 @@ struct Redact {
     unknown_sender: String,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Review {
-    learn_min_chars: NonZeroU32,
-    mode: Approval,
-    reasons: Vec<Reason>,
-}
-
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Rule {
@@ -159,6 +139,7 @@ pub(crate) struct Rule {
 pub struct Screen {
     http: Http,
     max_tokens: NonZeroU32,
+    min_chars: NonZeroU32,
     model: String,
     parallel: NonZeroU32,
     placeholder: String,
@@ -171,6 +152,10 @@ impl Screen {
 
     pub(crate) const fn max_tokens(&self) -> u32 {
         self.max_tokens.get()
+    }
+
+    pub(crate) const fn min_chars(&self) -> u32 {
+        self.min_chars.get()
     }
 
     pub(crate) fn model(&self) -> &str {
@@ -190,6 +175,7 @@ impl Screen {
 #[serde(deny_unknown_fields)]
 struct Session {
     fresh: Vec<String>,
+    omitted: String,
     resume: Vec<String>,
 }
 
@@ -207,17 +193,12 @@ pub struct Settings {
     prompts_dir: PathBuf,
     questions: Questions,
     redact: Redact,
-    review: Review,
     screen: Option<Screen>,
     session: Session,
     sizes: Sizes,
 }
 
 impl Settings {
-    pub(crate) const fn backlog_max_ms(&self) -> u64 {
-        self.limits.backlog_max_ms
-    }
-
     pub(crate) const fn batch(&self) -> u32 {
         self.limits.batch.get()
     }
@@ -241,17 +222,6 @@ impl Settings {
         &self.decide
     }
 
-    #[must_use = "策略需交给 Context"]
-    pub fn draw(&self) -> Draw {
-        if !self.enabled() || self.review_auto() {
-            Draw::off()
-        } else if self.screen.is_some() {
-            Draw::screened(self.batch())
-        } else {
-            Draw::reviewed(self.batch())
-        }
-    }
-
     #[must_use = "开关需用于决定是否运行"]
     pub fn enabled(&self) -> bool {
         self.mode == Mode::Enabled
@@ -261,21 +231,12 @@ impl Settings {
         self.session.fresh.clone()
     }
 
-    pub(crate) const fn handoff_cooldown_ms(&self) -> u64 {
-        self.limits.handoff_cooldown_ms
-    }
-
     pub(crate) const fn intake(&self) -> u32 {
         self.limits.intake.get()
     }
 
     pub(crate) const fn label_chars(&self) -> u32 {
         self.sizes.label_chars.get()
-    }
-
-    #[must_use = "下限需交给 Context"]
-    pub const fn learn_min_chars(&self) -> u32 {
-        self.review.learn_min_chars.get()
     }
 
     pub(crate) const fn lookback_ms(&self) -> u64 {
@@ -289,7 +250,6 @@ impl Settings {
             .patterns
             .iter()
             .map(|rule| rule.placeholder.as_str())
-            .chain(self.review.reasons.iter().filter_map(Reason::placeholder))
             .chain(self.screen.iter().map(Screen::placeholder))
             .collect();
         marks(&placeholders)
@@ -297,14 +257,6 @@ impl Settings {
 
     pub(crate) const fn max_attempts(&self) -> u32 {
         self.limits.max_attempts.get()
-    }
-
-    pub(crate) const fn max_decisions_per_hour(&self) -> u32 {
-        self.limits.max_decisions_per_hour
-    }
-
-    pub(crate) const fn max_handoffs_per_hour(&self) -> u32 {
-        self.limits.max_handoffs_per_hour
     }
 
     pub(crate) const fn max_revivals(&self) -> u32 {
@@ -342,6 +294,10 @@ impl Settings {
         &self.notify_target
     }
 
+    pub(crate) fn omitted(&self) -> &str {
+        &self.session.omitted
+    }
+
     pub(crate) const fn parallel(&self) -> u32 {
         self.limits.parallel.get()
     }
@@ -368,11 +324,6 @@ impl Settings {
         &self.questions
     }
 
-    #[must_use = "原因需交给 Context"]
-    pub const fn reasons(&self) -> &[Reason] {
-        self.review.reasons.as_slice()
-    }
-
     pub(crate) const fn result_max_chars(&self) -> u32 {
         self.sizes.result_max_chars.get()
     }
@@ -391,10 +342,6 @@ impl Settings {
 
     pub(crate) const fn retry_max_ms(&self) -> u64 {
         self.limits.retry_max_ms.get()
-    }
-
-    pub(crate) fn review_auto(&self) -> bool {
-        self.review.mode == Approval::Auto
     }
 
     pub(crate) fn rules(&self) -> &[Rule] {
@@ -439,6 +386,7 @@ pub struct Topic {
     min_confidence: f64,
     name: String,
     new_label: String,
+    none_label: String,
 }
 
 impl Topic {
@@ -452,6 +400,10 @@ impl Topic {
 
     pub(crate) fn new_label(&self) -> &str {
         &self.new_label
+    }
+
+    pub(crate) fn none_label(&self) -> &str {
+        &self.none_label
     }
 }
 

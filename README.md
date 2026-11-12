@@ -47,17 +47,17 @@ YAML 文件，各项均必填（注明可选的除外），不允许其他字段
 | ingest.sources[].dingtalk.cipher_min_length | 判定密文的正文最短字符数，至少 1 |
 | ingest.sources[].dingtalk.heal_limit | 每次启动时最多重新解密多少条库里的密文消息，至少 1 |
 | ingest.sources[].dingtalk.lookup_batch | 一次向钉钉工具查询转发消息详情的消息数，1 至 50 |
-| ingest.sources[].dingtalk.self_sender_id / notify_conversation_id | 本人在钉钉的发送人 ID、通知所在会话 ID，写成 `${NAME}`；对应的消息不参与决策；triage 开启时缺失则 `serve` 以退出码 2 退出 |
+| ingest.sources[].dingtalk.self_sender_id / notify_conversation_id | 本人在钉钉的发送人 ID、通知所在会话 ID，写成 `${NAME}`；本人发出的消息归入话题、外发作上下文，不打紧急分；通知会话的消息一律跳过；triage 开启时缺失则 `serve` 以退出码 2 退出 |
 | ingest.sources[].dingtalk.dws.env / vars | 传给钉钉工具的环境变量：env 为字面量，应含 `DO_NOT_TRACK` 以关闭其遥测；vars 为 `${NAME}` 写法，运行时读同名环境变量（HOME、PATH 等）；子进程环境先清空再只放这两类 |
 | ingest.sources[].dingtalk.dws.listen / pull / decrypt / lookup | 实时监听、补拉、解密、查询转发详情所用命令：bin 为可执行文件，args 为参数，sandbox 见“子进程沙箱”；程序自动追加参数：pull 追加 `--start`、`--end`，decrypt 追加 `--text=<密文>`（标准输出须为含 `plaintext` 的 JSON），lookup 追加 `--msg-ids=<消息 ID,…>`（标准输出须为含 `messages[].forwarded[]` 的 JSON） |
 | ingest.sources[].dingtalk.dws.manual_exit_codes | 钉钉工具退出码落在此列表时视为须人工处理 |
 | ingest.sources[].dingtalk.dws.parallel | 补拉与启动自愈时同时解密的条数，至少 1；实测 4 即接近钉钉工具的吞吐上限，更大只增加排队 |
 | ingest.sources[].dingtalk.dws.timeout_ms | 补拉、解密、查询转发详情单次执行的最长毫秒数，超时按失败处理，至少 1 |
-| ingest.sources[].imap.account / mailbox | 账号标识（自定义，写入每条消息记录，与类型一起不得重复）、收取的文件夹（如 `INBOX`）；一项只收一个文件夹，不收发件箱 |
+| ingest.sources[].imap.account / mailbox | 账号标识（自定义，写入每条消息记录，与类型一起不得重复）、收取的文件夹（如 `INBOX`，可含中文，如 `已发送`）；一项只收一个文件夹，发件文件夹另写一项并换一个 account |
 | ingest.sources[].imap.url | `imaps://<主机>[:端口]`（默认 993，须写成 `${NAME}`），或仅限本机明文 `imap://127.0.0.1:<端口>`、`imap://[::1]:<端口>`（本机桥接用，不得配代理）；不支持 STARTTLS 与 OAuth2，只用密码或应用专用密码登录 |
 | ingest.sources[].imap.user / password | 登录名与密码，写成 `${NAME}`；只允许 ASCII 可打印字符 |
 | ingest.sources[].imap.proxy | 可选，`http://<回环主机>:<端口>` 或 `socks5://`、`socks5h://<回环主机>:<端口>`（两者相同，域名都由代理解析），只配给 `imaps` |
-| ingest.sources[].imap.self_sender_ids | 本人地址与别名列表，写成 `${NAME}`，不区分大小写；这些地址发出的邮件不参与决策 |
+| ingest.sources[].imap.self_sender_ids | 本人地址与别名列表，写成 `${NAME}`，不区分大小写；这些地址发出的邮件按本人消息处理：归入话题、外发作上下文，不打紧急分 |
 | ingest.sources[].imap.idle_ms / poll_ms / timeout_ms | 长连接每轮等待新信的最长毫秒数（建议 300000：到期即刷新连接，无声断线最长约 5 分钟加一次命令超时后发现，推送迟到的新信也在此时取到）、服务器不支持 IDLE 时的轮询间隔、单条命令的超时 |
 | ingest.sources[].imap.initial_backfill_ms / reconcile_overlap_ms | 无记录时首次补拉回溯的毫秒数、补拉从最新邮件时间再往前回溯的毫秒数；服务器按日期检索，实际再多回溯 1 天 |
 | ingest.sources[].imap.limits | chars 正文与发件人名字数上限；depth、parts MIME 嵌套层数与分段数上限；message_bytes 每封只取前多少字节；line_bytes 单行上限；fetch_batch 补拉每批取几封；search_max 补拉最多取最新的多少封 |
@@ -65,12 +65,11 @@ YAML 文件，各项均必填（注明可选的除外），不允许其他字段
 | triage.mode | disabled 或 enabled；enabled 时 `serve` 启动即检查所需环境变量，缺失则以退出码 2 退出并列出变量名 |
 | triage.model | 决策接口的模型名 |
 | triage.prompts_dir | 提示词目录，每个提示词一个文件：`session.md` 话题第一次交给 codex 的提示词、`followup.md` 同一话题续写只发新增消息的提示词（两者须恰含一次 `{messages}`）、`urgent.md` 每条消息一问的优先级问题（须恰含一次 `{line}`）、`topic.md` 每个新会话段一问的话题归属问题（须恰含一次 `{segment}`）、`screen.md` 本地模型筛查的系统提示词（配了 `triage.screen` 才用）；每次调用时读取，改完下一次调用生效；文件缺失或不合规时启动失败，运行中则该次调用失败并按重试规则重来 |
-| triage.questions | urgent、topic 各自的 `name`；topic 另有 `min_confidence`（低于它按新话题）与 `new_label`（“新话题”选项的说明）；threshold：概率不低于它即高优先级，大于 1 则只打分不转交 |
-| triage.limits | batch 每批最多消息条数，至多 200；intake 每轮最多入库的新消息条数；parallel 每轮最多并行分析或通知的不同话题数；poll_ms 轮询间隔；lookback_ms 首次启用时只处理多久以内的消息，也是新旧消息的分界（自动通过模式下排队中早于分界的记为跳过、原因 `expired`，分界内的从旧到新成批；已进批、决策时早于分界的只打分不转交）；backlog_max_ms 停机或停用后补积压的最远回溯，不得小于 lookback_ms，主要供人工审核模式补积压；max_attempts 失败重试次数；retry_after_ms / retry_max_ms 重试等待的初始值与上限（逐次翻倍并加 ±1/4 抖动，上限至少 1 且不小于初始值，也是消息库故障时轮询退避的上限）；max_revivals 失败的批隔 retry_after_ms 自动重来的轮数，0 为不自动重来；max_decisions_per_hour 每小时决策请求数；max_handoffs_per_hour 每小时转交次数；handoff_cooldown_ms 同一话题两次转交的最短间隔 |
+| triage.questions | urgent、topic 各自的 `name`；topic 另有 `min_confidence`（低于它按新话题）、`new_label`（“新话题”选项的说明）与 `none_label`（只含自动邮件的段“不属于任何话题”选项的说明）；threshold：概率不低于它即高优先级，大于 1 则只打分不转交 |
+| triage.limits | batch 每批最多消息条数，至多 200；intake 每轮最多入库的新消息条数；parallel 每轮最多并行分析或通知的不同话题数；poll_ms 轮询间隔；lookback_ms 首次启用时只处理多久以内的消息，之后入库的消息全部处理；决策时发生时间早于它的消息只归入话题、不触发转交；max_attempts 失败重试次数；retry_after_ms / retry_max_ms 重试等待的初始值与上限（逐次翻倍并加 ±1/4 抖动，上限至少 1 且不小于初始值，也是消息库故障时轮询退避的上限）；max_revivals 失败的批隔 retry_after_ms 自动重来的轮数，0 为不自动重来 |
 | triage.sizes | session_gap_ms 同一会话内相邻消息间隔超过它即另起一段；context_max_chars 单条消息与提示词转写的字数上限；label_chars 话题标签的字数；topics_max_open 一次最多列出多少个开放话题供归并，与 batch 之和至多 254；session_max_ms 话题空闲多久后关闭、codex 会话最长沿用多久；result_max_chars 分析结果字数上限 |
 | triage.redact | patterns 是按序执行的脱敏规则（pattern 为正则，placeholder 为替换文本，可含 `${1}`）；unknown_sender 是没有发送人名时的写法；任一正则无效则 `serve` 以 sandbox_exit_code 退出 |
-| triage.review | mode 为 manual（逐条确认后才外发）或 auto（自动通过）；learn_min_chars 粘贴的漏脱敏原文至少多长；reasons 拒绝原因（code 与 label；带 placeholder 的是漏脱敏类，拒绝时须粘贴漏掉的原文；不带的拒绝即排除） |
-| triage.session | fresh 新会话追加在 codex 参数后的参数；resume 续写追加的参数（`{thread}` 换成会话 ID） |
+| triage.session | fresh 新会话追加在 codex 参数后的参数；resume 续写追加的参数（`{thread}` 换成会话 ID）；omitted 话题里未外发消息的占位模板（`{count}` 条数、`{reason}` 原因：`sealed` 仍是密文、`empty` 非文本、`risky` 筛查判为高风险、`unscreened` 筛查没有结论） |
 | triage.notice | 发给本人的通知模板：`{label}` 话题标签、`{probability}` 本次触发转交的分数、`{topic}` 话题标识、`{analysis}` 分析结果 |
 | triage.decide | 决策 HTTP 接口：url 为 `${NAME}` 形式的环境变量，外部地址须用 HTTPS，本机测试可用回环 HTTP；key 为可选的 `${NAME}` 环境变量；proxy 为可选的 `${NAME}` 环境变量，值形如 `http://127.0.0.1:<端口>`、`socks5://` 或 `socks5h://127.0.0.1:<端口>`（仅本机代理，无认证、无结尾 `/`，只用于 HTTPS 地址）；timeout_ms 为请求超时毫秒数 |
 | triage.codex.endpoint | 可选，启动冒烟用的 codex 模型接口：url、proxy、timeout_ms 写法同 triage.decide；只建连接与 TLS 握手，不发请求 |
@@ -90,9 +89,7 @@ RESTful，路径挂在 `/api` 下，请求与响应体为 JSON（`content-type: 
 | `GET /api/messages?cursor=&from_ms=&to_ms=&limit=` | 查看消息，参数均可选 |
 | `GET /api/prompts` | 列出提示词：名字、正文、必含的占位符 |
 | `PATCH /api/prompts/{name}` | 改写一个提示词：`{"text":"…"}`，写回 triage.prompts_dir 下的同名文件；未知或未启用的名字 404，缺占位符或为空 422 |
-| `GET /api/reviews?state=&limit=` | 列出审核项，缺省列待审；`placeholders` 为全部脱敏占位符 |
-| `PATCH /api/reviews` | 取批：`{"state":"pending"}`，取排队中最新的 `limits.batch` 条进审核，返回 `batch_id`、`lines`、`state`（配了筛查为 `screening`）；没有排队的消息时 `lines` 为 0；还有待审或筛查中的消息、或不是人工审核模式时 409 |
-| `PATCH /api/reviews/{key}` | 裁决一项：`{"state":"approved"}` 或 `{"state":"rejected","reason":"…","leak":"…"}`，`key` 须 URL 编码 |
+| `GET /api/outbound?state=&limit=` | 只读列出外发记录，缺省列已外发（`approved`），`state=withheld` 列未外发；`placeholders` 为全部脱敏占位符 |
 
 | 请求头 | 说明 |
 |---|---|
@@ -152,11 +149,11 @@ cd web && bun install --frozen-lockfile && bun run build && cd ..
 
 ## 消息分级与转交
 
-由 `triage.mode` 开关。开启后 `serve` 同进程处理库里未处理的消息：规则脱敏 → 本地模型筛查（可选）→ 外发审核 → 决策接口 → codex 分析 → 钉钉通知本人。规则见 docs/requirements.md。关闭时无需 sops，照常 `serve`。
+由 `triage.mode` 开关。开启后 `serve` 同进程处理库里未处理的消息：规则脱敏 → 本地模型筛查（可选）→ 自动外发 → 决策接口 → codex 分析 → 钉钉通知本人。规则见 docs/requirements.md。关闭时无需 sops，照常 `serve`。
 
 ### 准备
 
-1. 取得员工授权与企业管理员同意：脱敏后的消息内容会发往决策接口与 codex。
+1. 取得员工授权与企业管理员同意：脱敏后的消息内容（含本人发出的消息与自动邮件）会发往决策接口与 codex，不经人工审核。
 2. 用 sops 保存变量：执行 `sops secrets/dev.enc.yaml`（开发用）或 `sops secrets/prod.enc.yaml`（release 用），写入扁平 YAML。加密规则取自上级目录的 `.sops.yaml`，私钥在 `~/.config/sops/age/keys.txt`。
 
 | 变量 | 含义 |
@@ -171,7 +168,7 @@ cd web && bun install --frozen-lockfile && bun run build && cd ..
 | NOTIFY_CONVERSATION_ID | 通知所在会话的 ID（消息里的 `conversation_id`） |
 | NOTIFY_TARGET | 通知接收人的 openDingTalkId（本人） |
 
-`SELF_SENDER_ID`、`NOTIFY_CONVERSATION_ID` 填错会把本人消息外发，通知还会触发新一轮分级；首次开启后在审核页确认本人消息与通知没有出现。
+`SELF_SENDER_ID` 填错会给本人消息打紧急分，`NOTIFY_CONVERSATION_ID` 填错会让通知触发新一轮分级；首次开启后在外发记录页确认通知没有出现。
 
 3. 建 codex 专用目录：`mkdir -p .debug/codex-home .debug/codex-work`
 4. 把 `cli/config.yaml` 的 `triage.mode` 改为 `enabled`
@@ -206,13 +203,11 @@ cd web && bun install --frozen-lockfile && bun run build && cd ..
 sops exec-env secrets/prod.enc.yaml './target/release/cli serve --config cli/config.yaml'
 ```
 
-变量只经环境变量传给子进程，不出现在命令行参数与日志里；缺任一变量，`serve` 以退出码 2 退出并列出缺的变量名。首次开启会把 `lookback_ms` 内的未处理消息脱敏后排队；停机或停用后再开，从上次的起点接着处理，最远补到 `backlog_max_ms`。人工审核模式下排队的消息要在审核页点“审核”才取批；改成 `review.mode: auto` 会自动外发 `lookback_ms` 内的排队消息，更早的记为跳过；要找回，停服后执行 `sqlite3 <库> "UPDATE lines SET state = 'queued', reason = '' WHERE state = 'skipped' AND reason = 'expired'"` 并切回人工审核模式。codex 的会话文件落在 `.debug/codex-home/sessions`，含脱敏后的对话，不自动清理。
+变量只经环境变量传给子进程，不出现在命令行参数与日志里；缺任一变量，`serve` 以退出码 2 退出并列出缺的变量名。首次开启只处理 `lookback_ms` 内的消息；之后入库的消息全部处理，含停机或停用期间到达的。升级到本版本后首次启动会把此前记为跳过的本人消息与过期消息重新处理（只归入话题，不触发转交），各邮箱重拉一次 `initial_backfill_ms` 内的邮件以补回此前不收的自动邮件。codex 的会话文件落在 `.debug/codex-home/sessions`，含脱敏后的对话，不自动清理。
 
-### 外发审核
+### 外发记录
 
-浏览器打开 `<服务地址>/#reviews`，点“审核”取排队中最新的一批（`limits.batch` 条），较早的留在队列；列表里还有待审项时按钮不可点。配了本地模型筛查时，取批后要等筛查完再点“刷新”。消息里的脱敏占位符标红。逐条通过或拒绝，顶部“整批通过”一次通过当前列出的全部。拒绝须选原因；漏脱敏类原因还须粘贴漏掉的原文，系统据此学出规则并让该条重新脱敏后回到待审。一批不审完不会外发；审完一批即可取下一批，下一批等上一批外发结束才外发。`review.mode: auto` 时自动成批、不经人工。
-
-接口：`GET /api/reviews`、`PATCH /api/reviews`（取批）、`PATCH /api/reviews/{key}`；“整批通过”逐条发送。
+浏览器打开 `<服务地址>/#outbound`（消息页右上角“外发记录”），只读列出已外发与未外发的消息，脱敏占位符标红；未外发的写明原因。接口：`GET /api/outbound`。
 
 决策重试用尽的批在 `<服务地址>/#failed` 列出，点“重发”再给一轮重试（`GET /api/batches`、`PATCH /api/batches/{batch_id}`，请求体 `{"state":"ready"}`）；已有批在外发时返回 409。脱敏规则的样例在 `domain/tests/it/redact.rs`，改规则后跑测试验证。
 
@@ -222,7 +217,7 @@ sops exec-env secrets/prod.enc.yaml './target/release/cli serve --config cli/con
 
 ### 本地模型筛查
 
-可选，不配 `triage.screen` 即不启用。本机自行下载模型权重并启动 `llama-server`，把 `SCREEN_URL` 设为 `http://localhost:<端口>/v1/chat/completions`，并在 `triage.screen.http` 配置 `url: "${SCREEN_URL}"` 与 `timeout_ms`。客户端直接发送 OpenAI 兼容请求，不启动 curl。每条消息一个请求，同时至多 `parallel` 个；请求里先是系统提示词，再是一条只含开放话题的用户消息，最后是一条只含这条消息的用户消息。某条不可达或超时只重试这一条，等待逐次翻倍；批内还有没筛完的消息时该批不外发。返回无法解析、没按 `L1` 作答或输出超过 `max_tokens` 的消息不重试，直接标为 `unscreened`：自动模式下排除、不外发，人工模式下置顶待审。
+可选，不配 `triage.screen` 即不启用。本机自行下载模型权重并启动 `llama-server`，把 `SCREEN_URL` 设为 `http://localhost:<端口>/v1/chat/completions`，并在 `triage.screen.http` 配置 `url: "${SCREEN_URL}"` 与 `timeout_ms`。客户端直接发送 OpenAI 兼容请求，不启动 curl。每条消息一个请求，同时至多 `parallel` 个；请求里先是系统提示词，再是一条只含开放话题的用户消息，最后是一条只含这条消息的用户消息。某条不可达或超时只重试这一条，等待逐次翻倍；批内还有没筛完的消息时该批不外发。返回无法解析、没按 `L1` 作答或输出超过 `max_tokens` 的消息不重试，直接标为 `unscreened`，不外发；判为高风险却给不出可遮盖片段的同样不外发。两者仍归入话题，codex 只收到占位。模型指出的片段去空白后不短于 `min_chars` 且是该条原文才遮盖。
 
 已验证的组合（Apple Silicon）：Hugging Face `Qwen/Qwen3-4B-GGUF` 的 `Qwen3-4B-Q4_K_M.gguf`（sha256 `7485fe6f11af29433bc51cab58009521f205840f5b4ae3a32fa7f92e8534fdf5`），`llama-server -m <权重> --host 127.0.0.1 --port 8089 -c 40960 -np 4 -kvu`（4 个槽共享 40960 的上下文，约占 8 GB 内存；不加 `-kvu` 时每槽只有四分之一，长消息放不下），配置：
 
@@ -230,6 +225,7 @@ sops exec-env secrets/prod.enc.yaml './target/release/cli serve --config cli/con
   screen:
     http: {timeout_ms: 300000, url: "${SCREEN_URL}"}
     max_tokens: 1024
+    min_chars: 6
     model: local
     parallel: 4
     placeholder: "[screened]"
@@ -246,7 +242,7 @@ topics：该消息可能属于的已有话题 topic 值，没有则为空数组�
 
 实测（合成消息 120 条共 4.3 万字，含 3 条约 1.1 万字的长消息，每条请求带 20 个开放话题，并发 4，连跑 3 轮）：每条都有判断；25 个埋入的密钥遮住 23 个，漏掉的 1 个在长消息末尾；95 条正常消息有 4 条被判高风险；每轮 5 至 9 分钟，最慢一条 50 至 80 秒，`timeout_ms` 按最慢一条留足余量。单条消息连同提示词与话题须放得进共享上下文（约 0.7 token/字）。
 
-漏判样本：模型遮住了规则没拦住的片段（`rules`）、模型判高风险却给不出片段（`unmasked`）、模型给不出可用判断（`unscreened`）、人工以漏脱敏拒绝（`review`）时，该条当时的文字与片段存进消息库的 `misses` 表，不经接口与日志返回、不自动清理；查看：`sqlite3 -readonly <库> "SELECT kind, text, spans FROM misses"`。
+漏判样本：模型遮住了规则没拦住的片段（`rules`）、模型判高风险却给不出片段（`unmasked`）、模型给不出可用判断（`unscreened`）时，该条当时的文字与片段存进消息库的 `misses` 表，不经接口与日志返回、不自动清理；查看：`sqlite3 -readonly <库> "SELECT kind, text, spans FROM misses"`。
 
 Qwen3 默认先输出思考过程，提示词末尾的 `/no_think` 关掉它。4B 模型的话题候选常有偏差，只用于收窄选项。
 
@@ -254,7 +250,7 @@ Qwen3 默认先输出思考过程，提示词末尾的 `/no_think` 关掉它。4
 
 - 关闭：`triage.mode` 改回 `disabled` 并重启，收集照常
 - 只停转交、照常打分：`triage.questions.threshold` 设为大于 1 并重启
-- 不要清库里的表：会让消息重新外发、通知被当成重复而吞掉、学到的规则丢失
+- 不要清库里的表：会让消息重新外发、通知被当成重复而吞掉
 
 ## 子进程沙箱
 
@@ -290,12 +286,12 @@ Qwen3 默认先输出思考过程，提示词末尾的 `/no_think` 关掉它。4
 | 成功 | 200 | JSON |
 | 查询参数或请求体格式无效 | 400 | `{"code":"bad_request"}` |
 | Host 不是服务地址或 `localhost:<端口>` | 403 | 空响应体 |
-| 审核项不存在 | 404 | `{"code":"not_found"}` |
+| 提示词或失败批不存在 | 404 | `{"code":"not_found"}` |
 | 路径不存在（含内部动作） | 404 | 空响应体 |
 | 方法不对 | 405 | 空响应体 |
-| 审核项已作不同裁决；取批时还有未审完的消息或不是人工审核模式 | 409 | `{"code":"conflict"}` |
+| 已有批在外发时重发失败批 | 409 | `{"code":"conflict"}` |
 | PATCH 请求体不是 `application/json` | 415 | 空响应体 |
-| 拒绝原因不在配置里、粘贴的原文过短或不在该条里、原因与是否粘贴不匹配 | 422 | `{"code":"unprocessable"}` |
+| 提示词为空或必含的占位符不是恰好一次 | 422 | `{"code":"unprocessable"}` |
 | 消息库不存在或读取失败 | 503 | `{"code":"storage"}` |
 | 页面文件不存在，或文件名含字母、数字、`.`、`_`、`-` 以外的字符，或以 `.` 开头 | 404 | 空响应体 |
 | HTTP 请求体不是 UTF-8 | 400 | 纯文本 |

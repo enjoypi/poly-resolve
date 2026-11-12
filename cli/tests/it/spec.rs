@@ -35,8 +35,8 @@ fn spec_declares_statuses_per_operation() {
         ["200", "400", "403", "503"]
     );
     assert_eq!(
-        statuses("/paths/~1api~1reviews~1{key}/patch/responses"),
-        ["200", "400", "403", "404", "409", "415", "422", "503"]
+        statuses("/paths/~1api~1prompts~1{name}/patch/responses"),
+        ["200", "400", "403", "404", "415", "422", "503"]
     );
     assert_eq!(
         statuses("/paths/~1api~1batches~1{batch_id}/patch/responses"),
@@ -57,10 +57,9 @@ fn spec_declares_statuses_per_operation() {
             "/api/batches/{batch_id}",
             "/api/health",
             "/api/messages",
+            "/api/outbound",
             "/api/prompts",
-            "/api/prompts/{name}",
-            "/api/reviews",
-            "/api/reviews/{key}"
+            "/api/prompts/{name}"
         ]
     );
 }
@@ -91,11 +90,13 @@ fn spec_describes_health_and_parameters() {
         }))
     );
     assert_eq!(
-        document.pointer("/paths/~1api~1reviews~1{key}/patch/parameters/2"),
-        Some(&json!({"in": "path", "name": "key", "required": true, "schema": {"type": "string"}}))
+        document.pointer("/paths/~1api~1prompts~1{name}/patch/parameters/2"),
+        Some(
+            &json!({"in": "path", "name": "name", "required": true, "schema": {"type": "string"}})
+        )
     );
     assert_eq!(
-        document.pointer("/paths/~1api~1reviews/get/parameters/3/in"),
+        document.pointer("/paths/~1api~1outbound/get/parameters/3/in"),
         Some(&json!("query"))
     );
 }

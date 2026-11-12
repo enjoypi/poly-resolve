@@ -1,6 +1,6 @@
 import type { components } from "./api.gen";
 import type { connect } from "./client";
-import { REVIEW_HASH, REVIEW_LIMIT, TEXT } from "./config";
+import { CARD_LIMIT, OUTBOUND_HASH, TEXT } from "./config";
 import { area, button } from "./dom";
 import { stamp } from "./stamp";
 
@@ -33,7 +33,7 @@ class Failures {
     this.error.textContent = "";
     try {
       const { data, error } = await this.client.GET("/api/batches", {
-        params: { query: { limit: REVIEW_LIMIT } },
+        params: { query: { limit: CARD_LIMIT } },
       });
       if (data) this.show(data.items);
       else this.error.textContent = error?.code ?? "";
@@ -69,8 +69,8 @@ class Failures {
   }
 
   start(): Promise<void> {
-    const back = area("a", "back", TEXT.reviews) as HTMLAnchorElement;
-    back.href = REVIEW_HASH;
+    const back = area("a", "back", TEXT.outbound) as HTMLAnchorElement;
+    back.href = OUTBOUND_HASH;
     const refresh = button(TEXT.refresh, "refresh", () => void this.load());
     const bar = area("header", "bar", area("h1", "brand", TEXT.brand), back, refresh);
     this.root.replaceChildren(area("div", "reviews", bar, this.count, this.error, this.items));

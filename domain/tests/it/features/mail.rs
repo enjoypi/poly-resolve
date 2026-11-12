@@ -142,28 +142,33 @@ fn send_to(action: &str, request: &str) -> Result<Reply, Error> {
     }
 }
 
-fn skipped(header: &str) -> Value {
+fn tagged(header: &str) -> (String, String) {
     let raw = format!("From: a@x.test\r\n{header}\r\nSubject: s\r\n\r\nbody\r\n");
-    mail(raw.as_bytes(), WIDE)
+    let reply = mail(raw.as_bytes(), WIDE)
         .ok()
         .and_then(Result::ok)
-        .and_then(|reply| reply.get("skip").cloned())
-        .unwrap_or_default()
+        .unwrap_or_default();
+    let summary: Value = from_str(field(&reply, "/envelope/raw")).unwrap_or_default();
+    (
+        field(&reply, "/skip").to_owned(),
+        field(&summary, "/bulk").to_owned(),
+    )
 }
 
 #[test]
-fn unwanted_mail_is_marked_for_skipping() {
+fn unauthenticated_mail_is_skipped_and_automatic_mail_is_tagged() {
+    let pair = |skip: &str, bulk: &str| (skip.to_owned(), bulk.to_owned());
     assert_eq!(
-        skipped("Authentication-Results: mx; dmarc=fail"),
-        json!("dmarc")
+        tagged("Authentication-Results: mx; dmarc=fail"),
+        pair("dmarc", "")
     );
     assert_eq!(
-        skipped("Authentication-Results: mx; dmarc=pass"),
-        Value::Null
+        tagged("Authentication-Results: mx; dmarc=pass"),
+        pair("", "")
     );
-    assert_eq!(skipped("Auto-Submitted: auto-generated"), json!("auto"));
-    assert_eq!(skipped("Auto-Submitted: no"), Value::Null);
-    assert_eq!(skipped("List-Id: <news.x.test>"), json!("list"));
-    assert_eq!(skipped("Precedence: bulk"), json!("list"));
-    assert_eq!(skipped("Precedence: first-class"), Value::Null);
+    assert_eq!(tagged("Auto-Submitted: auto-generated"), pair("", "auto"));
+    assert_eq!(tagged("Auto-Submitted: no"), pair("", ""));
+    assert_eq!(tagged("List-Id: <news.x.test>"), pair("", "list"));
+    assert_eq!(tagged("Precedence: bulk"), pair("", "list"));
+    assert_eq!(tagged("Precedence: first-class"), pair("", ""));
 }

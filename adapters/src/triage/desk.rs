@@ -61,6 +61,7 @@ impl<'desk> Desk<'desk> {
         let extra = json!({
             "followup": self.prompt("followup")?,
             "max_chars": self.triage.context_max_chars(),
+            "omitted": self.triage.omitted(),
             "template": self.prompt("session")?,
         });
         self.call("brief", &merged(parts, &extra))
@@ -142,6 +143,7 @@ impl<'desk> Desk<'desk> {
             "max_chars": triage.context_max_chars(),
             "model": triage.model(),
             "new_label": questions.topic().new_label(),
+            "none_label": questions.topic().none_label(),
             "questions": {
                 "topic": {
                     "instructions": self.prompt("topic")?,
@@ -219,18 +221,28 @@ impl<'desk> Desk<'desk> {
 
 #[derive(Default, Deserialize)]
 pub(crate) struct Line {
+    role: Option<String>,
     sender: String,
     skip: Option<String>,
+    state: String,
     text: String,
 }
 
 impl Line {
+    pub(crate) fn role(&self) -> &str {
+        self.role.as_deref().unwrap_or_default()
+    }
+
     pub(crate) fn sender(&self) -> &str {
         &self.sender
     }
 
-    pub(crate) fn skip(&self) -> Option<&str> {
-        self.skip.as_deref()
+    pub(crate) fn skip(&self) -> &str {
+        self.skip.as_deref().unwrap_or_default()
+    }
+
+    pub(crate) fn state(&self) -> &str {
+        &self.state
     }
 
     pub(crate) fn text(&self) -> &str {
@@ -242,6 +254,7 @@ impl Line {
 pub(crate) struct Packed {
     body: String,
     layout: Value,
+    questions: u64,
 }
 
 impl Packed {
@@ -251,6 +264,10 @@ impl Packed {
 
     pub(crate) const fn layout(&self) -> &Value {
         &self.layout
+    }
+
+    pub(crate) const fn questions(&self) -> u64 {
+        self.questions
     }
 }
 

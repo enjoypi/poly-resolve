@@ -101,8 +101,6 @@ fn validate_checks_limits_and_rules() {
     assert!(checked(&batch).unwrap_err().contains("too large"));
     let topics = json!({"sizes": {"topics_max_open": TOO_MANY_TOPICS}});
     assert!(checked(&topics).unwrap_err().contains("too large"));
-    let backlog = json!({"limits": {"backlog_max_ms": BACKLOG, "lookback_ms": BRIEF}});
-    assert!(checked(&backlog).unwrap_err().contains("backlog_max_ms"));
     let retry = json!({"limits": {"retry_after_ms": BRIEF, "retry_max_ms": BACKLOG}});
     assert!(checked(&retry).unwrap_err().contains("retry_max_ms"));
     for url in [

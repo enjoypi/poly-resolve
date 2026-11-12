@@ -11,6 +11,10 @@ pub(crate) struct Row {
     #[serde(default)]
     key: String,
     occurred_at_ms: u64,
+    #[serde(default)]
+    omitted: Option<String>,
+    #[serde(default)]
+    role: String,
     sender: String,
     text: String,
 }
@@ -24,12 +28,24 @@ impl Row {
         self.occurred_at_ms
     }
 
+    pub(super) fn omitted(&self) -> Option<&str> {
+        self.omitted.as_deref()
+    }
+
     pub(super) fn render(&self, style: &Style<'_>) -> Value {
-        json!({
+        let mut shown = json!({
             "sender": style.mask.apply(&self.sender),
             "text": style.mask.apply(&self.text).chars().take(style.max).collect::<String>(),
             "time_utc": clock(self.occurred_at_ms, 0).unwrap_or_default(),
-        })
+        });
+        if let Some(map) = shown.as_object_mut().filter(|_| !self.role.is_empty()) {
+            drop(map.insert("role".to_owned(), Value::String(self.role.clone())));
+        }
+        shown
+    }
+
+    pub(super) fn role(&self) -> &str {
+        &self.role
     }
 
     pub(super) fn text(&self) -> &str {

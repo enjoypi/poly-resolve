@@ -4,8 +4,7 @@ use std::fs;
 use serde_json::{Value, from_str as parse, json};
 use serde_saphyr::from_str;
 
-use domain::redact::{Redactor, marks};
-use domain::review::Rule;
+use domain::redact::{Redactor, Rule, marks};
 
 use crate::support::{Fixture, local};
 

@@ -15,6 +15,8 @@ export type Look = "badge" | "markdown";
 
 export type Preset = { back_ms?: number; label: string; today?: boolean };
 
+export const CARD_LIMIT = 200;
+
 export const COPY_FEEDBACK_MS = 1500;
 
 export const DEFAULT_SORT = "occurred_at_ms";
@@ -28,6 +30,16 @@ export const DETAIL = {
 
 export const SOURCES: Record<string, string> = { dingtalk: "钉钉", imap: "邮箱" };
 
+export const STATES: Record<string, string> = {
+  approved: "已外发",
+  queued: "排队中",
+  rejected: "已拒绝",
+  screening: "筛查中",
+  skipped: "已跳过",
+  unrelated: "无关",
+  withheld: "未外发",
+};
+
 export const FIELDS: Record<string, Field> = {
   occurred_at_ms: { kind: "time", label: "时间", primary: true },
   conversation_id: { label: "会话", look: "badge", primary: true },
@@ -39,6 +51,8 @@ export const FIELDS: Record<string, Field> = {
   source: { label: "来源", values: SOURCES },
   account: { label: "账号" },
   priority: { kind: "number", label: "优先级" },
+  state: { label: "处理状态", values: STATES },
+  reason: { hidden: true, label: "状态原因" },
   analysis: { hidden: true, label: "分析" },
   topic: { hidden: true, label: "话题" },
 };
@@ -72,15 +86,22 @@ export const PRESETS: Preset[] = [
 
 export const FAILED_HASH = "#failed";
 
-export const REVIEW_HASH = "#reviews";
+export const HELD: Record<string, string> = {
+  empty: "非文本消息",
+  risky: "筛查判为高风险",
+  sealed: "仍是密文",
+  unscreened: "筛查没有结论",
+};
 
-export const REVIEW_LIMIT = 200;
+export const OUTBOUND_HASH = "#outbound";
+
+export const OUTBOUND_STATES: Record<string, string> = { approved: "已外发", withheld: "未外发" };
+
+export const ROLES: Record<string, string> = { auto: "自动邮件", own: "本人" };
 
 
 export const TEXT = {
   all: "加载全部",
-  approve: "通过",
-  approveAll: "整批通过",
   back: "消息",
   batch: (id: number) => `批 ${id}`,
   brand: "Poly Resolve",
@@ -93,8 +114,6 @@ export const TEXT = {
   copy: "复制",
   copyFailed: "复制失败",
   dirty: "未保存",
-  draw: "审核",
-  drawn: (count: number) => `已取 ${count} 条，筛查完成后刷新。`,
   counts: (shown: number, loaded: number) => `显示 ${shown}／已加载 ${loaded} 条。`,
   empty: "没有消息。",
   failed: "失败批",
@@ -102,25 +121,22 @@ export const TEXT = {
   failedMeta: (attempts: number, lines: number, reason: string) =>
     `已尝试 ${attempts} 次 · ${lines} 条 · ${reason}`,
   fields: "全部字段",
-  flagged: (flag: string) => `本地模型提示：${flag}`,
-  leakPaste: "粘贴漏掉的原文",
+  held: (reason: string) => `未外发：${reason}`,
   more: "加载更多",
   noFailed: "没有失败的批。",
-  noQueued: "暂无新消息。",
-  noReviews: "没有待审核项。",
+  noOutbound: "没有记录。",
+  outbound: "外发记录",
+  outboundCount: (count: number) => `${count} 条`,
+  outboundState: "状态",
   panel: "筛选",
   partial: "还有更早的消息未加载，筛选与排序只含已加载的行。",
-  pending: (count: number) => `待审 ${count} 条`,
   promptNote: "保存后下一次调用生效；文件在 cli/prompts/，改动需自行提交。",
   prompts: "提示词",
   range: "时间范围",
   rangeInvalid: "起止时间无效",
-  reasonPick: "拒绝原因",
   refresh: "刷新",
-  reject: "拒绝",
   resend: "重发",
   revert: "撤销修改",
-  reviews: "审核",
   save: "保存",
   saved: "已保存",
   search: "搜索全部字段",

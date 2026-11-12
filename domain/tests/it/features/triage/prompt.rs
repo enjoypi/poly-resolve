@@ -23,6 +23,7 @@ fn brief_body(rows: &Value, template: &str, resume: &Value) -> Value {
     json!({
         "followup": "follow:{messages}",
         "max_chars": ROOMY,
+        "omitted": "{count} held: {reason}",
         "resume": resume,
         "rows": rows,
         "rules": [],
@@ -107,10 +108,32 @@ fn brief_masks_again_with_current_rules() {
 }
 
 #[test]
+fn brief_notes_runs_of_withheld_rows() {
+    let held = |back: u64, reason: &str| json!({"occurred_at_ms": NOON - back, "omitted": reason, "sender": "", "text": ""});
+    let rows = json!([
+        held(3 * MINUTE, "sealed"),
+        held(2 * MINUTE, "sealed"),
+        held(MINUTE, "empty"),
+        {"occurred_at_ms": NOON, "sender": "alice", "text": "now"},
+        {"occurred_at_ms": NOON + MINUTE, "omitted": "sealed", "sender": "", "text": ""},
+    ]);
+    let reply = brief(&rows, ROOMY, "{messages}").unwrap().unwrap();
+    let expected = json!([
+        {"note": "2 held: sealed"},
+        {"note": "1 held: empty"},
+        line("alice", "now", "04:00:35"),
+        {"note": "1 held: sealed"},
+    ])
+    .to_string();
+    assert_eq!(prompt_of(&reply), Some(expected));
+}
+
+#[test]
 fn brief_rejects_invalid_rules() {
     let request = json!({
         "followup": "f",
         "max_chars": ROOMY,
+        "omitted": "",
         "rows": [],
         "rules": [{"pattern": "(", "placeholder": "x"}],
         "template": "{messages}",

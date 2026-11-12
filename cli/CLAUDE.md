@@ -6,13 +6,13 @@
 
 ## 配置
 
-- `config.rs` 的 `File` 带 `#[serde(deny_unknown_fields)]`；新增字段（含沙箱字段）同时改 `File`、`config.yaml`、`tests/it/support.rs` 的 `YAML`（沙箱锚点 `&fence` 只写一处）与 `tests/it/config.rs` 用例
+- `config.rs` 的 `File` 带 `#[serde(deny_unknown_fields)]`，增删配置键后线上配置不同步即启动失败，须把要改的键记进 TODO.md；新增字段（含沙箱字段）同时改 `File`、`config.yaml`、`tests/it/support.rs` 的 `YAML`（沙箱锚点 `&fence` 只写一处）与 `tests/it/config.rs` 用例
 - 段落顺序：`sandbox_exit_code`、`messages`（`domain::inbox::Paging`）、`web_dir`、`triage`（`adapters::triage::config::Settings`）都写在 `ingest` 之前，因为 `missing_ingest_fails` 以 `ingest:` 截断 YAML；`ingest` 段是 `adapters::config::Settings`（共享项加 `sources` 列表），字段与校验在 adapters；`config::load` 末尾调 `ingest.verify()`，数据源列表为空、有无类型项或重复即退出 2
 - `addr` 为 `SocketAddr`，`config::load` 拒绝非回环 IP（IPv4、IPv6 均支持）
 - `Var`：`triage` 段里 `"${NAME}"` 写法的值，整串须为 `${NAME}`；加载时只校验写法、不读环境，用时才读（不存值，`Debug` 只显示名字）
 - `missing()`：`serve` 在 `triage.mode: enabled` 且 `triage.missing()` 与 `ingest.missing()`（各数据源的本人、通知会话）合起来有变量读不到（含空值）时以退出码 2 退出并列出变量名；`ingest` 与未启用时不检查；测试不能 `set_var`（`unsafe_code` forbid），用 `${HOME}`、`${PATH}`、`${CARGO_PKG_NAME}` 表示已设，一个不存在的名字表示缺失
 - `verify`：`serve` 与 `ingest` 在读完配置、检查完 `missing()` 后、绑定端口前调用：`ingest.check()`（各数据源并发）；`triage.mode` 为 `enabled` 时再 `triage.check()`（Codex 与通知子进程）与 `adapters::triage::validate`（含决策和本地模型 URL 校验），再 `adapters::triage::reach`（决策接口与 `codex.endpoint` 经各自代理建 TCP 与 TLS，不发请求）；任一失败以 `sandbox_exit_code` 退出并把原因写 stderr（`fail`）
-- `Settings::context(&reader)` 构造 `domain::features::Context`：`Rules` 取 `messages` 分页、`triage.review.reasons`、`triage.review.learn_min_chars`，以及加载时由 `triage.draw()`、`triage.marks()` 算好的取批策略与占位符，`Ports` 把同一个 `adapters::store::Shelf` 既作 `Reader` 又作 `Docket`，`with_library` 接加载时由 `triage.prompts()` 构造的 `Folder`；测试 `live(dir)` 在 `dir/prompts` 写入 `PROMPTS` 并替换 `/nonexistent/prompts`；HTTP 处理与 `ingest` 各用 `settings.ingest().shelf()`
+- `Settings::context(&reader)` 构造 `domain::features::Context`：`Rules` 取 `messages` 分页与加载时由 `triage.marks()` 算好的占位符，`Ports` 把同一个 `adapters::store::Shelf` 同时作 `Reader`、`Outbox` 与 `Roster`，`with_library` 接加载时由 `triage.prompts()` 构造的 `Folder`；测试 `live(dir)` 在 `dir/prompts` 写入 `PROMPTS` 并替换 `/nonexistent/prompts`；HTTP 处理与 `ingest` 各用 `settings.ingest().shelf()`
 
 ## 退出码
 
@@ -31,7 +31,7 @@
 - 状态码取 `AppError::status()`，handler 状态为 `Arc<Settings>`；响应头 `content-type: application/json`；axum 路由层 404、405 不经 dispatch、不打日志
 - `guard` 中间件包住全部路由：Host 须等于 `listener.local_addr()` 或 `localhost:<端口>`，否则 403（防 DNS 重绑定）；GET 以外的方法须 `content-type: application/json`，否则 415
 - 只用 GET 与 PATCH：跨站 PATCH 须预检，无 OPTIONS 路由即无法发起；不加 POST 路由、不加 CORS
-- `x-user`、`x-session-id` 代码不校验，任何路由（含 `review`）都不要求（部署要求见 README“HTTP 调用”）
+- `x-user`、`x-session-id` 代码不校验，任何路由都不要求（部署要求见 README“HTTP 调用”）
 
 ## 服务与采集
 
@@ -45,7 +45,7 @@
 
 - `assets.rs`：`GET /` 取 `web_dir/index.html`，`GET /{file}` 取 `web_dir/<file>`，不经 dispatch、不打日志；`file` 须全由字母、数字、`.`、`_`、`-` 组成且不以 `.` 开头（axum 的 `Path` 已百分号解码，`%2F`、`..` 都在此被拒）；读失败一律 404 空响应体
 - content-type 按扩展名查 `TYPES`（css、html、js、svg），其余 `application/octet-stream`；`bun build` 产物平铺在输出目录，单段路径够用，不支持子目录
-- 已有路径用错方法 405（如 POST `/{file}`、POST `/api/reviews`）；无此路径 404
+- 已有路径用错方法 405（如 POST `/{file}`、POST `/api/outbound`）；无此路径 404
 
 ## 停机
 
@@ -70,7 +70,7 @@
 - `tests/it/serve/` 是 `serve.rs` 的子模块，以访问其私有的 `Server`、`start`、`get`、`send`、`raw`、`stop`（`send` 自动带 `Host: <addr>` 与 JSON content-type）：
   - `assets.rs`：临时 `web_dir`，含目录外的 `secret.txt` 验证不可越界
   - `messages.rs`：用 `adapters::store::Archive` 播种临时库（含两个来源），经 HTTP 翻页与按时间筛选
-  - `reviews.rs`：用 dev-dependency `rusqlite` 往库里插 `lines` 行，键含 `+`、`/`，覆盖列表的 `placeholders`、取批 409（测试配置 `triage.mode: disabled`，同一路径 GET 与 PATCH 并存）、通过、重复通过、拒绝、409、422、404、漏脱敏拒绝（响应里不含粘贴的原文），以及 `Shelf` 的 `Docket` 的失败日志分支（通过、拒绝、`source` 各一），因其 `tracing` 参数只在有 subscriber 时求值
+  - `outbound.rs`：用 dev-dependency `rusqlite` 往库里插 `lines` 行，覆盖列表的 `placeholders`、按状态筛选、条数无效 400，以及删库后 `Shelf` 的 `Outbox` 失败日志分支（其 `tracing` 参数只在有 subscriber 时求值）
   - `host.rs`：Host 放行与 403、415、内部动作路径 404、POST 405
 - `YAML` 的钉钉源嵌在 `ingest.sources` 列表里，`dws.env` 下的键缩进 12 格，按行替换时照此缩进
 - 配置用例经 `support::load`（`ingest` 子命令）：配置错误退出 2，配置有效则在沙箱自检处以 `sandbox_exit_code` 退出

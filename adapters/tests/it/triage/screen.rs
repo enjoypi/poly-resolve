@@ -1,11 +1,10 @@
 use serde_json::{Value, from_str, json};
 
 use super::rig::{
-    BATCHES, KEY, LATER, LINES, NOTHING, PLACEMENTS, QUICK, SECOND, THIRD, calls, decided, draw,
-    input_of, logged, questions_of, rule, seed, seed_from, start, table, two,
+    BATCHES, KEY, LATER, LINES, NOTHING, PLACEMENTS, QUICK, SECOND, THIRD, calls, decided,
+    input_of, logged, questions_of, seed, seed_from, start, table, two,
 };
 use crate::support::{Fallible, Sandbox};
-use domain::review::{Draw, Ruling};
 
 const BRIEF_RETRY: u64 = 300;
 const CAPPED_RETRY: u64 = 400;
@@ -15,7 +14,6 @@ const MANY_CALLS: usize = 24;
 const MISSES: &str =
     "SELECT kind || '|' || key || '|' || text || '|' || spans AS item FROM misses ORDER BY key";
 const SECRET: &str = "abc-secret-9";
-const TEN: u32 = 10;
 
 fn aimed(sandbox: &Sandbox, mode: &str, only: &str) -> Value {
     let mut patch = sandbox.screen("");
@@ -26,37 +24,6 @@ fn aimed(sandbox: &Sandbox, mode: &str, only: &str) -> Value {
         ));
     }
     patch
-}
-
-#[tokio::test]
-async fn auto_mode_drops_flagged_lines_and_keeps_the_rest() {
-    let sandbox = Sandbox::new("screen-auto").unwrap();
-    seed(&sandbox, &two()).unwrap();
-    sandbox
-        .write(
-            "screen.json",
-            r#"{"lines":[{"line":"L1","risk":"high","spans":[],"topics":[]}]}"#,
-        )
-        .unwrap();
-    start(&sandbox, &aimed(&sandbox, "", "server down"), QUICK)
-        .await
-        .unwrap();
-    assert_eq!(
-        table(&sandbox, MISSES).unwrap(),
-        [format!("unmasked|{KEY}|server down|[]")]
-    );
-    assert_eq!(
-        table(&sandbox, FLAGGED).unwrap(),
-        [
-            format!("{KEY}|rejected|unmasked|screen"),
-            format!("{SECOND}|approved||")
-        ]
-    );
-    assert_eq!(questions_of(&decided(&sandbox).unwrap()), ["urgent_1"]);
-    assert_eq!(
-        table(&sandbox, PLACEMENTS).unwrap(),
-        [format!("{SECOND}|T1|0.95")]
-    );
 }
 
 #[tokio::test]
@@ -135,6 +102,40 @@ async fn failing_line_does_not_hold_back_the_others() {
     );
     assert_eq!(calls(&sandbox, "decide").unwrap(), 0);
     assert_eq!(table(&sandbox, BATCHES).unwrap(), NOTHING);
+}
+
+#[tokio::test]
+async fn flagged_lines_are_withheld_and_the_rest_goes_on() {
+    let sandbox = Sandbox::new("screen-auto").unwrap();
+    seed(&sandbox, &two()).unwrap();
+    sandbox
+        .write(
+            "screen.json",
+            r#"{"lines":[{"line":"L1","risk":"high","spans":[],"topics":[]}]}"#,
+        )
+        .unwrap();
+    start(&sandbox, &aimed(&sandbox, "", "server down"), QUICK)
+        .await
+        .unwrap();
+    assert_eq!(
+        table(&sandbox, MISSES).unwrap(),
+        [format!("unmasked|{KEY}|server down|[]")]
+    );
+    assert_eq!(
+        table(&sandbox, FLAGGED).unwrap(),
+        [
+            format!("{KEY}|withheld|unmasked|risky"),
+            format!("{SECOND}|approved||")
+        ]
+    );
+    assert_eq!(questions_of(&decided(&sandbox).unwrap()), ["urgent_1"]);
+    assert_eq!(
+        table(&sandbox, PLACEMENTS).unwrap(),
+        [format!("{KEY}|T1|"), format!("{SECOND}|T1|0.95")]
+    );
+    let prompt = sandbox.read("codex-stdin.txt").unwrap();
+    assert!(prompt.contains(r#"{"note":"1 held: risky"}"#), "{prompt}");
+    assert!(!prompt.contains("server down"));
 }
 
 #[tokio::test]
@@ -221,14 +222,6 @@ async fn landed_lines_survive_shutdown() {
     );
 }
 
-fn manual(sandbox: &Sandbox) -> Value {
-    let mut patch = sandbox.screen("");
-    if let Some(map) = patch.as_object_mut() {
-        drop(map.insert("review".to_owned(), json!({"mode": "manual"})));
-    }
-    patch
-}
-
 #[tokio::test]
 async fn misnamed_answers_are_set_aside_at_once() {
     let sandbox = Sandbox::new("screen-misnamed").unwrap();
@@ -247,8 +240,8 @@ async fn misnamed_answers_are_set_aside_at_once() {
     assert_eq!(
         table(&sandbox, FLAGGED).unwrap(),
         [
-            format!("{KEY}|rejected|unscreened|screen"),
-            format!("{SECOND}|rejected|unscreened|screen")
+            format!("{KEY}|withheld|unscreened|unscreened"),
+            format!("{SECOND}|withheld|unscreened|unscreened")
         ]
     );
     assert_eq!(
@@ -289,7 +282,7 @@ async fn missed_samples_that_cannot_be_stored_keep_the_line_unscreened() {
 }
 
 #[tokio::test]
-async fn model_masks_spans_and_flags_unmaskable_secrets_for_review() {
+async fn model_masks_spans_and_withholds_unmaskable_secrets() {
     let sandbox = Sandbox::new("screen-flag").unwrap();
     let leaky = format!("token {SECRET} here");
     let rows = [
@@ -303,22 +296,12 @@ async fn model_masks_spans_and_flags_unmaskable_secrets_for_review() {
             r#"{"lines":[{"line":"L1","risk":"high","spans":["abc-secret-9"],"topics":[]}]}"#,
         )
         .unwrap();
-    let merged = manual(&sandbox);
-    start(&sandbox, &merged, QUICK).await.unwrap();
-    assert_eq!(draw(&sandbox, Draw::screened(TEN)).unwrap(), "1|2");
+    start(&sandbox, &screened(&sandbox), QUICK).await.unwrap();
     assert_eq!(
         table(&sandbox, FLAGGED).unwrap(),
         [
-            format!("{KEY}|screening||"),
-            format!("{SECOND}|screening||")
-        ]
-    );
-    start(&sandbox, &merged, QUICK).await.unwrap();
-    assert_eq!(
-        table(&sandbox, FLAGGED).unwrap(),
-        [
-            format!("{KEY}|pending||"),
-            format!("{SECOND}|pending|unmasked|")
+            format!("{KEY}|approved||"),
+            format!("{SECOND}|withheld|unmasked|risky")
         ]
     );
     assert_eq!(
@@ -332,12 +315,7 @@ async fn model_masks_spans_and_flags_unmaskable_secrets_for_review() {
             format!("unmasked|{SECOND}|odd text|[]")
         ]
     );
-    assert_eq!(calls(&sandbox, "decide").unwrap(), 0);
-    for key in [KEY, SECOND] {
-        let ruled = rule(&sandbox, &Ruling::approve(key)).unwrap();
-        assert_eq!(ruled.as_deref(), Some("approved"));
-    }
-    start(&sandbox, &merged, QUICK).await.unwrap();
+    assert_eq!(calls(&sandbox, "decide").unwrap(), 1);
     let input = input_of(&decided(&sandbox).unwrap()).unwrap();
     assert!(!input.to_string().contains(SECRET));
 }
@@ -403,7 +381,7 @@ async fn unanswerable_line_is_set_aside_while_the_rest_goes_on() {
         table(&sandbox, FLAGGED).unwrap(),
         [
             format!("{KEY}|approved||"),
-            format!("{SECOND}|rejected|unscreened|screen")
+            format!("{SECOND}|withheld|unscreened|unscreened")
         ]
     );
     assert_eq!(calls(&sandbox, "decide").unwrap(), 1);

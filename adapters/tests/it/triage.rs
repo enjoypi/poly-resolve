@@ -4,33 +4,31 @@ mod claim;
 mod endpoint;
 mod hold;
 mod mailbox;
+mod migrate;
 mod policy;
 mod prompts;
-mod review;
+mod repack;
 mod revive;
 mod rig;
 mod screen;
 pub(crate) mod stub;
 mod thread;
 mod topic;
+mod withheld;
 
 use serde_json::{Value, json};
 
 use self::rig::{
-    ALERTS, BATCHES, CALLS, KEY, LATER, LINES, NOTHING, PLACEMENTS, QUICK, SECOND, SHORT, TOPICS,
-    calls, decided, home, input_of, logged, one, questions_of, requests, seed, seed_from, start,
-    table, text, two_chats,
+    ALERTS, BATCHES, CALLS, KEY, LINES, NOTHING, PLACEMENTS, QUICK, SECOND, SHORT, TOPICS, calls,
+    decided, home, input_of, logged, one, questions_of, requests, seed, start, table, text,
 };
 use adapters::store::Archive;
 
 use crate::support::{BUSY, NOON, Run, SEALED, Sandbox};
 
-const COOLDOWN: u64 = 3_600_000;
 const FAILED_TWICE: &str = "1|failed|2|";
-const ONE_QUOTA: u32 = 1;
 const TARGET: &str = env!("CARGO_PKG_VERSION");
 const TIMEOUT: u64 = 200;
-const ZERO: u32 = 0;
 
 fn assert_external_logs(logs: &str) {
     for field in [
@@ -155,32 +153,6 @@ async fn decision_failures_are_retried_then_final() {
 }
 
 #[tokio::test]
-async fn decision_failures_consume_quota() {
-    let sandbox = Sandbox::new("triage-quota-failure").unwrap();
-    seed(&sandbox, &one()).unwrap();
-    let patch = json!({
-        "limits": {"max_decisions_per_hour": ONE_QUOTA},
-        "stub": {"decide": {"mode": "fail"}},
-    });
-    start(&sandbox, &patch, QUICK).await.unwrap();
-    seed_from(&sandbox, &[(SECOND, "u1", "c1", "still down")], LATER).unwrap();
-    start(&sandbox, &patch, QUICK).await.unwrap();
-    assert_eq!(calls(&sandbox, "decide").unwrap(), 1);
-    assert_eq!(table(&sandbox, CALLS).unwrap(), ["decision|1|1"]);
-    assert_eq!(table(&sandbox, BATCHES).unwrap(), ["1|ready|1|http:500"]);
-}
-
-#[tokio::test]
-async fn decision_quota_limits_calls() {
-    let sandbox = Sandbox::new("triage-quota").unwrap();
-    seed(&sandbox, &two_chats()).unwrap();
-    let patch = json!({"limits": {"max_decisions_per_hour": ZERO}});
-    start(&sandbox, &patch, QUICK).await.unwrap();
-    assert_eq!(table(&sandbox, BATCHES).unwrap(), ["1|ready|0|"]);
-    assert_eq!(calls(&sandbox, "decide").unwrap(), 0);
-}
-
-#[tokio::test]
 async fn decision_slow_is_interrupted() {
     let sandbox = Sandbox::new("triage-decide-slow").unwrap();
     seed(&sandbox, &one()).unwrap();
@@ -228,40 +200,6 @@ async fn disabled_mode_runs_nothing() {
     assert_eq!(logs, "");
     assert_eq!(calls(&sandbox, "decide").unwrap(), 0);
     assert_eq!(table(&sandbox, LINES).unwrap(), NOTHING);
-}
-
-#[tokio::test]
-async fn handoff_cap_blocks_opening() {
-    let sandbox = Sandbox::new("triage-cap").unwrap();
-    seed(&sandbox, &one()).unwrap();
-    let patch = json!({"limits": {"max_handoffs_per_hour": ZERO}});
-    start(&sandbox, &patch, QUICK).await.unwrap();
-    assert_eq!(
-        table(&sandbox, PLACEMENTS).unwrap(),
-        [format!("{KEY}|t1-0|0.95")]
-    );
-    assert_eq!(table(&sandbox, ALERTS).unwrap(), ["t1-0@1|pending|0||"]);
-    assert_eq!(calls(&sandbox, "codex").unwrap(), 0);
-}
-
-#[tokio::test]
-async fn handoff_cooldown_merges_the_topic() {
-    let sandbox = Sandbox::new("triage-cooldown").unwrap();
-    seed(&sandbox, &one()).unwrap();
-    let patch = json!({"limits": {"handoff_cooldown_ms": COOLDOWN}});
-    start(&sandbox, &patch, SHORT).await.unwrap();
-    seed_from(&sandbox, &[(SECOND, "u1", "c1", "still down")], LATER).unwrap();
-    start(&sandbox, &patch, QUICK).await.unwrap();
-    assert_eq!(
-        table(&sandbox, PLACEMENTS).unwrap(),
-        [format!("{KEY}|T1|0.95"), format!("{SECOND}|T1|0.95"),]
-    );
-    assert_eq!(
-        table(&sandbox, ALERTS).unwrap(),
-        ["T1@2|pending|0||", "t1-0@1|sent|0|ANALYSIS|"]
-    );
-    assert_eq!(calls(&sandbox, "decide").unwrap(), 2);
-    assert_eq!(calls(&sandbox, "codex").unwrap(), 1);
 }
 
 #[tokio::test]
@@ -337,13 +275,13 @@ async fn ledger_write_failure_is_logged() {
 }
 
 #[tokio::test]
-async fn messages_not_for_decision_are_skipped() {
+async fn messages_are_tagged_withheld_or_skipped() {
     let sandbox = Sandbox::new("triage-skips").unwrap();
     let own = home().unwrap();
     let rows = [
         (KEY, own.as_str(), "c1", "mine"),
         (SECOND, "u1", env!("CARGO_PKG_NAME"), "notice"),
-        ("dingtalk:acct:m3", "u1", "c3", "  "),
+        ("dingtalk:acct:m3", "u1", "c1", "  "),
         ("dingtalk:acct:m4", "u1", "c4", SEALED),
     ];
     seed(&sandbox, &rows).unwrap();
@@ -351,14 +289,24 @@ async fn messages_not_for_decision_are_skipped() {
     assert_eq!(
         table(&sandbox, LINES).unwrap(),
         [
-            format!("{KEY}|skipped|own|0"),
+            format!("{KEY}|approved||1"),
             format!("{SECOND}|skipped|notice|0"),
-            "dingtalk:acct:m3|skipped|empty|0".to_owned(),
-            "dingtalk:acct:m4|skipped|sealed|0".to_owned(),
+            "dingtalk:acct:m3|withheld|empty|0".to_owned(),
+            "dingtalk:acct:m4|withheld|sealed|0".to_owned(),
         ]
     );
+    assert_eq!(
+        table(&sandbox, "SELECT role AS item FROM lines ORDER BY key").unwrap(),
+        ["own", "", "", ""]
+    );
     assert_eq!(calls(&sandbox, "decide").unwrap(), 0);
-    assert_eq!(table(&sandbox, BATCHES).unwrap(), NOTHING);
+    assert_eq!(table(&sandbox, CALLS).unwrap(), NOTHING);
+    assert_eq!(table(&sandbox, BATCHES).unwrap(), ["1|sent|0|"]);
+    assert_eq!(
+        table(&sandbox, PLACEMENTS).unwrap(),
+        [format!("{KEY}|t1-0|"), "dingtalk:acct:m3|t1-0|".to_owned()]
+    );
+    assert_eq!(table(&sandbox, ALERTS).unwrap(), NOTHING);
 }
 
 #[tokio::test]
@@ -401,8 +349,11 @@ async fn other_sources_are_not_judged_by_dingtalk_identity() {
             .unwrap(),
     );
     let lines = table(&sandbox, LINES).unwrap();
-    assert_eq!(lines.len(), 1);
-    assert!(!lines.concat().contains("skipped"), "{lines:?}");
+    assert_eq!(lines, ["imap:acct:m1|approved||1"]);
+    assert_eq!(
+        table(&sandbox, "SELECT role AS item FROM lines").unwrap(),
+        [""]
+    );
 }
 
 #[tokio::test]

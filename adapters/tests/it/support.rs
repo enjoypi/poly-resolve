@@ -25,7 +25,7 @@ const BACKFILL: u64 = 3_600_000;
 const BACKOFF_INITIAL: u64 = 5;
 const BACKOFF_MAX: u64 = 20;
 pub(crate) const BAD_SCHEMA: &str = "CREATE TABLE messages (key TEXT PRIMARY KEY, source TEXT, account TEXT, occurred_at_ms INTEGER);";
-pub(crate) const BAD_STAMP: &str = "CREATE TABLE messages (key TEXT PRIMARY KEY, source TEXT, account TEXT, conversation_id TEXT, sender_id TEXT, sender_name TEXT, text TEXT, occurred_at_ms TEXT, received_at_ms INTEGER, raw TEXT); INSERT INTO messages VALUES ('k', 'dingtalk', 'acct', 'c', 'u', 'n', 't', 'abc', 1, '{}'); CREATE TABLE placements (key TEXT, probability REAL, topic_id TEXT); CREATE TABLE alerts (topic_id TEXT, analysis TEXT, created_at_ms INTEGER);";
+pub(crate) const BAD_STAMP: &str = "CREATE TABLE messages (key TEXT PRIMARY KEY, source TEXT, account TEXT, conversation_id TEXT, sender_id TEXT, sender_name TEXT, text TEXT, occurred_at_ms TEXT, received_at_ms INTEGER, raw TEXT); INSERT INTO messages VALUES ('k', 'dingtalk', 'acct', 'c', 'u', 'n', 't', 'abc', 1, '{}'); CREATE TABLE placements (key TEXT, probability REAL, topic_id TEXT); CREATE TABLE alerts (topic_id TEXT, analysis TEXT, created_at_ms INTEGER); CREATE TABLE lines (key TEXT, reason TEXT, state TEXT);";
 const BATCH: u32 = 10;
 pub(crate) const BIN: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/it/fixtures/fake-dws.sh");
 pub(crate) const BUSY: u64 = 5_000;
@@ -47,7 +47,7 @@ const GAP: u64 = 3_600_000;
 const HEAL_LIMIT: u32 = 2;
 const INTAKE: u32 = 50;
 const LABEL: u32 = 8;
-pub(crate) const LEARN_MIN: u32 = 4;
+const LEARN_MIN: u32 = 4;
 const LOOKBACK: u64 = 1_000_000_000_000;
 const LOOKUP_BATCH: u32 = 2;
 pub(crate) const MANUAL: u8 = 6;
@@ -71,7 +71,6 @@ const PROMPTS: [(&str, &str); 5] = [
     ("topic", "which {segment}"),
     ("urgent", "urgent {line}"),
 ];
-const QUOTA: u32 = 100;
 pub(crate) const REFUSE_INSERT: &str =
     "CREATE TRIGGER refuse BEFORE INSERT ON messages BEGIN SELECT RAISE(ABORT, 'refused'); END;";
 pub(crate) const REFUSE_UPDATE: &str =
@@ -206,6 +205,7 @@ impl Sandbox {
                 "http": self.http(CHAT),
                 "max_tokens": MAX_TOKENS,
                 "model": "local",
+                "min_chars": LEARN_MIN,
                 "parallel": PARALLEL_SCREEN,
                 "placeholder": "[s]",
             },
@@ -272,14 +272,10 @@ impl Sandbox {
             "codex": self.exec("codex"),
             "decide": self.http(DECISIONS),
             "limits": {
-                "backlog_max_ms": LOOKBACK,
                 "batch": BATCH,
-                "handoff_cooldown_ms": ZERO,
                 "intake": INTAKE,
                 "lookback_ms": LOOKBACK,
                 "max_attempts": ATTEMPTS,
-                "max_decisions_per_hour": QUOTA,
-                "max_handoffs_per_hour": QUOTA,
                 "max_revivals": REVIVALS,
                 "parallel": PARALLEL_LIMIT,
                 "poll_ms": POLL,
@@ -298,16 +294,9 @@ impl Sandbox {
                     "min_confidence": MIN_CONFIDENCE,
                     "name": "topic",
                     "new_label": "new topic",
+                    "none_label": "no topic",
                 },
                 "urgent": {"name": "urgent"},
-            },
-            "review": {
-                "learn_min_chars": LEARN_MIN,
-                "mode": "auto",
-                "reasons": [
-                    {"code": "leak", "label": "Leaked", "placeholder": "[x]"},
-                    {"code": "noise", "label": "Noise"},
-                ],
             },
             "redact": {
                 "patterns": [{"pattern": "[0-9]{11,}", "placeholder": "[num]"}],
@@ -326,7 +315,7 @@ impl Sandbox {
         let store = request.ingest.shelf();
         let context = Context::new(
             &errors,
-            Rules::new(&paging, &[], LEARN_MIN),
+            Rules::new(&paging),
             Ports::new(&store, &store, &store),
         );
         let setup = Setup::new(request.ingest, request.triage, &context);
@@ -406,7 +395,7 @@ pub(crate) async fn run_logged(config: &Settings, millis: u64) -> Fallible<(u8, 
     let shelf = config.shelf();
     let context = Context::new(
         &errors,
-        Rules::new(&paging, &[], LEARN_MIN),
+        Rules::new(&paging),
         Ports::new(&shelf, &shelf, &shelf),
     );
     let mut stop = Box::pin(sleep(Duration::from_millis(millis)));
@@ -441,6 +430,7 @@ fn text_settings() -> Value {
     json!({
         "session": {
             "fresh": ["-"],
+            "omitted": "{count} held: {reason}",
             "resume": ["resume", "{thread}", "-"],
         },
         "sizes": {
@@ -475,7 +465,7 @@ pub(crate) fn triage_validate(ingest: &Settings, triage: &Triage) -> Fallible<Re
     let shelf = ingest.shelf();
     let context = Context::new(
         &errors,
-        Rules::new(&paging, &[], LEARN_MIN),
+        Rules::new(&paging),
         Ports::new(&shelf, &shelf, &shelf),
     );
     Ok(validate(Setup::new(ingest, triage, &context)))

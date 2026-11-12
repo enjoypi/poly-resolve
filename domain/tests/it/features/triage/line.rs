@@ -46,6 +46,7 @@ fn line_fails_closed_on_invalid_rules() {
     let skipped = patched(body(&blank), "rules", &invalid);
     let reply = call("line", &skipped.to_string()).unwrap().unwrap();
     assert_eq!(reply.get("skip"), Some(&json!("empty")));
+    assert_eq!(reply.get("state"), Some(&json!("withheld")));
 }
 
 #[test]
@@ -66,6 +67,8 @@ fn line_masks_sender_and_text_and_truncates() {
     assert_eq!(masked.get("sender"), Some(&json!("alice [n]")));
     assert_eq!(masked.get("text"), Some(&json!("pin [n] end")));
     assert_eq!(masked.get("skip"), Some(&Value::Null));
+    assert_eq!(masked.get("state"), Some(&json!("queued")));
+    assert_eq!(masked.get("role"), Some(&Value::Null));
     let short = patched(
         patched(body(&message), "rules", &rules),
         "max_chars",
@@ -94,14 +97,14 @@ fn line_rejects_malformed_request() {
 }
 
 #[test]
-fn line_skips_each_reason() {
+fn line_skips_notices_and_withholds_empty_or_sealed_text() {
     let sealed = format!("{BODY}||2||1||196");
-    for (sender, conversation, text, reason) in [
-        (OWN, "c1", "hello", "own"),
-        ("u1", NOTICE, "hello", "notice"),
-        ("u1", "c1", " \n ", "empty"),
-        ("u1", "c1", sealed.as_str(), "sealed"),
+    for (sender, conversation, text, held) in [
+        (OWN, NOTICE, "hello", ["notice", "skipped"]),
+        ("u1", "c1", " \n ", ["empty", "withheld"]),
+        ("u1", "c1", sealed.as_str(), ["sealed", "withheld"]),
     ] {
+        let [reason, state] = held;
         let message = json!({
             "conversation_id": conversation,
             "sender_id": sender,
@@ -110,7 +113,29 @@ fn line_skips_each_reason() {
         });
         let reply = line(&message).unwrap().unwrap();
         assert_eq!(reply.get("skip"), Some(&json!(reason)));
+        assert_eq!(reply.get("state"), Some(&json!(state)));
         assert_eq!(reply.get("text"), Some(&json!("")));
+    }
+}
+
+#[test]
+fn line_tags_own_and_automatic_messages() {
+    for (sender, bulk, role) in [
+        ("ME", None, Some("own")),
+        ("ME", Some("list"), Some("own")),
+        ("u1", Some("auto"), Some("auto")),
+        ("u1", None, None),
+    ] {
+        let message = json!({
+            "bulk": bulk,
+            "conversation_id": "c1",
+            "sender_id": sender,
+            "sender_name": "alice",
+            "text": "hello",
+        });
+        let reply = line(&message).unwrap().unwrap();
+        assert_eq!(reply.get("role"), Some(&json!(role)));
+        assert_eq!(reply.get("text"), Some(&json!("hello")));
     }
 }
 
