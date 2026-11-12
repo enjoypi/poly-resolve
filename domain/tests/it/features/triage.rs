@@ -1,3 +1,4 @@
+mod clue;
 mod line;
 mod pack;
 mod prompt;

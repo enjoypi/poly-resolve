@@ -2,13 +2,14 @@ use serde_json::{Error, Value, json};
 
 use super::{Reply, call, patched};
 
-const MANY: u64 = 5_000;
+const CONVERSATIONS: u64 = 2;
 const MINUTE: u64 = 60_000;
-const NONE: u64 = 0;
 const NOON: u64 = 1_783_483_235_000;
-const PROBABILITY: f64 = 0.9531;
+const PEOPLE: u64 = 3;
 const ROOMY: u32 = 10_000;
-const TIGHT: u32 = 200;
+const SCORE: f64 = 0.9531;
+const SOURCES: u64 = 1;
+const URGENCY: f64 = 0.8;
 
 fn brief(rows: &Value, max_chars: u32, template: &str) -> Result<Reply, Error> {
     let request = patched(
@@ -19,69 +20,16 @@ fn brief(rows: &Value, max_chars: u32, template: &str) -> Result<Reply, Error> {
     call("brief", &request.to_string())
 }
 
-fn brief_body(rows: &Value, template: &str, resume: &Value) -> Value {
+fn brief_body(rows: &Value, template: &str, thread: &Value) -> Value {
     json!({
         "followup": "follow:{messages}",
         "max_chars": ROOMY,
         "omitted": "{count} held: {reason}",
-        "resume": resume,
         "rows": rows,
         "rules": [],
         "template": template,
+        "thread": thread,
     })
-}
-
-#[test]
-fn brief_drops_oldest_but_keeps_the_newest() {
-    let rows = rows();
-    let newest = json!([line("alice", "now", "04:00:35")]).to_string();
-    let limit = u32::try_from(newest.chars().count()).unwrap();
-    let kept = prompt_of(&brief(&rows, limit, "{messages}").unwrap().unwrap());
-    assert_eq!(kept, Some(newest));
-    let none = prompt_of(&brief(&rows, 0, "x{messages}x").unwrap().unwrap());
-    let blank = json!([line("alice", "", "04:00:35")]).to_string();
-    assert_eq!(none, Some(format!("x{blank}x")));
-}
-
-#[test]
-fn brief_fits_by_chars_at_the_exact_limit() {
-    let rows = json!([
-        {"occurred_at_ms": NOON - 2 * MINUTE, "sender": "bob", "text": "old"},
-        {"occurred_at_ms": NOON - MINUTE, "sender": "carol", "text": "\u{4e2d}\u{6587}"},
-        {"occurred_at_ms": NOON, "sender": "alice", "text": "now"},
-    ]);
-    let all = json!([
-        line("bob", "old", "03:58:35"),
-        line("carol", "\u{4e2d}\u{6587}", "03:59:35"),
-        line("alice", "now", "04:00:35"),
-    ])
-    .to_string();
-    let tail = json!([
-        line("carol", "\u{4e2d}\u{6587}", "03:59:35"),
-        line("alice", "now", "04:00:35"),
-    ])
-    .to_string();
-    let full = u32::try_from(all.chars().count()).unwrap();
-    let kept = prompt_of(&brief(&rows, full, "{messages}").unwrap().unwrap());
-    assert_eq!(kept, Some(all));
-    let short = prompt_of(&brief(&rows, full - 1, "{messages}").unwrap().unwrap());
-    assert_eq!(short, Some(tail.clone()));
-    let snug = u32::try_from(tail.chars().count()).unwrap();
-    let same = prompt_of(&brief(&rows, snug, "{messages}").unwrap().unwrap());
-    assert_eq!(same, Some(tail));
-}
-
-#[test]
-fn brief_handles_many_rows() {
-    let rows: Vec<Value> = (0..MANY)
-        .map(|index| json!({"occurred_at_ms": NOON + index, "sender": "s", "text": "x"}))
-        .collect();
-    let reply = brief(&Value::Array(rows), TIGHT, "{messages}")
-        .unwrap()
-        .unwrap();
-    let prompt = prompt_of(&reply).unwrap();
-    assert!(prompt.chars().count() <= usize::try_from(TIGHT).unwrap());
-    assert!(prompt.ends_with(r#""time_utc":"2026-07-08 04:00:39"}]"#));
 }
 
 #[test]
@@ -92,6 +40,22 @@ fn brief_keeps_placeholders_in_messages_literal() {
         .unwrap();
     let expected = json!([line("alice", "{messages}", "04:00:35")]).to_string();
     assert_eq!(prompt_of(&reply), Some(format!("{expected}|{{messages}}")));
+}
+
+#[test]
+fn brief_marks_the_source_and_cuts_long_rows() {
+    let rows = json!([
+        {"occurred_at_ms": NOON, "sender": "alice", "source": "imap", "text": "abcdef"},
+    ]);
+    let reply = brief(&rows, 3, "{messages}").unwrap().unwrap();
+    let expected = json!([{
+        "sender": "alice",
+        "source": "imap",
+        "text": "abc",
+        "time_utc": "2026-07-08 04:00:35",
+    }])
+    .to_string();
+    assert_eq!(prompt_of(&reply), Some(expected));
 }
 
 #[test]
@@ -149,53 +113,26 @@ fn brief_rejects_malformed_request() {
 }
 
 #[test]
-fn brief_resumes_same_timestamp_rows_by_key() {
-    let rows = json!([
-        {"key": "a", "occurred_at_ms": NOON, "sender": "alice", "text": "old"},
-        {"key": "b", "occurred_at_ms": NOON, "sender": "bob", "text": "new"},
-        {"key": "c", "occurred_at_ms": NOON + 1, "sender": "carol", "text": "last"},
-    ]);
-    let point = json!({"until": NOON, "until_key": "a"});
-    let request = brief_body(&rows, "ctx:{messages}", &point);
+fn brief_resumes_with_every_line_again() {
+    let request = brief_body(&rows(), "ctx:{messages}!", &json!("T1"));
     let reply = call("brief", &request.to_string()).unwrap().unwrap();
-    let expected = json!([
-        line("bob", "new", "04:00:35"),
-        line("carol", "last", "04:00:35"),
-    ])
-    .to_string();
-    assert_eq!(prompt_of(&reply), Some(format!("follow:{expected}")));
-    assert_eq!(reply.get("until_key"), Some(&json!("c")));
-}
-
-#[test]
-fn brief_resumes_with_only_new_lines() {
-    let point = json!({"until": NOON - MINUTE});
-    let request = brief_body(&rows(), "ctx:{messages}!", &point);
-    let reply = call("brief", &request.to_string()).unwrap().unwrap();
-    let expected = json!([line("alice", "now", "04:00:35")]).to_string();
-    assert_eq!(prompt_of(&reply), Some(format!("follow:{expected}")));
+    assert_eq!(prompt_of(&reply), Some(format!("follow:{}", whole())));
     assert_eq!(reply.get("start"), Some(&json!("resume")));
-    assert_eq!(reply.get("until_ms"), Some(&json!(NOON)));
+    let blank = brief_body(&rows(), "ctx:{messages}!", &json!(""));
+    let fresh = call("brief", &blank.to_string()).unwrap().unwrap();
+    assert_eq!(fresh.get("start"), Some(&json!("fresh")));
 }
 
 #[test]
 fn brief_starts_fresh_with_every_line() {
     let reply = brief(&rows(), ROOMY, "ctx:{messages}!").unwrap().unwrap();
     assert_eq!(reply.get("start"), Some(&json!("fresh")));
-    assert_eq!(reply.get("until_ms"), Some(&json!(NOON)));
-    let expected = json!([
-        line("bob", "ancient", "03:57:35"),
-        line("unknown", "before", "03:59:35"),
-        line("alice", "now", "04:00:35"),
-    ])
-    .to_string();
-    assert_eq!(prompt_of(&reply), Some(format!("ctx:{expected}!")));
+    assert_eq!(prompt_of(&reply), Some(format!("ctx:{}!", whole())));
 }
 
 #[test]
-fn brief_without_rows_reports_zero() {
+fn brief_without_rows_is_empty() {
     let reply = brief(&json!([]), ROOMY, "x{messages}").unwrap().unwrap();
-    assert_eq!(reply.get("until_ms"), Some(&json!(NONE)));
     assert_eq!(prompt_of(&reply), Some("x[]".to_owned()));
 }
 
@@ -210,24 +147,28 @@ fn line(sender: &str, text: &str, time: &str) -> Value {
 fn notice(analysis: &str, max_chars: u32, template: &str) -> Result<Reply, Error> {
     let request = json!({
         "analysis": analysis,
+        "changes": "moved",
         "label": "server d",
+        "late": "(at {time})",
         "max_chars": max_chars,
-        "probability": PROBABILITY,
+        "reach": {"conversations": CONVERSATIONS, "people": PEOPLE, "sources": SOURCES},
+        "score": SCORE,
+        "state": "resolved",
+        "states": {"resolved": "done"},
         "template": template,
         "topic_id": "t1-0",
-    })
-    .to_string();
-    call("notice", &request)
+        "urgency": URGENCY,
+    });
+    call("notice", &request.to_string())
 }
 
 #[test]
 fn notice_fills_template_and_truncates_analysis() {
-    let reply = notice("abcdef", 4, "[{probability}] {label} {topic}\n{analysis}")
-        .unwrap()
-        .unwrap();
+    let template = "[{score}={urgency}+{people}/{conversations}/{sources}] {state} {label} {topic} {changes}{late}\n{analysis}";
+    let reply = notice("abcdef", 4, template).unwrap().unwrap();
     assert_eq!(
         reply.get("text"),
-        Some(&json!("[0.95] server d t1-0\nabcd"))
+        Some(&json!("[0.95=0.80+3/2/1] done server d t1-0 moved\nabcd"))
     );
 }
 
@@ -237,6 +178,25 @@ fn notice_keeps_placeholders_in_analysis_literal() {
         .unwrap()
         .unwrap();
     assert_eq!(reply.get("text"), Some(&json!("t1-0: see {topic}")));
+}
+
+#[test]
+fn notice_marks_late_messages_and_tolerates_missing_parts() {
+    let request = json!({
+        "analysis": "a",
+        "label": "l",
+        "late": "(at {time})",
+        "late_ms": NOON,
+        "max_chars": ROOMY,
+        "state": "open",
+        "template": "{state}|{score}|{people}|{late}|{analysis}",
+        "topic_id": "t",
+    });
+    let reply = call("notice", &request.to_string()).unwrap().unwrap();
+    assert_eq!(
+        reply.get("text"),
+        Some(&json!("open||0|(at 2026-07-08 04:00:35 UTC)|a"))
+    );
 }
 
 #[test]
@@ -258,4 +218,13 @@ fn rows() -> Value {
         {"occurred_at_ms": NOON - 3 * MINUTE, "sender": "bob", "text": "ancient"},
         {"occurred_at_ms": NOON - MINUTE, "sender": "unknown", "text": "before"},
     ])
+}
+
+fn whole() -> String {
+    json!([
+        line("bob", "ancient", "03:57:35"),
+        line("unknown", "before", "03:59:35"),
+        line("alice", "now", "04:00:35"),
+    ])
+    .to_string()
 }

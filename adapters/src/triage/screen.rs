@@ -228,10 +228,9 @@ fn prepare<'round>(
     let instructions = shift.desk.prompt("screen")?;
     let url = setup.http().local_url().ok()?;
     let triage = shift.triage;
-    let topics = shift.ledger.open_topics(&json!({
-        "limit": triage.topics_max_open(),
-        "since_ms": now_ms().saturating_sub(triage.session_max_ms()),
-    }));
+    let topics = shift
+        .ledger
+        .open_topics(&json!({"limit": triage.topics().max_open()}));
     let jobs = lines
         .iter()
         .map(|line| {

@@ -147,6 +147,8 @@ pub(crate) struct Segment {
     attach: Option<String>,
     choices: Vec<Choice>,
     label: String,
+    #[serde(default)]
+    linked: Vec<String>,
     question: Option<usize>,
     #[serde(default)]
     role: String,
@@ -165,11 +167,16 @@ impl Segment {
         &self.label
     }
 
+    pub(crate) fn linked(&self) -> &[String] {
+        &self.linked
+    }
+
     pub(crate) const fn new(attach: Option<String>, choices: Vec<Choice>, label: String) -> Self {
         Self {
             attach,
             choices,
             label,
+            linked: Vec::new(),
             question: None,
             role: String::new(),
         }
@@ -181,6 +188,10 @@ impl Segment {
 
     pub(crate) fn role(&self) -> &str {
         &self.role
+    }
+
+    pub(crate) fn with_linked(self, linked: Vec<String>) -> Self {
+        Self { linked, ..self }
     }
 
     pub(crate) fn with_question(self, question: Option<usize>) -> Self {

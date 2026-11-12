@@ -1,19 +1,43 @@
-use serde_json::{Error, json};
+use serde_json::{Error, Value, json};
 
 use super::{Reply, call};
 
-const AGENT: &str =
-    r#"{"type":"item.completed","item":{"id":"i1","type":"agent_message","text":"  first  "}}"#;
-const LATER: &str =
-    r#"{"type":"item.completed","item":{"id":"i2","type":"agent_message","text":"final answer"}}"#;
 const ROOMY: u32 = 100;
 const START: &str = r#"{"type":"thread.started","thread_id":"t-1"}"#;
 const TOOL: &str =
     r#"{"type":"item.completed","item":{"id":"i3","type":"command_execution","text":"ls"}}"#;
 
+fn agent(text: &str) -> String {
+    json!({"type": "item.completed", "item": {"id": "i", "type": "agent_message", "text": text}})
+        .to_string()
+}
+
+fn headed(header: &Value, body: &str) -> String {
+    format!("{START}\n{}\n", agent(&format!("{header}\n{body}")))
+}
+
 fn reply(stdout: &str, max_chars: u32) -> Result<Reply, Error> {
-    let request = json!({"max_chars": max_chars, "stdout": stdout}).to_string();
+    reply_after(stdout, max_chars, "")
+}
+
+fn reply_after(stdout: &str, max_chars: u32, state: &str) -> Result<Reply, Error> {
+    let request = json!({"max_chars": max_chars, "state": state, "stdout": stdout}).to_string();
     call("reply", &request)
+}
+
+#[test]
+fn reply_keeps_quiet_only_when_nothing_changed() {
+    let same = headed(&json!({"changed": false, "status": "open"}), "body");
+    let quiet = reply_after(&same, ROOMY, "open").unwrap().unwrap();
+    assert_eq!(quiet.get("outcome"), Some(&json!("quiet")));
+    let closed = reply_after(&same, ROOMY, "resolved").unwrap().unwrap();
+    assert_eq!(closed.get("outcome"), Some(&json!("notify")));
+    let moved = headed(&json!({"changed": true, "status": "open"}), "body");
+    let loud = reply_after(&moved, ROOMY, "open").unwrap().unwrap();
+    assert_eq!(loud.get("outcome"), Some(&json!("notify")));
+    let silent = headed(&json!({"status": "open"}), "body");
+    let unsure = reply_after(&silent, ROOMY, "open").unwrap().unwrap();
+    assert_eq!(unsure.get("outcome"), Some(&json!("notify")));
 }
 
 #[test]
@@ -29,11 +53,17 @@ fn reply_rejects_streams_without_thread_or_answer() {
         "not json\n".to_owned(),
         format!("{START}\n"),
         format!("{START}\n{TOOL}\n"),
-        format!("{AGENT}\n"),
-        format!(
-            "{START}\n{}\n",
-            r#"{"type":"item.completed","item":{"type":"agent_message","text":"  "}}"#
-        ),
+        format!("{}\n", agent("{\"status\":\"open\"}\nbody")),
+        format!("{START}\n{}\n", agent("  ")),
+    ] {
+        assert_eq!(reply(&stdout, ROOMY).unwrap(), Err(400), "{stdout}");
+    }
+    for stdout in [
+        format!("{START}\n{}\n", agent("no header")),
+        format!("{START}\n{}\n", agent("not json\nbody")),
+        format!("{START}\n{}\n", agent("{\"status\":\"open\"}\n  ")),
+        format!("{START}\n{}\n", agent("{\"status\":\"odd\"}\nbody")),
+        format!("{START}\n{}\n", agent("{\"title\":\"x\"}\nbody")),
         format!(
             "{START}\n{}\n",
             r#"{"type":"item.completed","item":{"type":"agent_message"}}"#
@@ -44,17 +74,33 @@ fn reply_rejects_streams_without_thread_or_answer() {
 }
 
 #[test]
-fn reply_takes_thread_and_last_answer() {
-    let stdout =
-        format!("noise\n{START}\n{AGENT}\n{TOOL}\n{LATER}\n{{\"type\":\"turn.completed\"}}\n");
+fn reply_takes_thread_header_and_last_answer() {
+    let header =
+        json!({"changed": true, "changes": "moved", "status": "resolved", "title": "outage"});
+    let stdout = format!(
+        "noise\n{START}\n{}\n{TOOL}\n{}\n{{\"type\":\"turn.completed\"}}\n",
+        agent("{\"status\":\"open\"}\nfirst"),
+        agent(&format!("  {header}\n final answer \n")),
+    );
     let done = reply(&stdout, ROOMY).unwrap().unwrap();
-    assert_eq!(done.get("thread_id"), Some(&json!("t-1")));
-    assert_eq!(done.get("text"), Some(&json!("final answer")));
+    assert_eq!(
+        done,
+        json!({
+            "changes": "moved",
+            "outcome": "notify",
+            "status": "resolved",
+            "text": "final answer",
+            "thread_id": "t-1",
+            "title": "outage",
+        })
+    );
 }
 
 #[test]
 fn reply_truncates_by_characters() {
-    let stdout = format!("{START}\n{LATER}\n");
-    let done = reply(&stdout, 5).unwrap().unwrap();
+    let header = json!({"changes": "abcdefgh", "status": "open", "title": "abcdefgh"});
+    let done = reply(&headed(&header, "final answer"), 5).unwrap().unwrap();
     assert_eq!(done.get("text"), Some(&json!("final")));
+    assert_eq!(done.get("changes"), Some(&json!("abcde")));
+    assert_eq!(done.get("title"), Some(&json!("abcde")));
 }

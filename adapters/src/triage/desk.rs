@@ -4,12 +4,13 @@ use serde::Deserialize;
 use serde_json::{Map, Value, from_str, json, to_value};
 
 use super::config::Settings;
-use super::text;
+use super::{number, text};
 use crate::config::Settings as Ingest;
 use crate::ingest::label;
 
 const FEATURE: &str = "triage";
 const PROMPTS: &str = "prompts";
+const QUIET: &str = "quiet";
 const RESUME: &str = "resume";
 const TRANSPORT: &str = "adapters";
 
@@ -17,8 +18,6 @@ const TRANSPORT: &str = "adapters";
 pub(crate) struct Brief {
     prompt: String,
     start: String,
-    until_key: String,
-    until_ms: u64,
 }
 
 impl Brief {
@@ -28,14 +27,6 @@ impl Brief {
 
     pub(crate) fn resumed(&self) -> bool {
         self.start == RESUME
-    }
-
-    pub(crate) fn until_key(&self) -> &str {
-        &self.until_key
-    }
-
-    pub(crate) const fn until_ms(&self) -> u64 {
-        self.until_ms
     }
 }
 
@@ -70,6 +61,19 @@ impl<'desk> Desk<'desk> {
 
     fn call(&self, action: &str, request: &Value) -> Result<String, AppError> {
         self.ask(Target::new(FEATURE, action), request)
+    }
+
+    pub(crate) fn clues(&self, message: &Value) -> Option<Value> {
+        let clues = self.triage.topics().clues();
+        let request = json!({
+            "message": {"raw": message.get("raw"), "text": text(message, "text")},
+            "patterns": clues.patterns(),
+            "subject": clues.subject(),
+        });
+        let found = self
+            .call("clues", &request)
+            .map_or_default(|reply| from_str::<Value>(&reply).ok())?;
+        found.get("clues").cloned()
     }
 
     pub(crate) fn line(&self, message: &Value, rules: &Value) -> Option<Line> {
@@ -115,17 +119,27 @@ impl<'desk> Desk<'desk> {
     }
 
     pub(crate) fn notice(&self, alert: &Value) -> String {
+        let notice = self.triage.notice();
+        let late = number(alert, "created_at_ms").saturating_sub(number(alert, "last_at_ms"))
+            > notice.late_after_ms();
         let request = json!({
             "analysis": alert.get("analysis"),
+            "changes": alert.get("changes"),
             "label": alert.get("label"),
+            "late": notice.late(),
+            "late_ms": late.then(|| number(alert, "last_at_ms")),
             "max_chars": self.triage.result_max_chars(),
-            "probability": alert.get("probability"),
-            "template": self.triage.notice(),
+            "reach": alert.get("reach"),
+            "score": alert.get("score"),
+            "state": alert.get("state"),
+            "states": notice.states(),
+            "template": notice.template(),
             "topic_id": alert.get("topic_id"),
+            "urgency": alert.get("urgency"),
         });
         self.call("notice", &request).map_or_default(|reply| {
-            from_str::<Value>(&reply).map_or_default(|notice| {
-                notice
+            from_str::<Value>(&reply).map_or_default(|rendered| {
+                rendered
                     .get("text")
                     .and_then(Value::as_str)
                     .unwrap_or_default()
@@ -172,8 +186,12 @@ impl<'desk> Desk<'desk> {
         self.call("redact", &json!({"rules": rules, "text": text}))
     }
 
-    pub(crate) fn reply(&self, stdout: &str) -> Option<Reply> {
-        let request = json!({"max_chars": self.triage.result_max_chars(), "stdout": stdout});
+    pub(crate) fn reply(&self, stdout: &str, state: &str) -> Option<Reply> {
+        let request = json!({
+            "max_chars": self.triage.result_max_chars(),
+            "state": state,
+            "stdout": stdout,
+        });
         self.call("reply", &request)
             .map_or_default(|reply| from_str(&reply).ok())
     }
@@ -212,7 +230,6 @@ impl<'desk> Desk<'desk> {
             "layout": layout,
             "min_confidence": questions.topic().min_confidence(),
             "response": response,
-            "threshold": questions.threshold(),
         });
         self.call("sort", &request)
             .map_or_default(|reply| from_str(&reply).ok())
@@ -273,17 +290,37 @@ impl Packed {
 
 #[derive(Deserialize)]
 pub(crate) struct Reply {
+    changes: String,
+    outcome: String,
+    status: String,
     text: String,
     thread_id: String,
+    title: String,
 }
 
 impl Reply {
+    pub(crate) fn changes(&self) -> &str {
+        &self.changes
+    }
+
+    pub(crate) fn quiet(&self) -> bool {
+        self.outcome == QUIET
+    }
+
+    pub(crate) fn status(&self) -> &str {
+        &self.status
+    }
+
     pub(crate) fn text(&self) -> &str {
         &self.text
     }
 
     pub(crate) fn thread_id(&self) -> &str {
         &self.thread_id
+    }
+
+    pub(crate) fn title(&self) -> &str {
+        &self.title
     }
 }
 
@@ -321,12 +358,17 @@ impl Screened {
 #[derive(Deserialize)]
 pub(crate) struct Sorted {
     placements: Vec<Value>,
+    relations: Vec<Value>,
     topics: Vec<Value>,
 }
 
 impl Sorted {
     pub(crate) fn placements(&self) -> &[Value] {
         &self.placements
+    }
+
+    pub(crate) fn relations(&self) -> &[Value] {
+        &self.relations
     }
 
     pub(crate) fn topics(&self) -> &[Value] {

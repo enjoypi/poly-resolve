@@ -21,7 +21,7 @@ use self::batch::{seal, send};
 use self::config::Settings;
 use self::desk::Desk;
 use self::endpoint::Http;
-use self::intake::{form, intake, rerender};
+use self::intake::{form, index, intake, rerender};
 use self::screen::screen;
 use crate::config::Settings as Ingest;
 use crate::http::{Call, Client as HttpClient, Reply};
@@ -37,6 +37,7 @@ const MAX_CHOICES: u32 = 254;
 const MAX_DOUBLINGS: u32 = 20;
 pub(super) const NONE: u64 = 0;
 const PENDING: &str = "pending";
+const QUIET: &str = "quiet";
 const SENT: &str = "sent";
 pub(super) const TRIAGE: Caller<'static> = Caller::new("external", "triage", "");
 
@@ -88,10 +89,8 @@ impl Shift<'_> {
     }
 
     fn gate(&self, state: &str) -> Value {
-        let now = now_ms();
         json!({
             "max_attempts": self.triage.max_attempts(),
-            "open_since_ms": now.saturating_sub(self.triage.session_max_ms()),
             "pace": pace(self),
             "parallel": self.triage.parallel(),
             "state": state,
@@ -131,10 +130,17 @@ impl Shift<'_> {
 
     async fn prepare(&mut self) -> Option<()> {
         intake(self);
+        index(self);
         rerender(self);
         form(self);
         screen(self).await?;
         seal(self);
+        let archived = self.ledger.archive(&json!({
+            "before_ms": now_ms().saturating_sub(self.triage.topics().archive_after_ms()),
+        }));
+        if archived > 0 {
+            tracing::info!(archived, "idle topics archived");
+        }
         Some(())
     }
 
@@ -261,9 +267,9 @@ fn text<'row>(row: &'row Value, key: &str) -> &'row str {
 pub fn validate(setup: Setup<'_>) -> Result<(), String> {
     let triage = setup.triage;
     if triage.batch() > MAX_BATCH
-        || triage.topics_max_open().saturating_add(triage.batch()) > MAX_CHOICES
+        || triage.topics().max_open().saturating_add(triage.batch()) > MAX_CHOICES
     {
-        return Err("triage.limits.batch or triage.sizes.topics_max_open too large".to_owned());
+        return Err("triage.limits.batch or triage.topics.max_open too large".to_owned());
     }
     if triage.retry_max_ms() < triage.retry_after_ms() {
         return Err("triage.limits.retry_max_ms below retry_after_ms".to_owned());
@@ -284,6 +290,9 @@ pub fn validate(setup: Setup<'_>) -> Result<(), String> {
     desk.redact(&desk.rules(&[]), "")
         .map(drop)
         .map_err(|_err| "triage.redact.patterns: invalid pattern".to_owned())?;
+    desk.clues(&Value::Null)
+        .map(drop)
+        .ok_or_else(|| "triage.topics.clues.patterns: invalid pattern".to_owned())?;
     triage
         .prompts()
         .names()

@@ -10,7 +10,6 @@ const MID: f64 = 0.5;
 const MIN_CONFIDENCE: f64 = 0.6;
 const STRONG: f64 = 0.9;
 const THIRD_MS: u64 = 3000;
-const THRESHOLD: f64 = 0.8;
 const WEAK: f64 = 0.2;
 
 fn answers(replies: &[Value]) -> String {
@@ -49,6 +48,28 @@ fn layout() -> Value {
                 ],
                 "label": "third",
                 "question": 4,
+            },
+        ],
+    })
+}
+
+fn linked_layout() -> Value {
+    json!({
+        "batch_id": 7,
+        "lines": [
+            {"key": "k1", "occurred_at_ms": 1000, "segment": 0},
+            {"key": "k2", "occurred_at_ms": 2000, "segment": 1},
+        ],
+        "segments": [
+            {"attach": "t-a", "choices": [], "label": "first", "linked": ["t-a", "t-b"], "question": null},
+            {
+                "attach": null,
+                "choices": [
+                    {"segment": 0, "topic": null, "value": "S1"},
+                    {"segment": null, "topic": null, "value": "new"},
+                ],
+                "label": "second",
+                "question": 2,
             },
         ],
     })
@@ -95,6 +116,10 @@ fn sort_falls_back_to_new_topics() {
     ]);
     let reply = sort(&weak).unwrap().unwrap();
     assert_eq!(topics_of(&reply), ["t-old", "t7-1", "t7-1"]);
+    assert_eq!(
+        reply.get("relations"),
+        Some(&json!([{"fresh": "t7-1", "known": "t-open"}]))
+    );
     for (first, second) in [
         (json!("zzz"), json!("new")),
         (json!(true), json!("S2")),
@@ -128,14 +153,14 @@ fn sort_groups_lines_by_topic_with_the_highest_probability() {
     assert_eq!(
         reply.get("topics"),
         Some(&json!([
-            {"label": "first", "last_ms": FIRST_MS, "probability": HIGH, "score": HIGH, "topic": "t-old", "urgent": "urgent"},
-            {"label": "second", "last_ms": THIRD_MS, "probability": MID, "score": MID, "topic": "t-open", "urgent": "normal"},
+            {"label": "first", "last_ms": FIRST_MS, "probability": HIGH, "topic": "t-old"},
+            {"label": "second", "last_ms": THIRD_MS, "probability": MID, "topic": "t-open"},
         ]))
     );
 }
 
 #[test]
-fn sort_keeps_historical_probability_but_judges_urgency_by_new_lines() {
+fn sort_keeps_historical_probability() {
     let mut historical = layout();
     drop(historical.as_object_mut().unwrap().insert(
         "probabilities".to_owned(),
@@ -152,14 +177,11 @@ fn sort_keeps_historical_probability_but_judges_urgency_by_new_lines() {
         "layout": historical,
         "min_confidence": MIN_CONFIDENCE,
         "response": response,
-        "threshold": THRESHOLD,
     });
     let reply = call("sort", &request.to_string()).unwrap().unwrap();
     let topics = reply.get("topics").and_then(Value::as_array).unwrap();
     for topic in topics {
         assert_eq!(topic.get("probability"), Some(&json!(HIGH)));
-        assert_eq!(topic.get("score"), Some(&json!(LOW)));
-        assert_eq!(topic.get("urgent"), Some(&json!("normal")));
     }
 }
 
@@ -174,18 +196,22 @@ fn sort_leaves_automatic_segments_unplaced_without_a_topic() {
     assert_eq!(
         reply.get("placements"),
         Some(&json!([
-            {"key": "k1", "probability": null, "topic": "t7-0"},
-            {"key": "k2", "probability": HIGH, "topic": "t7-0"},
-            {"key": "k3", "probability": null, "topic": null},
-            {"key": "k4", "probability": null, "topic": null},
+            {"key": "k1", "probability": null, "topic": "t7-0", "via": "new"},
+            {"key": "k2", "probability": HIGH, "topic": "t7-0", "via": "new"},
+            {"key": "k3", "probability": null, "topic": null, "via": null},
+            {"key": "k4", "probability": null, "topic": null, "via": null},
         ]))
     );
     let topics = reply.get("topics").and_then(Value::as_array).unwrap();
     assert_eq!(topics.len(), 1);
-    assert_eq!(
-        topics.first().and_then(|topic| topic.get("urgent")),
-        Some(&json!("urgent"))
-    );
+    let unsure = answers(&[
+        predicate(LOW),
+        choice(&json!("t-open"), WEAK),
+        choice(&json!("S2"), STRONG),
+    ]);
+    let loose = sort_with(&tagged_layout(), &unsure).unwrap().unwrap();
+    assert_eq!(topics_of(&loose), ["t7-0", "t7-0"]);
+    assert_eq!(loose.get("relations"), Some(&json!([])));
     let known = answers(&[
         predicate(LOW),
         choice(&json!("t-open"), STRONG),
@@ -195,6 +221,32 @@ fn sort_leaves_automatic_segments_unplaced_without_a_topic() {
     assert_eq!(topics_of(&placed), ["t7-0", "t7-0", "t-open", "t-open"]);
     let extra = answers(&[predicate(LOW), predicate(LOW), Value::Null, Value::Null]);
     assert_eq!(sort_with(&tagged_layout(), &extra).unwrap(), Err(400));
+}
+
+#[test]
+fn sort_links_segments_into_every_linked_topic() {
+    let layout = linked_layout();
+    let response = answers(&[
+        predicate(HIGH),
+        predicate(LOW),
+        choice(&json!("S1"), STRONG),
+    ]);
+    let reply = sort_with(&layout, &response).unwrap().unwrap();
+    assert_eq!(
+        reply.get("placements"),
+        Some(&json!([
+            {"key": "k1", "probability": HIGH, "topic": "t-a", "via": "adjacent"},
+            {"key": "k1", "probability": HIGH, "topic": "t-b", "via": "clue"},
+            {"key": "k2", "probability": LOW, "topic": "t-a", "via": "choice"},
+            {"key": "k2", "probability": LOW, "topic": "t-b", "via": "choice"},
+        ]))
+    );
+    let unsure = answers(&[predicate(HIGH), predicate(LOW), choice(&json!("S1"), WEAK)]);
+    let loose = sort_with(&layout, &unsure).unwrap().unwrap();
+    assert_eq!(
+        loose.get("relations"),
+        Some(&json!([{"fresh": "t7-1", "known": "t-a"}, {"fresh": "t7-1", "known": "t-b"}]))
+    );
 }
 
 #[test]
@@ -264,10 +316,6 @@ fn sort_treats_refusals_missing_fields_and_bad_probabilities_as_unanswered() {
     for placement in placements {
         assert_eq!(placement.get("probability"), Some(&Value::Null));
     }
-    let topics = reply.get("topics").and_then(Value::as_array).unwrap();
-    for topic in topics {
-        assert_eq!(topic.get("urgent"), Some(&json!("normal")));
-    }
 }
 
 fn sort_with(layout: &Value, response: &str) -> Result<Reply, Error> {
@@ -275,7 +323,6 @@ fn sort_with(layout: &Value, response: &str) -> Result<Reply, Error> {
         "layout": layout,
         "min_confidence": MIN_CONFIDENCE,
         "response": response,
-        "threshold": THRESHOLD,
     });
     call("sort", &request.to_string())
 }

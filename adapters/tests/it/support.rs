@@ -20,12 +20,13 @@ use tracing::instrument::WithSubscriber as _;
 use crate::capture::Capture;
 use crate::triage::stub::{CHAT, DECISIONS, Stub};
 
+const ARCHIVE_AFTER: u64 = 1_000_000_000_000;
 const ATTEMPTS: u32 = 2;
 const BACKFILL: u64 = 3_600_000;
 const BACKOFF_INITIAL: u64 = 5;
 const BACKOFF_MAX: u64 = 20;
 pub(crate) const BAD_SCHEMA: &str = "CREATE TABLE messages (key TEXT PRIMARY KEY, source TEXT, account TEXT, occurred_at_ms INTEGER);";
-pub(crate) const BAD_STAMP: &str = "CREATE TABLE messages (key TEXT PRIMARY KEY, source TEXT, account TEXT, conversation_id TEXT, sender_id TEXT, sender_name TEXT, text TEXT, occurred_at_ms TEXT, received_at_ms INTEGER, raw TEXT); INSERT INTO messages VALUES ('k', 'dingtalk', 'acct', 'c', 'u', 'n', 't', 'abc', 1, '{}'); CREATE TABLE placements (key TEXT, probability REAL, topic_id TEXT); CREATE TABLE alerts (topic_id TEXT, analysis TEXT, created_at_ms INTEGER); CREATE TABLE lines (key TEXT, reason TEXT, state TEXT);";
+pub(crate) const BAD_STAMP: &str = "CREATE TABLE messages (key TEXT PRIMARY KEY, source TEXT, account TEXT, conversation_id TEXT, sender_id TEXT, sender_name TEXT, text TEXT, occurred_at_ms TEXT, received_at_ms INTEGER, raw TEXT); INSERT INTO messages VALUES ('k', 'dingtalk', 'acct', 'c', 'u', 'n', 't', 'abc', 1, '{}'); CREATE TABLE members (key TEXT, probability REAL, topic_id TEXT); CREATE TABLE topics (id TEXT, score REAL); CREATE TABLE alerts (topic_id TEXT, analysis TEXT, created_at_ms INTEGER); CREATE TABLE lines (key TEXT, reason TEXT, state TEXT);";
 const BATCH: u32 = 10;
 pub(crate) const BIN: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/it/fixtures/fake-dws.sh");
 pub(crate) const BUSY: u64 = 5_000;
@@ -71,6 +72,8 @@ const PROMPTS: [(&str, &str); 5] = [
     ("topic", "which {segment}"),
     ("urgent", "urgent {line}"),
 ];
+const REACH_CAP: f64 = 0.5;
+const REACH_STEP: f64 = 0.1;
 pub(crate) const REFUSE_INSERT: &str =
     "CREATE TRIGGER refuse BEFORE INSERT ON messages BEGIN SELECT RAISE(ABORT, 'refused'); END;";
 pub(crate) const REFUSE_UPDATE: &str =
@@ -86,6 +89,7 @@ const SHARED: [&str; 6] = [
     "manual_exit_code",
     "store_path",
 ];
+const SUBJECT_CHARS: u32 = 4;
 pub(crate) const TEXT_STAMP: &str = "CREATE TABLE messages (key TEXT PRIMARY KEY, source TEXT, account TEXT, occurred_at_ms TEXT); INSERT INTO messages VALUES ('k', 'dingtalk', 'acct', 'abc');";
 const THRESHOLD: f64 = 0.8;
 const TOPICS: u32 = 5;
@@ -284,7 +288,12 @@ impl Sandbox {
             },
             "mode": "enabled",
             "model": "m",
-            "notice": "[{probability}] {label} {topic}|{analysis}",
+            "notice": {
+                "late": " late {time}",
+                "late_after_ms": LOOKBACK,
+                "states": {"resolved": "done"},
+                "template": "[{score}] {state} {label} {topic}{late}|{changes}|{analysis}",
+            },
             "notify": self.exec("send"),
             "notify_target": "${CARGO_PKG_VERSION}",
             "prompts_dir": self.prompts()?,
@@ -438,8 +447,15 @@ fn text_settings() -> Value {
             "label_chars": LABEL,
             "result_max_chars": CAP_CHARS,
             "session_gap_ms": GAP,
-            "session_max_ms": LOOKBACK,
-            "topics_max_open": TOPICS,
+        },
+        "topics": {
+            "archive_after_ms": ARCHIVE_AFTER,
+            "clues": {
+                "patterns": [{"kind": "ticket", "pattern": "[A-Z]+-[0-9]+"}],
+                "subject": {"ignore": [], "min_chars": SUBJECT_CHARS, "prefixes": ["re:"]},
+            },
+            "max_open": TOPICS,
+            "reach": {"cap": REACH_CAP, "conversations": REACH_STEP, "people": REACH_STEP, "sources": REACH_STEP},
         },
     })
 }

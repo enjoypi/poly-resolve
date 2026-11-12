@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 
 use super::TRIAGE;
 use super::desk::Brief;
-use super::{ANALYZED, PENDING, SENT, Shift, current, failure, number, retry_in, text};
+use super::{ANALYZED, PENDING, QUIET, SENT, Shift, current, failure, number, retry_in, text};
 use crate::ingest::now_ms;
 use crate::pipe::{Job, feed};
 use crate::race::race;
@@ -37,8 +37,7 @@ fn analysis_jobs(shift: &Shift<'_>, alerts: &[Value]) -> Vec<Analysis> {
             if replay(shift, alert) {
                 return None;
             }
-            let now = now_ms();
-            let brief = brief(shift, alert, now)?;
+            let brief = brief(shift, alert)?;
             let args = if brief.resumed() {
                 shift.triage.resume_args(text(alert, "thread_id"))
             } else {
@@ -75,28 +74,35 @@ fn analyze(shift: &Shift<'_>, job: &Analysis, done: &io::Result<Output>) {
         .as_ref()
         .ok()
         .filter(|output| output.status.success())
-        .and_then(|output| shift.desk.reply(&String::from_utf8_lossy(&output.stdout)));
+        .and_then(|output| {
+            shift.desk.reply(
+                &String::from_utf8_lossy(&output.stdout),
+                text(&job.alert, "state"),
+            )
+        });
     if let Some(found) = reply {
         let recorded = shift.ledger.record_analysis(&json!({
             "analysis": found.text(),
             "at_ms": now_ms(),
+            "changes": found.changes(),
             "key": key,
+            "status": found.status(),
             "thread_id": found.thread_id(),
+            "title": found.title(),
             "topic_id": topic,
-            "until_key": job.brief.until_key(),
-            "until_ms": job.brief.until_ms(),
         }));
         let advanced = (recorded > 0).then(|| {
             shift.ledger.advance_alert(&json!({
                 "analysis": null,
                 "from": PENDING,
                 "key": key,
-                "state": ANALYZED,
+                "state": if found.quiet() { QUIET } else { ANALYZED },
             }))
         });
         tracing::info!(
             recorded,
             advanced,
+            quiet = found.quiet(),
             len = found.text().len(),
             "alert analyzed"
         );
@@ -118,20 +124,16 @@ fn analyze(shift: &Shift<'_>, job: &Analysis, done: &io::Result<Output>) {
     }
 }
 
-fn brief(shift: &Shift<'_>, alert: &Value, now: u64) -> Option<Brief> {
-    let reusable = !text(alert, "thread_id").is_empty()
-        && number(alert, "thread_at_ms") >= now.saturating_sub(shift.triage.session_max_ms());
+fn brief(shift: &Shift<'_>, alert: &Value) -> Option<Brief> {
+    let reusable = !text(alert, "thread_id").is_empty() && number(alert, "thread_at_ms") > 0;
     let rows = shift
         .ledger
         .topic_lines(&json!({"topic_id": text(alert, "topic_id")}));
     let (rules, _rev) = current(shift);
     shift.desk.brief(&json!({
-        "resume": reusable.then(|| json!({
-            "until": number(alert, "until_ms"),
-            "until_key": text(alert, "until_key"),
-        })),
         "rows": rows,
         "rules": rules,
+        "thread": reusable.then(|| text(alert, "thread_id")),
     }))
 }
 

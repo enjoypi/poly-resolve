@@ -67,7 +67,7 @@ triage:
     retry_max_ms: 1000
   mode: disabled
   model: m
-  notice: n
+  notice: {late: l, late_after_ms: 1000, states: {}, template: n}
   notify: {args: [x], bin: /nonexistent/triage, env: {FAKE_DIR: /nonexistent}, sandbox: *fence, timeout_ms: 1000, vars: {PATH: \"${PATH}\"}}
   notify_target: \"${HOME}\"
   prompts_dir: /nonexistent/prompts
@@ -83,8 +83,11 @@ triage:
     label_chars: 10
     result_max_chars: 100
     session_gap_ms: 1000
-    session_max_ms: 1000
-    topics_max_open: 5
+  topics:
+    archive_after_ms: 1000
+    clues: {patterns: [], subject: {ignore: [], min_chars: 4, prefixes: []}}
+    max_open: 5
+    reach: {cap: 0.5, conversations: 0.1, people: 0.1, sources: 0.1}
 ingest:
   backoff_initial_ms: 5
   backoff_max_ms: 20

@@ -32,6 +32,25 @@ pub(super) fn form(shift: &Shift<'_>) {
     }
 }
 
+pub(super) fn index(shift: &Shift<'_>) {
+    let pending = shift
+        .ledger
+        .unindexed(&json!({"limit": shift.triage.intake()}));
+    for message in &pending {
+        let Some(clues) = shift.desk.clues(message) else {
+            tracing::warn!("clues unavailable");
+            shift.fault();
+            return;
+        };
+        let indexed = shift.ledger.index(&json!({
+            "clues": clues,
+            "key": text(message, "key"),
+            "occurred_at_ms": number(message, "occurred_at_ms"),
+        }));
+        tracing::debug!(indexed, "line indexed");
+    }
+}
+
 pub(super) fn intake(shift: &Shift<'_>) {
     let now = now_ms();
     let since = shift.ledger.intake_since(&json!({

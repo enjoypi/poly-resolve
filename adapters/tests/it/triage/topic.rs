@@ -3,16 +3,17 @@ use std::fs;
 use serde_json::{Value, json};
 
 use super::rig::{
-    ALERTS, KEY, LATER, PLACEMENTS, QUICK, SECOND, TOPICS, calls, decided, logged, one,
-    questions_of, seed, seed_from, seed_stamped, start, table, two_chats,
+    ALERTS, KEY, LATER, PLACEMENTS, QUICK, SECOND, TOPICS, decided, one, questions_of, seed,
+    seed_from, seed_stamped, start, table, two_chats,
 };
 use crate::support::{Fallible, Sandbox};
 
-const BRIEF_SESSION: u64 = 1_000;
 const FIRST_TOPIC: &str = "t1-0";
 const OPENED: &str =
     "SELECT key || '|' || created_at_ms || '|' || score AS item FROM alerts ORDER BY key";
 const QUIET: &str = "0.1";
+const RELATIONS: &str =
+    "SELECT a || '|' || b || '|' || kind || '|' || count AS item FROM relations ORDER BY a, b";
 const TWO_HOURS: u64 = 7_200_000;
 
 #[tokio::test]
@@ -39,17 +40,6 @@ async fn another_conversation_can_join_an_open_topic() {
 }
 
 #[tokio::test]
-async fn closed_topics_are_not_handed_off() {
-    let sandbox = Sandbox::new("topic-closed").unwrap();
-    seed(&sandbox, &one()).unwrap();
-    let patch = json!({"sizes": {"session_max_ms": BRIEF_SESSION}});
-    let logs = logged(&sandbox, &patch, QUICK).await.unwrap();
-    assert_eq!(calls(&sandbox, "codex").unwrap(), 0);
-    assert_eq!(table(&sandbox, ALERTS).unwrap(), ["t1-0@1|pending|0||"]);
-    assert!(!logs.contains("handoff held"));
-}
-
-#[tokio::test]
 async fn follow_up_in_the_same_conversation_joins_the_open_topic() {
     let sandbox = Sandbox::new("topic-attach").unwrap();
     seed(&sandbox, &one()).unwrap();
@@ -68,7 +58,7 @@ async fn follow_up_in_the_same_conversation_joins_the_open_topic() {
 }
 
 #[tokio::test]
-async fn historical_high_topic_is_not_handed_off_again_after_low_scored_batch() {
+async fn handed_off_topics_are_analysed_again_on_any_progress() {
     let sandbox = Sandbox::new("topic-history-high").unwrap();
     seed(&sandbox, &one()).unwrap();
     start(&sandbox, &json!({}), QUICK).await.unwrap();
@@ -82,7 +72,7 @@ async fn historical_high_topic_is_not_handed_off_again_after_low_scored_batch() 
     );
     assert_eq!(
         table(&sandbox, ALERTS).unwrap(),
-        ["t1-0@1|sent|0|ANALYSIS|"]
+        ["T1@2|sent|0|ANALYSIS|", "t1-0@1|sent|0|ANALYSIS|"]
     );
 }
 
@@ -145,6 +135,7 @@ async fn low_confidence_starts_a_new_topic() {
             format!("{SECOND}|t2-0|0.1")
         ]
     );
+    assert_eq!(table(&sandbox, RELATIONS).unwrap(), ["t2-0|t1-0|maybe|1"]);
 }
 
 #[tokio::test]

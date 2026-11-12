@@ -142,6 +142,40 @@ fn pack_attaches_segments_to_the_open_topic_of_their_conversation() {
 }
 
 #[test]
+fn pack_files_segments_under_every_topic_sharing_a_clue() {
+    let lines = json!([
+        entry(["k1", "c1", "hello"], NOON),
+        entry(["k2", "c2", "yo"], NOON),
+    ]);
+    let mut request = request(
+        &lines,
+        &json!([]),
+        &json!([{"label": "open", "topic": "t9-0"}]),
+    );
+    drop(request.as_object_mut().unwrap().insert(
+        "linked".to_owned(),
+        json!([
+            {"key": "k1", "topic": "t9-1"},
+            {"key": "k1", "topic": "t9-0"},
+            {"key": "k1", "topic": "t9-1"},
+            {"key": "zz", "topic": "t9-2"},
+        ]),
+    ));
+    let reply = call("pack", &request.to_string()).unwrap().unwrap();
+    let layout = reply.get("layout").unwrap();
+    assert_eq!(
+        layout.pointer("/segments/0/linked"),
+        Some(&json!(["t9-0", "t9-1"]))
+    );
+    assert_eq!(layout.pointer("/segments/0/question"), Some(&Value::Null));
+    assert_eq!(layout.pointer("/segments/1/linked"), Some(&json!([])));
+    assert_eq!(
+        layout.pointer("/segments/1/question"),
+        Some(&json!(SECOND_QUESTION))
+    );
+}
+
+#[test]
 fn pack_ignores_hints_that_match_no_open_topic() {
     let mut hinted = entry(["k1", "c1", "hello"], NOON);
     if let Some(map) = hinted.as_object_mut() {

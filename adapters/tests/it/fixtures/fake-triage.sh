@@ -1,7 +1,7 @@
 #!/bin/sh
 emit() {
   printf '{"type":"thread.started","thread_id":"%s"}\n' "$thread"
-  printf '{"type":"item.completed","item":{"id":"i","type":"agent_message","text":"ANALYSIS"}}\n'
+  printf '{"type":"item.completed","item":{"id":"i","type":"agent_message","text":"%s\\nANALYSIS"}}\n' "$header"
 }
 echo "$@" > "$FAKE_DIR/$1-args.txt"
 echo x >> "$FAKE_DIR/$1-calls.txt"
@@ -24,7 +24,11 @@ codex)
       fi
       ;;
   esac
+  header='{\"changed\":true,\"status\":\"open\"}'
   case "$FAKE_CODEX" in
+    titled) header='{\"changed\":true,\"changes\":\"moved\",\"status\":\"open\",\"title\":\"TITLE\"}'; emit ;;
+    same) header='{\"changed\":false,\"status\":\"open\"}'; emit ;;
+    resolved) header='{\"changed\":true,\"status\":\"resolved\"}'; emit ;;
     fail) exit 3 ;;
     empty) ;;
     junk) echo 'not an event' ;;

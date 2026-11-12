@@ -16,6 +16,30 @@ use crate::seatbelt::Sandbox;
 
 const THREAD: &str = "{thread}";
 
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Clue {
+    kind: String,
+    pattern: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Clues {
+    patterns: Vec<Clue>,
+    subject: Subject,
+}
+
+impl Clues {
+    pub(crate) fn patterns(&self) -> &[Clue] {
+        &self.patterns
+    }
+
+    pub(crate) const fn subject(&self) -> &Subject {
+        &self.subject
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Exec {
@@ -88,6 +112,33 @@ enum Mode {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct Notice {
+    late: String,
+    late_after_ms: u64,
+    states: BTreeMap<String, String>,
+    template: String,
+}
+
+impl Notice {
+    pub(crate) fn late(&self) -> &str {
+        &self.late
+    }
+
+    pub(crate) const fn late_after_ms(&self) -> u64 {
+        self.late_after_ms
+    }
+
+    pub(crate) const fn states(&self) -> &BTreeMap<String, String> {
+        &self.states
+    }
+
+    pub(crate) fn template(&self) -> &str {
+        &self.template
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Question {
     name: String,
 }
@@ -118,6 +169,15 @@ impl Questions {
     pub(crate) const fn urgent(&self) -> &Question {
         &self.urgent
     }
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Reach {
+    cap: f64,
+    conversations: f64,
+    people: f64,
+    sources: f64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -187,7 +247,7 @@ pub struct Settings {
     limits: Limits,
     mode: Mode,
     model: String,
-    notice: String,
+    notice: Notice,
     notify: Exec,
     notify_target: Var,
     prompts_dir: PathBuf,
@@ -196,6 +256,7 @@ pub struct Settings {
     screen: Option<Screen>,
     session: Session,
     sizes: Sizes,
+    topics: Topics,
 }
 
 impl Settings {
@@ -282,7 +343,7 @@ impl Settings {
         &self.model
     }
 
-    pub(crate) fn notice(&self) -> &str {
+    pub(crate) const fn notice(&self) -> &Notice {
         &self.notice
     }
 
@@ -356,12 +417,8 @@ impl Settings {
         self.sizes.session_gap_ms.get()
     }
 
-    pub(crate) const fn session_max_ms(&self) -> u64 {
-        self.sizes.session_max_ms.get()
-    }
-
-    pub(crate) const fn topics_max_open(&self) -> u32 {
-        self.sizes.topics_max_open.get()
+    pub(crate) const fn topics(&self) -> &Topics {
+        &self.topics
     }
 
     pub(crate) fn unknown_sender(&self) -> &str {
@@ -376,8 +433,14 @@ struct Sizes {
     label_chars: NonZeroU32,
     result_max_chars: NonZeroU32,
     session_gap_ms: NonZeroU64,
-    session_max_ms: NonZeroU64,
-    topics_max_open: NonZeroU32,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Subject {
+    ignore: Vec<String>,
+    min_chars: u32,
+    prefixes: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -404,6 +467,33 @@ impl Topic {
 
     pub(crate) fn none_label(&self) -> &str {
         &self.none_label
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Topics {
+    archive_after_ms: NonZeroU64,
+    clues: Clues,
+    max_open: NonZeroU32,
+    reach: Reach,
+}
+
+impl Topics {
+    pub(crate) const fn archive_after_ms(&self) -> u64 {
+        self.archive_after_ms.get()
+    }
+
+    pub(crate) const fn clues(&self) -> &Clues {
+        &self.clues
+    }
+
+    pub(crate) const fn max_open(&self) -> u32 {
+        self.max_open.get()
+    }
+
+    pub(crate) const fn reach(&self) -> &Reach {
+        &self.reach
     }
 }
 

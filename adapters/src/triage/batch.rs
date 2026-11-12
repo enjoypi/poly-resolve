@@ -1,3 +1,4 @@
+use alloc::collections::BTreeSet;
 use std::time::Instant;
 
 use serde_json::{Value, from_str, json};
@@ -9,10 +10,10 @@ use crate::http::Call;
 use crate::ingest::now_ms;
 use crate::trace::{Outcome, external};
 
+const AUTO: &str = "auto";
 const READY: &str = "ready";
 const SENT: &str = "sent";
 const SILENT: &str = r#"{"answers":[]}"#;
-const URGENT: &str = "urgent";
 
 fn alerts(shift: &Shift<'_>, found: &Sorted, batch_id: u64) -> Vec<Value> {
     let now = now_ms();
@@ -20,25 +21,26 @@ fn alerts(shift: &Shift<'_>, found: &Sorted, batch_id: u64) -> Vec<Value> {
     let lines = shift.ledger.batch_lines(&json!({"batch_id": batch_id}));
     let fresh: Vec<&str> = lines
         .iter()
-        .filter(|line| now.saturating_sub(number(line, "occurred_at_ms")) <= lookback)
+        .filter(|line| {
+            now.saturating_sub(number(line, "occurred_at_ms")) <= lookback
+                && text(line, "role") != AUTO
+        })
         .map(|line| text(line, "key"))
         .collect();
-    let live: Vec<&str> = found
+    let live: BTreeSet<&str> = found
         .placements()
         .iter()
         .filter(|placement| fresh.contains(&text(placement, "key")))
         .map(|placement| text(placement, "topic"))
+        .filter(|topic| !topic.is_empty())
         .collect();
-    found
-        .topics()
-        .iter()
-        .filter(|topic| text(topic, "urgent") == URGENT && live.contains(&text(topic, "topic")))
+    live.into_iter()
         .map(|topic| {
             json!({
                 "at_ms": now,
-                "key": format!("{}@{batch_id}", text(topic, "topic")),
-                "score": topic.get("score"),
-                "topic_id": text(topic, "topic"),
+                "key": format!("{topic}@{batch_id}"),
+                "threshold": shift.triage.questions().threshold(),
+                "topic_id": topic,
             })
         })
         .collect()
@@ -67,6 +69,8 @@ fn judge(shift: &Shift<'_>, batch: &Value, reply: Result<String, String>) {
                     "batch_id": batch_id,
                     "gap_ms": shift.triage.session_gap_ms(),
                     "placements": found.placements(),
+                    "reach": shift.triage.topics().reach(),
+                    "relations": found.relations(),
                     "topics": found.topics(),
                 }),
                 &alerts(shift, &found, batch_id),
@@ -101,18 +105,16 @@ fn judge(shift: &Shift<'_>, batch: &Value, reply: Result<String, String>) {
 
 fn packed(shift: &Shift<'_>, batch_id: u64, rules: &Value) -> Option<Packed> {
     let lines = shift.ledger.batch_lines(&json!({"batch_id": batch_id}));
-    let since = now_ms().saturating_sub(shift.triage.session_max_ms());
-    let topics = shift.ledger.open_topics(&json!({
-        "limit": shift.triage.topics_max_open(),
-        "since_ms": since,
-    }));
-    let attach = shift
+    let topics = shift
         .ledger
-        .attach(&json!({"batch_id": batch_id, "since_ms": since}));
+        .open_topics(&json!({"limit": shift.triage.topics().max_open()}));
+    let attach = shift.ledger.attach(&json!({"batch_id": batch_id}));
+    let linked = shift.ledger.linked(&json!({"batch_id": batch_id}));
     shift.desk.pack(&json!({
         "attach": attach,
         "batch_id": batch_id,
         "lines": lines,
+        "linked": linked,
         "rules": rules,
         "topics": topics,
     }))

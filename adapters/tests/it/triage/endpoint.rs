@@ -99,8 +99,10 @@ fn validate_checks_limits_and_rules() {
     assert_eq!(checked(&json!({})), Ok(()));
     let batch = json!({"limits": {"batch": TOO_MANY}});
     assert!(checked(&batch).unwrap_err().contains("too large"));
-    let topics = json!({"sizes": {"topics_max_open": TOO_MANY_TOPICS}});
+    let topics = json!({"topics": {"max_open": TOO_MANY_TOPICS}});
     assert!(checked(&topics).unwrap_err().contains("too large"));
+    let clues = json!({"topics": {"clues": {"patterns": [{"kind": "x", "pattern": "("}]}}});
+    assert!(checked(&clues).unwrap_err().contains("topics.clues"));
     let retry = json!({"limits": {"retry_after_ms": BRIEF, "retry_max_ms": BACKLOG}});
     assert!(checked(&retry).unwrap_err().contains("retry_max_ms"));
     for url in [

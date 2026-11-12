@@ -151,6 +151,14 @@ pub(crate) fn parse_mail(req: &MailRequest) -> Result<MailResponse, AppError> {
         || format!("uid:{}:{}", req.uid_validity, req.uid),
         str::to_owned,
     );
+    let root = message
+        .references()
+        .and_then(|list| list.first())
+        .or_else(|| {
+            let list = message.in_reply_to()?;
+            list.first()
+        })
+        .map_or_else(|| ident.clone(), str::to_owned);
     let mut parts = vec![
         clean(message.subject().unwrap_or_default()),
         body(&message, &req.style),
@@ -159,7 +167,7 @@ pub(crate) fn parse_mail(req: &MailRequest) -> Result<MailResponse, AppError> {
     Ok(MailResponse {
         envelope: Envelope {
             account: req.account.clone(),
-            conversation_id: format!("mail:{}:{address}", req.account),
+            conversation_id: format!("mail:{}:thread:{root}", req.account),
             key: format!("{}:{}:{ident}", req.source, req.account),
             lookup: None,
             occurred_at_ms: occurred,

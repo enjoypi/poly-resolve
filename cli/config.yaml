@@ -113,9 +113,17 @@ triage:
     retry_max_ms: 900000
   mode: enabled
   model: gpt-6-luna
-  notice: |-
-    【待处理】{label}｜优先级 {probability}
-    {analysis}
+  notice:
+    late: "（消息实际发生于 {time}）"
+    late_after_ms: 1800000
+    states:
+      cancelled: 已取消
+      open: 进行中
+      resolved: 已解决
+    template: |-
+      【{state}】{label}｜优先级 {score}（紧急度 {urgency}，{people} 人、{conversations} 个会话、{sources} 个来源）{late}
+      变化：{changes}
+      {analysis}
   notify:
     args:
       - chat
@@ -215,8 +223,24 @@ triage:
     label_chars: 40
     result_max_chars: 3000
     session_gap_ms: 7200000
-    session_max_ms: 86400000
-    topics_max_open: 20
+  topics:
+    archive_after_ms: 1209600000
+    clues:
+      patterns:
+        - kind: link
+          pattern: '(?i)https?://[a-z0-9._~:/?#@!$&*+,;=%\[\]()''-]{12,}'
+        - kind: file
+          pattern: '(?i)[^\s/\\:*?"<>|]{4,}\.(?:docx?|xlsx?|pptx?|pdf|csv|zip|rar|7z|sql|log)'
+      subject:
+        ignore: [通知, 提醒, 会议邀请, 自动回复, 日报, 周报]
+        min_chars: 6
+        prefixes: ["re:", "re：", "fw:", "fw：", "fwd:", "fwd：", "回复:", "回复：", "答复:", "答复：", "转发:", "转发："]
+    max_open: 20
+    reach:
+      cap: 0.5
+      conversations: 0.05
+      people: 0.05
+      sources: 0.1
 ingest:
   backoff_initial_ms: 3000
   backoff_max_ms: 60000

@@ -14,7 +14,7 @@ async fn answered_batches_replay_without_repacking() {
     let sandbox = Sandbox::new("repack-replay").unwrap();
     seed(&sandbox, &[(KEY, "u1", "c1", "server down")]).unwrap();
     sandbox
-        .seed("CREATE TRIGGER refuse BEFORE INSERT ON placements BEGIN SELECT RAISE(ABORT, 'refused'); END;")
+        .seed("CREATE TRIGGER refuse BEFORE INSERT ON members BEGIN SELECT RAISE(ABORT, 'refused'); END;")
         .unwrap();
     start(&sandbox, &json!({}), QUICK).await.unwrap();
     assert_eq!(table(&sandbox, BATCHES).unwrap(), ["1|ready|1|"]);

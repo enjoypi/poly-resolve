@@ -28,6 +28,7 @@ pub(crate) struct Attach {
 struct Block<'block> {
     attach: Option<&'block str>,
     entries: Vec<&'block Entry>,
+    linked: Vec<&'block str>,
 }
 
 impl Block<'_> {
@@ -62,6 +63,13 @@ pub(crate) struct Entry {
 }
 
 #[derive(Deserialize, JsonSchema)]
+#[schemars(rename = "TriageLink")]
+pub(crate) struct Link {
+    key: String,
+    topic: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
 #[schemars(rename = "TriageOpen")]
 pub(crate) struct Open {
     #[serde(default)]
@@ -92,6 +100,8 @@ pub(crate) struct PackRequest {
     gap_ms: u64,
     label_chars: u32,
     lines: Vec<Entry>,
+    #[serde(default)]
+    linked: Vec<Link>,
     max_chars: u32,
     model: String,
     new_label: String,
@@ -172,9 +182,13 @@ fn blocks(req: &PackRequest) -> Vec<Block<'_>> {
     }
     let mut found: Vec<Block<'_>> = grouped
         .into_iter()
-        .map(|entries| Block {
-            attach: entries.first().and_then(|first| attached(req, first)),
-            entries,
+        .map(|entries| {
+            let linked = linked(req, &entries);
+            Block {
+                attach: entries.first().and_then(|first| attached(req, first)),
+                entries,
+                linked,
+            }
         })
         .collect();
     found.sort_by_key(|block| {
@@ -256,6 +270,18 @@ fn labelled(shown: &Value, tag: &str) -> Value {
     Value::Object(map)
 }
 
+fn linked<'req>(req: &'req PackRequest, entries: &[&Entry]) -> Vec<&'req str> {
+    let mut found: Vec<&str> = req
+        .linked
+        .iter()
+        .filter(|link| entries.iter().any(|entry| entry.key == link.key))
+        .map(|link| link.topic.as_str())
+        .collect();
+    found.sort_unstable();
+    found.dedup();
+    found
+}
+
 fn offered(req: &PackRequest, block: &Block<'_>, open: &Open) -> bool {
     let narrowed: Vec<&str> = block
         .entries
@@ -303,7 +329,7 @@ fn options(req: &PackRequest, found: &[Block<'_>], style: &Style<'_>) -> Vec<Pic
                 text: text.clone(),
             };
             let all: Picks = known.chain(earlier).chain([fresh]).collect();
-            if block.attach.is_some() || all.len() < 2 {
+            if block.attach.is_some() || !block.linked.is_empty() || all.len() < 2 {
                 Vec::new()
             } else {
                 all
@@ -333,6 +359,13 @@ pub(crate) fn pack(req: &PackRequest) -> Result<PackResponse, AppError> {
                 block.attach.map(str::to_owned),
                 picks.iter().map(|pick| pick.choice.clone()).collect(),
                 label_of(req, block, &style),
+            )
+            .with_linked(
+                block
+                    .linked
+                    .iter()
+                    .map(|topic| (*topic).to_owned())
+                    .collect(),
             )
             .with_question(question)
             .with_role(if block.auto() { AUTO } else { "" })

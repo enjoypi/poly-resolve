@@ -1,8 +1,10 @@
 mod backlog;
 mod batch;
 mod claim;
+mod clues;
 mod endpoint;
 mod hold;
+mod lifecycle;
 mod mailbox;
 mod migrate;
 mod policy;
@@ -207,7 +209,7 @@ async fn ledger_migration_failure_is_logged() {
     let sandbox = Sandbox::new("triage-ledger-migrate").unwrap();
     drop(Archive::open(&sandbox.database(), BUSY).unwrap());
     sandbox
-        .seed("INSERT INTO topics VALUES ('t', 'l', NULL, 'T', 0, '', 0, 0, 0); CREATE TRIGGER refuse BEFORE INSERT ON topics BEGIN SELECT RAISE(ABORT, 'refused'); END;")
+        .seed("INSERT INTO topics (id, label, probability, thread_id, until_ms, until_key, thread_at_ms, created_at_ms, last_at_ms) VALUES ('t', 'l', NULL, 'T', 0, '', 0, 0, 0); CREATE TRIGGER refuse BEFORE INSERT ON topics BEGIN SELECT RAISE(ABORT, 'refused'); END;")
         .unwrap();
     let logs = logged(&sandbox, &json!({}), QUICK).await.unwrap();
     assert!(logs.contains("triage ledger open failed"));
@@ -448,7 +450,7 @@ async fn urgent_message_is_analyzed_and_delivered() {
     );
     assert_eq!(
         sandbox.read("send-stdin.txt").unwrap(),
-        "[0.95] server d T1|ANALYSIS"
+        "[0.95] open server d T1||ANALYSIS"
     );
     for line in [
         "batch sealed",

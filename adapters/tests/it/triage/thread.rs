@@ -11,11 +11,11 @@ const ALIASES: &str = "SELECT old || '|' || new AS item FROM topic_aliases ORDER
 const BRIEF: u64 = 50;
 
 #[tokio::test]
-async fn aged_threads_start_fresh() {
+async fn abandoned_threads_start_fresh() {
     let sandbox = Sandbox::new("thread-aged").unwrap();
     seed(&sandbox, &one()).unwrap();
     start(&sandbox, &json!({}), SHORT).await.unwrap();
-    sandbox.seed("UPDATE topics SET thread_at_ms = 1").unwrap();
+    sandbox.seed("UPDATE topics SET thread_at_ms = 0").unwrap();
     seed_from(&sandbox, &[(SECOND, "u1", "c1", "still down")], LATER).unwrap();
     start(&sandbox, &json!({}), SHORT).await.unwrap();
     assert_eq!(sandbox.read("codex-args.txt").unwrap(), "codex -\n");
@@ -84,7 +84,7 @@ async fn first_analysis_binds_the_thread_and_follow_ups_resume() {
     );
     let prompt = sandbox.read("codex-stdin.txt").unwrap();
     assert!(prompt.starts_with("next:") && prompt.contains("still down"));
-    assert!(!prompt.contains("server down"));
+    assert!(prompt.contains("server down"));
     assert_eq!(table(&sandbox, TOPICS).unwrap(), ["T1|server d|T1"]);
     assert_eq!(table(&sandbox, ALIASES).unwrap(), ["t1-0|T1"]);
     assert_eq!(
@@ -118,11 +118,11 @@ async fn stale_topic_ids_resolve_to_the_renamed_thread() {
     assert_eq!(table(&sandbox, TOPICS).unwrap(), ["t1-0|server d|"]);
     seed_from(&sandbox, &[(SECOND, "u1", "c1", "still down")], LATER).unwrap();
     sandbox
-        .seed("CREATE TRIGGER refuse BEFORE INSERT ON placements BEGIN SELECT RAISE(ABORT, 'refused'); END;")
+        .seed("CREATE TRIGGER refuse BEFORE INSERT ON members BEGIN SELECT RAISE(ABORT, 'refused'); END;")
         .unwrap();
     start(&sandbox, &quiet(), SHORT).await.unwrap();
     sandbox
-        .seed("DROP TRIGGER refuse; INSERT INTO topics SELECT 'T1', label, probability, 'T1', until_ms, until_key, thread_at_ms, created_at_ms, last_at_ms FROM topics WHERE id = 't1-0'; UPDATE placements SET topic_id = 'T1'; DELETE FROM topics WHERE id = 't1-0'; INSERT INTO topic_aliases VALUES ('t1-0', 'T1');")
+        .seed("DROP TRIGGER refuse; INSERT INTO topics (id, label, probability, thread_id, until_ms, until_key, thread_at_ms, created_at_ms, last_at_ms) SELECT 'T1', label, probability, 'T1', until_ms, until_key, thread_at_ms, created_at_ms, last_at_ms FROM topics WHERE id = 't1-0'; UPDATE members SET topic_id = 'T1'; DELETE FROM topics WHERE id = 't1-0'; INSERT INTO topic_aliases VALUES ('t1-0', 'T1');")
         .unwrap();
     start(&sandbox, &quiet(), SHORT).await.unwrap();
     assert_eq!(table(&sandbox, TOPICS).unwrap(), ["T1|server d|T1"]);

@@ -16,6 +16,8 @@ pub(crate) struct Row {
     #[serde(default)]
     role: String,
     sender: String,
+    #[serde(default)]
+    source: Option<String>,
     text: String,
 }
 
@@ -40,6 +42,9 @@ impl Row {
         });
         if let Some(map) = shown.as_object_mut().filter(|_| !self.role.is_empty()) {
             drop(map.insert("role".to_owned(), Value::String(self.role.clone())));
+        }
+        if let Some((map, source)) = shown.as_object_mut().zip(self.source.as_ref()) {
+            drop(map.insert("source".to_owned(), Value::String(source.clone())));
         }
         shown
     }
@@ -66,24 +71,4 @@ impl<'style> Style<'style> {
     pub(super) const fn new(mask: &'style Mask, max: usize) -> Self {
         Self { mask, max }
     }
-}
-
-pub(super) fn fit(lines: Vec<Value>, max: usize) -> String {
-    let sizes: Vec<usize> = lines
-        .iter()
-        .map(|line| line.to_string().chars().count().saturating_add(1))
-        .collect();
-    let mut total = sizes
-        .iter()
-        .fold(1, |sum: usize, size| sum.saturating_add(*size));
-    let skip = sizes
-        .iter()
-        .take(sizes.len().saturating_sub(1))
-        .take_while(|size| {
-            let over = total > max;
-            total = total.saturating_sub(**size);
-            over
-        })
-        .count();
-    Value::Array(lines.into_iter().skip(skip).collect()).to_string()
 }

@@ -157,7 +157,7 @@ async fn hints_follow_renamed_topics() {
         .unwrap();
     start(&sandbox, &screened(&sandbox), QUICK).await.unwrap();
     sandbox
-        .seed("DROP TRIGGER refuse; INSERT INTO topics SELECT 'T1', label, probability, 'T1', until_ms, until_key, thread_at_ms, created_at_ms, last_at_ms FROM topics WHERE id = 't1-0'; UPDATE placements SET topic_id = 'T1'; DELETE FROM topics WHERE id = 't1-0'; INSERT INTO topic_aliases VALUES ('t1-0', 'T1'); INSERT INTO topics VALUES ('t9-0', 'other', 0.1, '', 0, '', 0, 0, 9999999999999);")
+        .seed("DROP TRIGGER refuse; INSERT INTO topics (id, label, probability, thread_id, until_ms, until_key, thread_at_ms, created_at_ms, last_at_ms) SELECT 'T1', label, probability, 'T1', until_ms, until_key, thread_at_ms, created_at_ms, last_at_ms FROM topics WHERE id = 't1-0'; UPDATE members SET topic_id = 'T1'; DELETE FROM topics WHERE id = 't1-0'; INSERT INTO topic_aliases VALUES ('t1-0', 'T1'); INSERT INTO topics (id, label, probability, thread_id, until_ms, until_key, thread_at_ms, created_at_ms, last_at_ms) VALUES ('t9-0', 'other', 0.1, '', 0, '', 0, 0, 9999999999999);")
         .unwrap();
     let mut patch = screened(&sandbox);
     if let Some(map) = patch.as_object_mut() {

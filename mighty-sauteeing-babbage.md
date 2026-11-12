@@ -38,41 +38,18 @@
 - “排队的转交新的先出”的用例已删，第 ② 期改按话题优先级排队时补新用例。
 - 线上库演练办法见 adapters/CLAUDE.md“测试”。
 
-## 第 ② 期：话题模型
+## 第 ② 期：已完成
 
-**数据**
-- `topics` 补列：`state`（open、resolved、cancelled、archived）、`urgency`、`reach`（JSON）、`score`、`verdict`、`closed_at_ms`。
-- 新表 `members(key, topic_id, probability, batch_id, via, created_at_ms)`，支持一条消息属于多个话题。由 `placements` 迁入，之后只读写 `members`。
-- 新表 `clues(kind, value, key, occurred_at_ms)`：本机的强线索索引。
-- 新表 `relations(a, b, kind, count)`：记录“可能相关”的话题对。
-- 邮件会话改为 `mail:<account>:thread:<根 id>`，根 id 依次取 references[0]、in_reply_to、message_id。MIGRATE 用 `json_extract` 改写旧行。
-
-**domain**
-- 新 action `triage.clues`，实现在 `features/triage/clue.rs`：从邮件 id、规范化主题、配置正则匹配的链接/单号/文件、钉钉转发 id 中提取线索。
-- `features/triage/priority.rs`：`score = u + (1-u)·min(cap, Σwᵢ(nᵢ-1))`，影响面只把分数往上抬。
-- `sort`：紧急度取最新一条非本人消息的概率；置信度不足时另起话题，并写入 `relations`。
-- `pack`：请求加 `linked`，命中强线索的段直接归入（可同时归入多个话题），取代原来的 attach。
-- `prompt.brief`：每次全量提供，去掉 until 增量截取，标注来源类型。
-- `reply`：首行为 JSON `{status, title, changes, changed}`，解析失败时重试。提示词文件同步改写。
-
-**adapters**
-- intake 写入线索。封批前用 `ledger.linked` 查强线索命中的话题，经 alias 解析；已归档的话题只在强线索命中时出现。
-- `OPEN_TOPICS` 改为排除 archived，删掉 `session_max_ms` 过滤。
-- `apply` 依次做：
-  - 写 `members` 和 `relations`；
-  - 话题已 resolved 或 cancelled、又有新成员时，改回 open；
-  - 用 SQL 重算 reach 和 score；
-  - 满足以下任一条件就开分析：score 达到阈值，或已有会话且来了新成员。
-- 分析按 score 降序排队，一律续写会话。结论未变且状态未变时转 `quiet`，不通知。
-- 每轮把超过 `archive_after_ms` 的话题归档。
-- `notice` 占位扩充为 `{state}{score}{reach}{changes}{late}`。
-
-**配置**：新子结构 `triage.topics`，含 `archive_after_ms`、`reach{people,conversations,sources,cap}`、`clues.patterns`、`max_open`；删除 `sizes.session_max_ms`；`sizes.topics_max_open` 迁入 `triage.topics`。
-
-**测试**
-- domain 新增：`clue.rs`、`priority.rs`。
-- adapters 新增：`triage/clues.rs`、`triage/lifecycle.rs`。
-- 改写：`sort.rs`、`pack.rs`、`prompt.rs`、`reply.rs`、`mail.rs`、`topic.rs`、`thread.rs`。
+实现与原计划的出入，后续各期以此为准：
+- 优先级在 `apply` 事务里用 SQL 重算（`REACH`、`RESCORE`），没有 domain 的 `priority.rs`；紧急度取话题里最新一条有概率的成员，不由 `sort` 给出，`sort` 不再收阈值。
+- 强线索经 `linked` 传给 `pack`，同会话相邻（`attach`）保留；同一批里互不相识的两段即使线索相同也各起话题，留给第 ④ 期按共同线索合并。
+- 线索不在 intake 写，由独立的 `index` 步骤补（含旧行），以 `clues(kind = 'seen')` 标记已建；钉钉转发没有可用的原消息标识，转发关系留给第 ③ 期的正文摘要。
+- `relations` 只在“选了已有话题但置信度不足”时累加，同一对话题不会自然累加到多次；第 ④ 期要另出是非题来累加。话题改名不改 `relations`，读时经 `topic_aliases` 解析。
+- `brief` 不再按总长截断（`fit` 已删），`context_max_chars` 只限单行。
+- 通知占位为 `{state}{score}{urgency}{people}{conversations}{sources}{changes}{late}`；`triage.notice` 改成结构（`template`、`late`、`late_after_ms`、`states`），第 ④ 期的汇总模板加在这里。
+- 回复首行 JSON 不合规按分析失败重试（沿用 `max_attempts`）；重放已存分析时一律通知。
+- 归档只看 `last_at_ms`：强线索重开的归档话题若最后一条消息仍超龄，下一轮又归档。
+- 旧话题的 `reach` 为 `{}`，要到下次有新成员才重算；第 ④ 期的话题视图须容忍空值。
 
 ## 第 ③ 期：keyed hash 占位、人员对应、转发去重
 

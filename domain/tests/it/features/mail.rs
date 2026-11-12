@@ -44,7 +44,7 @@ fn html_in_legacy_charsets_becomes_text() {
     assert_eq!(field(&reply, "/envelope/sender_id"), "b@x.test");
     assert_eq!(
         field(&reply, "/envelope/conversation_id"),
-        "mail:work:b@x.test"
+        "mail:work:thread:uid:7:42"
     );
 }
 
@@ -99,6 +99,13 @@ fn missing_ids_fall_back_to_uid() {
     assert_eq!(field(&reply, "/envelope/key"), "imap:work:uid:7:42");
     assert_eq!(field(&reply, "/envelope/sender_id"), "");
     assert_eq!(field(&reply, "/envelope/text"), "x\nbody");
+    let answer =
+        b"Message-ID: <m2@x.test>\r\nIn-Reply-To: <m1@x.test>\r\nSubject: x\r\n\r\nbody\r\n";
+    let replied = mail(answer, WIDE).unwrap().unwrap();
+    assert_eq!(
+        field(&replied, "/envelope/conversation_id"),
+        "mail:work:thread:m1@x.test"
+    );
 }
 
 #[test]
@@ -111,6 +118,10 @@ fn plain_mail_keeps_fresh_text_and_header_summary() {
     );
     let reply = mail(raw.as_bytes(), WIDE).unwrap().unwrap();
     assert_eq!(field(&reply, "/envelope/key"), "imap:work:m1@x.test");
+    assert_eq!(
+        field(&reply, "/envelope/conversation_id"),
+        "mail:work:thread:a@x.test"
+    );
     assert_eq!(field(&reply, "/envelope/text"), "deploy\ndone\nnext");
     assert_eq!(field(&reply, "/envelope/sender_name"), "Alice");
     assert_eq!(
