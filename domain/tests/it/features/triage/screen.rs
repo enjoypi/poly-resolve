@@ -2,10 +2,13 @@ use serde_json::{Error, Value, from_str, json};
 
 use super::{Reply, call};
 
+const MAX_TOKENS: u32 = 64;
+
 fn screen(lines: &Value, topics: &Value) -> Result<Reply, Error> {
     let request = json!({
         "instructions": "judge",
         "lines": lines,
+        "max_tokens": MAX_TOKENS,
         "model": "local",
         "topics": topics,
     });
@@ -22,6 +25,7 @@ fn screen_asks_for_a_json_verdict_on_aliased_lines() {
     let reply = screen(&lines, &topics).unwrap().unwrap();
     let body: Value = from_str(reply.get("body").and_then(Value::as_str).unwrap()).unwrap();
     assert_eq!(body.get("model"), Some(&json!("local")));
+    assert_eq!(body.get("max_tokens"), Some(&json!(MAX_TOKENS)));
     assert_eq!(
         body.get("response_format"),
         Some(&json!({"type": "json_object"}))

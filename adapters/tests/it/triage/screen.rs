@@ -91,6 +91,19 @@ async fn failed_screening_is_retried_and_never_lets_lines_through() {
         assert_eq!(calls(&sandbox, "decide").unwrap(), 0, "{name}");
         assert_eq!(table(&sandbox, BATCHES).unwrap(), NOTHING, "{name}");
         assert!(calls(&sandbox, "screen").unwrap() >= 1, "{name}");
+        assert_eq!(
+            logs.matches("no usable answers").count(),
+            usize::from(mode == "junk"),
+            "{name}"
+        );
+        assert_eq!(
+            table(&sandbox, FLAGGED).unwrap(),
+            [
+                format!("{KEY}|screening||deferred"),
+                format!("{SECOND}|screening||deferred")
+            ],
+            "{name}"
+        );
     }
 }
 
@@ -224,7 +237,7 @@ fn manual(sandbox: &Sandbox) -> Value {
 }
 
 #[tokio::test]
-async fn misnamed_answers_are_retried_not_dropped() {
+async fn misnamed_answers_are_set_aside_after_retries() {
     let sandbox = Sandbox::new("screen-misnamed").unwrap();
     seed(&sandbox, &two()).unwrap();
     sandbox
@@ -235,13 +248,22 @@ async fn misnamed_answers_are_retried_not_dropped() {
         .unwrap();
     let logs = logged(&sandbox, &screened(&sandbox), QUICK).await.unwrap();
     assert!(logs.contains("bad_answer"));
+    assert!(logs.contains("line screening abandoned"));
     assert_eq!(
         table(&sandbox, FLAGGED).unwrap(),
         [
-            format!("{KEY}|screening||deferred"),
-            format!("{SECOND}|screening||deferred")
+            format!("{KEY}|rejected|unscreened|screen"),
+            format!("{SECOND}|rejected|unscreened|screen")
         ]
     );
+    assert_eq!(
+        table(&sandbox, MISSES).unwrap(),
+        [
+            format!("unscreened|{KEY}|server down|[]"),
+            format!("unscreened|{SECOND}|still down|[]")
+        ]
+    );
+    assert_eq!(table(&sandbox, BATCHES).unwrap(), ["1|sent|0|"]);
 }
 
 #[tokio::test]
@@ -325,6 +347,28 @@ async fn model_masks_spans_and_flags_unmaskable_secrets_for_review() {
     assert!(!input.to_string().contains(SECRET));
 }
 
+#[tokio::test]
+async fn probe_interrupted_by_shutdown_changes_nothing() {
+    let sandbox = Sandbox::new("screen-probe-slow").unwrap();
+    seed(&sandbox, &two()).unwrap();
+    let mut patch = sandbox.screen("");
+    if let Some(map) = patch.as_object_mut() {
+        drop(map.insert(
+            "stub".to_owned(),
+            json!({"screen": {"canary": "slow", "mode": "junk"}}),
+        ));
+    }
+    start(&sandbox, &patch, QUICK).await.unwrap();
+    assert_eq!(calls(&sandbox, "screen").unwrap(), 3);
+    assert_eq!(
+        table(&sandbox, FLAGGED).unwrap(),
+        [
+            format!("{KEY}|screening||"),
+            format!("{SECOND}|screening||")
+        ]
+    );
+}
+
 fn screened(sandbox: &Sandbox) -> Value {
     sandbox.screen("")
 }
@@ -372,6 +416,24 @@ async fn slow_screening_runs_at_most_parallel_requests() {
             format!("{THIRD}|screening||1")
         ]
     );
+}
+
+#[tokio::test]
+async fn unanswerable_line_is_set_aside_while_the_rest_goes_on() {
+    let sandbox = Sandbox::new("screen-unanswerable").unwrap();
+    seed(&sandbox, &two()).unwrap();
+    let logs = logged(&sandbox, &aimed(&sandbox, "junk", "still down"), QUICK)
+        .await
+        .unwrap();
+    assert!(!logs.contains("no usable answers"));
+    assert_eq!(
+        table(&sandbox, FLAGGED).unwrap(),
+        [
+            format!("{KEY}|approved||"),
+            format!("{SECOND}|rejected|unscreened|screen")
+        ]
+    );
+    assert_eq!(calls(&sandbox, "decide").unwrap(), 1);
 }
 
 #[tokio::test]

@@ -5,7 +5,7 @@ use std::time::Instant;
 
 use futures_util::stream::{StreamExt as _, iter};
 use http::Uri;
-use serde_json::{Value, json, to_string};
+use serde_json::{Value, from_value, json, to_string};
 
 use super::TRIAGE;
 use super::config::Screen;
@@ -25,6 +25,8 @@ const REJECTED: &str = "rejected";
 const RULES: &str = "rules";
 const SCREEN: &str = "screen";
 const UNPREPARED: &str = "unprepared";
+const UNSCREENED: &str = "unscreened";
+const UNUSABLE: &str = "unusable";
 
 struct Failure {
     line: Value,
@@ -43,11 +45,30 @@ struct Landing {
 }
 
 struct Round<'round> {
+    instructions: String,
     jobs: Vec<Arc<Job>>,
     key: Option<String>,
     setup: &'round Screen,
     topics: Vec<Value>,
     url: Uri,
+}
+
+fn abandon(shift: &Shift<'_>, failure: &Failure) {
+    let verdict: Screened = from_value(json!({
+        "flag": UNSCREENED,
+        "hints": [],
+        "key": text(&failure.line, "key"),
+        "spans": [],
+        "text": text(&failure.line, "text"),
+    }))
+    .unwrap_or_default();
+    tracing::warn!(
+        key = text(&failure.line, "key"),
+        attempt = number(&failure.line, "attempts").saturating_add(1),
+        reason = failure.reason,
+        "line screening abandoned"
+    );
+    apply(shift, &verdict);
 }
 
 fn apply(shift: &Shift<'_>, verdict: &Screened) {
@@ -118,6 +139,7 @@ async fn fly(shift: &mut Shift<'_>, round: &Round<'_>) -> Option<()> {
     let mut replies = iter(round.jobs.iter().cloned())
         .map(|job| post(http, round, job))
         .buffer_unordered(round.setup.parallel());
+    let mut doubts: Vec<Failure> = Vec::new();
     let mut failed: Vec<Failure> = Vec::new();
     let mut landed: Vec<String> = Vec::new();
     loop {
@@ -130,8 +152,21 @@ async fn fly(shift: &mut Shift<'_>, round: &Round<'_>) -> Option<()> {
         };
         landed.push(text(&job.line, "key").to_owned());
         let line = job.line.clone();
-        if let Err(reason) = land(shift, round, Landing { done, job }) {
-            failed.push(Failure { line, reason });
+        match land(shift, round, Landing { done, job }) {
+            Ok(()) => {}
+            Err(reason) if reason == BAD_ANSWER => doubts.push(Failure { line, reason }),
+            Err(reason) => failed.push(Failure { line, reason }),
+        }
+    }
+    drop(replies);
+    let answered = landed.len() > doubts.len().saturating_add(failed.len());
+    let alive = !doubts.is_empty() && (answered || probe(shift, round).await?);
+    let limit = u64::from(shift.triage.max_attempts());
+    for doubt in doubts {
+        if alive && number(&doubt.line, "attempts").saturating_add(1) >= limit {
+            abandon(shift, &doubt);
+        } else {
+            failed.push(doubt);
         }
     }
     defer(shift, &failed);
@@ -152,19 +187,10 @@ fn grounded(jobs: &[Arc<Job>], landed: &[String]) {
 
 fn land(shift: &Shift<'_>, round: &Round<'_>, landing: Landing) -> Result<(), String> {
     let Landing { done, job } = landing;
-    let spent = elapsed(&job);
-    let outcome = done.as_ref().map_or_else(
-        |reason| Outcome::new(0, reason.clone(), spent).within(TRIAGE),
-        |reply| {
-            Outcome::new(reply.body().len(), "success".to_owned(), spent)
-                .within(TRIAGE)
-                .code(Some(reply.status()))
-        },
-    );
     external(
         "screen",
         job.body.len(),
-        &outcome.attempt(number(&job.line, "attempts").saturating_add(1)),
+        &outcome(&done, elapsed(&job)).attempt(number(&job.line, "attempts").saturating_add(1)),
     );
     let reply = done?;
     let verdict = shift
@@ -181,6 +207,17 @@ fn land(shift: &Shift<'_>, round: &Round<'_>, landing: Landing) -> Result<(), St
         .ok_or_else(|| BAD_ANSWER.to_owned())?;
     apply(shift, &verdict);
     Ok(())
+}
+
+fn outcome(done: &Result<Reply, String>, spent: u64) -> Outcome<'static> {
+    done.as_ref().map_or_else(
+        |reason| Outcome::new(0, reason.clone(), spent).within(TRIAGE),
+        |reply| {
+            Outcome::new(reply.body().len(), "success".to_owned(), spent)
+                .within(TRIAGE)
+                .code(Some(reply.status()))
+        },
+    )
 }
 
 async fn post(
@@ -214,6 +251,7 @@ fn prepare<'round>(
                 body: shift.desk.screen(&json!({
                     "instructions": instructions,
                     "lines": [candidate(line)],
+                    "max_tokens": setup.max_tokens(),
                     "model": setup.model(),
                     "topics": topics,
                 })),
@@ -223,12 +261,45 @@ fn prepare<'round>(
         })
         .collect();
     Some(Round {
+        instructions,
         jobs,
         key: setup.http().key(),
         setup,
         topics,
         url,
     })
+}
+
+async fn probe(shift: &mut Shift<'_>, round: &Round<'_>) -> Option<bool> {
+    let body = shift.desk.screen(&json!({
+        "instructions": round.instructions,
+        "lines": [],
+        "max_tokens": round.setup.max_tokens(),
+        "model": round.setup.model(),
+        "topics": round.topics,
+    }));
+    let timeout = round.setup.http().timeout_ms();
+    let call = Call::new(&round.url, &body, timeout).with_key(round.key.as_deref());
+    let started = Instant::now();
+    let done = shift.post(&call).await?;
+    let spent = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
+    external("screen", body.len(), &outcome(&done, spent));
+    let alive = done
+        .ok()
+        .and_then(|reply| {
+            shift.desk.screened(&json!({
+                "lines": [],
+                "min_chars": shift.triage.learn_min_chars(),
+                "placeholder": round.setup.placeholder(),
+                "response": reply.body(),
+                "topics": round.topics,
+            }))
+        })
+        .is_some();
+    if shift.noted("screen", if alive { "" } else { UNUSABLE }) {
+        tracing::warn!("screen model gives no usable answers");
+    }
+    Some(alive)
 }
 
 pub(super) async fn screen(shift: &mut Shift<'_>) -> Option<()> {

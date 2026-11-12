@@ -30,6 +30,7 @@ impl Candidate {
 pub(crate) struct ScreenRequest {
     instructions: String,
     lines: Vec<Candidate>,
+    max_tokens: u32,
     model: String,
     topics: Vec<Open>,
 }
@@ -44,6 +45,7 @@ pub(crate) fn screen(req: ScreenRequest) -> ScreenResponse {
     let ScreenRequest {
         instructions,
         lines,
+        max_tokens,
         model,
         topics,
     } = req;
@@ -62,6 +64,7 @@ pub(crate) fn screen(req: ScreenRequest) -> ScreenResponse {
             {"content": json!({"topics": known}).to_string(), "role": USER},
             {"content": json!({"lines": shown}).to_string(), "role": USER},
         ],
+        "max_tokens": max_tokens,
         "model": model,
         "response_format": {"type": "json_object"},
         "temperature": TEMPERATURE,

@@ -158,6 +158,7 @@ pub(crate) struct Rule {
 #[serde(deny_unknown_fields)]
 pub struct Screen {
     http: Http,
+    max_tokens: NonZeroU32,
     model: String,
     parallel: NonZeroU32,
     placeholder: String,
@@ -166,6 +167,10 @@ pub struct Screen {
 impl Screen {
     pub(crate) const fn http(&self) -> &Http {
         &self.http
+    }
+
+    pub(crate) const fn max_tokens(&self) -> u32 {
+        self.max_tokens.get()
     }
 
     pub(crate) fn model(&self) -> &str {

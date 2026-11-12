@@ -78,7 +78,7 @@ YAML 文件，各项均必填（注明可选的除外），不允许其他字段
 | triage.codex.args | 须含 `--json`，用 `-m` 指定模型；不含 `--ephemeral` 与结尾的 `-` |
 | triage.notify.args | 须含 `--yes` 并以接收人参数名结尾；程序追加 `notify_target` 与 `--idempotency-key=<话题>@<批号>` |
 | triage.notify_target | 通知接收人，写成 `${NAME}` |
-| triage.screen | 可选，见“本地模型筛查”：http 为 HTTP 接口配置（url 仅允许带显式端口的回环 HTTP，key 可选，timeout_ms 为请求超时）；系统提示词见 triage.prompts_dir 的 `screen.md`；model 模型名；parallel 同时筛查的条数，至少 1，不大于 llama-server 的 `-np`；placeholder 遮盖用的占位符 |
+| triage.screen | 可选，见“本地模型筛查”：http 为 HTTP 接口配置（url 仅允许带显式端口的回环 HTTP，key 可选，timeout_ms 为请求超时）；系统提示词见 triage.prompts_dir 的 `screen.md`；model 模型名；max_tokens 单次回答的长度上限，至少 1（模型陷入重复输出时靠它尽快结束）；parallel 同时筛查的条数，至少 1，不大于 llama-server 的 `-np`；placeholder 遮盖用的占位符 |
 
 ## HTTP 接口
 
@@ -222,13 +222,14 @@ sops exec-env secrets/prod.enc.yaml './target/release/cli serve --config cli/con
 
 ### 本地模型筛查
 
-可选，不配 `triage.screen` 即不启用。本机自行下载模型权重并启动 `llama-server`，把 `SCREEN_URL` 设为 `http://localhost:<端口>/v1/chat/completions`，并在 `triage.screen.http` 配置 `url: "${SCREEN_URL}"` 与 `timeout_ms`。客户端直接发送 OpenAI 兼容请求，不启动 curl。每条消息一个请求，同时至多 `parallel` 个；请求里先是系统提示词，再是一条只含开放话题的用户消息，最后是一条只含这条消息的用户消息。某条失败（不可达、超时、返回无法解析或没按 `L1` 作答）只重试这一条，等待逐次翻倍；批内还有没筛完的消息时该批不外发。
+可选，不配 `triage.screen` 即不启用。本机自行下载模型权重并启动 `llama-server`，把 `SCREEN_URL` 设为 `http://localhost:<端口>/v1/chat/completions`，并在 `triage.screen.http` 配置 `url: "${SCREEN_URL}"` 与 `timeout_ms`。客户端直接发送 OpenAI 兼容请求，不启动 curl。每条消息一个请求，同时至多 `parallel` 个；请求里先是系统提示词，再是一条只含开放话题的用户消息，最后是一条只含这条消息的用户消息。某条失败（不可达、超时、返回无法解析或没按 `L1` 作答）只重试这一条，等待逐次翻倍；批内还有没筛完的消息时该批不外发。模型有响应却给不出可用判断达到 `limits.max_attempts` 次的消息标为 `unscreened`：自动模式下排除、不外发，人工模式下置顶待审；前提是模型确实可用（同一轮有别的消息筛查成功，或一次不含消息的探测请求得到可用回答），否则不计次、一直重试，并记一条 WARN `screen model gives no usable answers`。
 
 已验证的组合（Apple Silicon）：Hugging Face `Qwen/Qwen3-4B-GGUF` 的 `Qwen3-4B-Q4_K_M.gguf`（sha256 `7485fe6f11af29433bc51cab58009521f205840f5b4ae3a32fa7f92e8534fdf5`），`llama-server -m <权重> --host 127.0.0.1 --port 8089 -c 40960 -np 4 -kvu`（4 个槽共享 40960 的上下文，约占 8 GB 内存；不加 `-kvu` 时每槽只有四分之一，长消息放不下），配置：
 
 ```yaml
   screen:
     http: {timeout_ms: 300000, url: "${SCREEN_URL}"}
+    max_tokens: 1024
     model: local
     parallel: 4
     placeholder: "[screened]"
@@ -242,7 +243,7 @@ sops exec-env secrets/prod.enc.yaml './target/release/cli serve --config cli/con
 
 实测（合成消息 120 条共 4.3 万字，含 3 条约 1.1 万字的长消息，每条请求带 20 个开放话题，并发 4，连跑 3 轮）：每条都有判断；25 个埋入的密钥遮住 23 个，漏掉的 1 个在长消息末尾；95 条正常消息有 4 条被判高风险；每轮 5 至 9 分钟，最慢一条 50 至 80 秒，`timeout_ms` 按最慢一条留足余量。单条消息连同提示词与话题须放得进共享上下文（约 0.7 token/字）。
 
-漏判样本：模型遮住了规则没拦住的片段（`rules`）、模型判高风险却给不出片段（`unmasked`）、人工以漏脱敏拒绝（`review`）时，该条当时的文字与片段存进消息库的 `misses` 表，不经接口与日志返回、不自动清理；查看：`sqlite3 -readonly <库> "SELECT kind, text, spans FROM misses"`。
+漏判样本：模型遮住了规则没拦住的片段（`rules`）、模型判高风险却给不出片段（`unmasked`）、模型多次给不出可用判断（`unscreened`）、人工以漏脱敏拒绝（`review`）时，该条当时的文字与片段存进消息库的 `misses` 表，不经接口与日志返回、不自动清理；查看：`sqlite3 -readonly <库> "SELECT kind, text, spans FROM misses"`。
 
 Qwen3 默认先输出思考过程，提示词末尾的 `/no_think` 关掉它。4B 模型的话题候选常有偏差，只用于收窄选项。
 

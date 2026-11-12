@@ -270,7 +270,7 @@ impl Reply {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Default, Deserialize)]
 pub(crate) struct Screened {
     flag: String,
     hints: Vec<String>,

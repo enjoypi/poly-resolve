@@ -17,6 +17,7 @@ pub(crate) const CHAT: &str = "/chat/completions";
 pub(crate) const DECISIONS: &str = "/decisions";
 const DEFAULT_CONFIDENCE: &str = "0.9";
 const DEFAULT_PROBABILITY: &str = "0.95";
+const PROBE: &str = r#"lines\":[]"#;
 const SLEEP_TICKS: u32 = 120;
 const SLEEP_TICK_MS: u64 = 250;
 
@@ -31,7 +32,13 @@ impl Call<'_> {
     async fn answer(&self) -> (u16, String) {
         let behavior = plan(self.dir, self.role);
         let aimed = self.request.body.contains(text(&behavior, "only"));
-        match (aimed, text(&behavior, "mode")) {
+        let canary = text(&behavior, "canary");
+        let mode = if self.request.body.contains(PROBE) && !canary.is_empty() {
+            canary
+        } else {
+            text(&behavior, "mode")
+        };
+        match (aimed, mode) {
             (true, "fail") => return (500, String::new()),
             (true, "junk") => return (200, "not json".to_owned()),
             (true, "slow") => self.wait().await,

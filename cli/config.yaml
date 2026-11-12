@@ -109,7 +109,7 @@ triage:
     lookback_ms: 3600000
     max_attempts: 3
     max_decisions_per_hour: 30
-    max_handoffs_per_hour: 1
+    max_handoffs_per_hour: 3
     max_revivals: 2
     parallel: 4
     poll_ms: 5000

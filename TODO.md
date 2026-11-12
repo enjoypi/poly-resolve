@@ -1,6 +1,6 @@
 # TODO
 
-- 线上切自动通过并用本地模型兜底（改 `~/.config/poly-resolve/` 下的配置与提示词，每步重启 `pm3 restart poly-resolve`）：
+- 已于 2026-11-12 部署并切自动；以下留作核对清单，确认无误后删除。线上切自动通过并用本地模型兜底（改 `~/.config/poly-resolve/` 下的配置与提示词，每步重启 `pm3 restart poly-resolve`）：
   1. 部署新版本：`cargo +stable test --release --locked && cargo +stable build --release --locked`，替换 `~/.local/bin/poly-resolve`
   2. 本地模型（`llama-server` 已由 pm3 托管为 `llama-screen`，`screen.md` 已放入线上提示词目录）：pm3 环境加 `SCREEN_URL=http://127.0.0.1:8089/v1/chat/completions`；配置加 `triage.screen`（`parallel: 4`、`timeout_ms: 300000`）与 `limits.retry_max_ms: 900000`；`screen.md` 换成 README 里的新提示词
   3. 提示词与模板：`urgent.md`、`session.md`、`followup.md` 与 `triage.notice` 同步仓内 `cli/prompts/`、`cli/config.yaml` 的新内容

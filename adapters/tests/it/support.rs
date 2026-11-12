@@ -52,6 +52,7 @@ const LOOKBACK: u64 = 1_000_000_000_000;
 const LOOKUP_BATCH: u32 = 2;
 pub(crate) const MANUAL: u8 = 6;
 const MANUAL_CODES: [i32; 2] = [2, 4];
+const MAX_TOKENS: u32 = 200;
 const MIN_CONFIDENCE: f64 = 0.6;
 pub(crate) const NOON: u64 = 1_783_483_235_000;
 const OFFSET: i16 = 480;
@@ -203,6 +204,7 @@ impl Sandbox {
         let mut patch = json!({
             "screen": {
                 "http": self.http(CHAT),
+                "max_tokens": MAX_TOKENS,
                 "model": "local",
                 "parallel": PARALLEL_SCREEN,
                 "placeholder": "[s]",

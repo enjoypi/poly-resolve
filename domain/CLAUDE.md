@@ -69,7 +69,7 @@
 - `notice`：代入 `{topic}`、`{probability}`（两位小数）、`{label}`，最后才代入截断后的 `{analysis}`
 - `reply`：`{stdout, max_chars}` → `{thread_id, text}`；从 `codex exec --json` 的 JSONL 取首个 `thread.started` 的 `thread_id` 与最后一条 `item.completed` 里 `agent_message` 的文本，缺任一或文本为空按请求无效
 - `redact`：`{text, rules}` → `{text}`，供启动自检；`tests/it/redact.rs` 读取真实的 `cli/config.yaml` 里 `triage.redact.patterns` 跑样例表：每条规则至少一例必须被替换、几例明文必须原样；规则是数据，改规则必须同步样例，源码里的中文用 `\u{…}` 转义（`non_ascii_literal`）
-- `screen`（`triage/screen.rs`）：`{instructions, lines[{key,text}], model, topics[{topic,label}]}` → `{body}`；OpenAI 兼容的 chat 请求体（`system` 放指令，第一条 `user` 只放话题 JSON，第二条 `user` 只放别名 `L<n>` 的行 JSON，让指令加话题成为可缓存的公共前缀；`response_format` 为 `json_object`，温度 0），不含消息键；adapters 每次只传一行
+- `screen`（`triage/screen.rs`）：`{instructions, lines[{key,text}], max_tokens, model, topics[{topic,label}]}` → `{body}`；OpenAI 兼容的 chat 请求体（`system` 放指令，第一条 `user` 只放话题 JSON，第二条 `user` 只放别名 `L<n>` 的行 JSON，让指令加话题成为可缓存的公共前缀；`response_format` 为 `json_object`，温度 0，带 `max_tokens`），不含消息键；adapters 每次只传一行，探测模型是否可用时传空 `lines`
 - `screened`（`triage/screened.rs`）：`{lines, min_chars, placeholder, response, topics}` → `{lines[{key,text,flag,hints,spans}]}`（`spans` 为通过校验并用于遮盖的片段，供 adapters 存漏判样本）；从 `choices[0].message.content` 解出 `{lines[{line,risk,spans,topics}]}`；片段去空白后须不短于 `min_chars` 且是该行文字的子串才用 `placeholder` 遮盖；话题须在给定话题内且去重；`risk == high` 且无可用片段 `flag = unmasked`，缺该行的判断 `flag = missing`；响应无法解析按请求无效
 - `learn`（`triage/learn.rs`，不是路由，供 `review.update`）：粘贴的原文去空白后须不短于 `min_chars` 且是该行文字的子串，转义成字面量正则，否则 `Unprocessable`
 - `transcript.rs`：`Row`（`key?`、`occurred_at_ms,sender,text`，`render` 过 `Mask` 并按 `max` 截断）、`Style`、`fit`（整个 JSON 数组超 `max_chars` 就丢最旧的行，至少留最后一条）
