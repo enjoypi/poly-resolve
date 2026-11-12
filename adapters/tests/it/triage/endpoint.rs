@@ -103,6 +103,11 @@ fn validate_checks_limits_and_rules() {
     assert!(checked(&topics).unwrap_err().contains("too large"));
     let clues = json!({"topics": {"clues": {"patterns": [{"kind": "x", "pattern": "("}]}}});
     assert!(checked(&clues).unwrap_err().contains("topics.clues"));
+    let keyless = json!({"redact": {
+        "hash_key": "${POLY_RESOLVE_ABSENT_KEY}",
+        "patterns": [{"pattern": "x", "placeholder": "[x#{hash}]"}],
+    }});
+    assert!(checked(&keyless).unwrap_err().contains("redact"));
     let retry = json!({"limits": {"retry_after_ms": BRIEF, "retry_max_ms": BACKLOG}});
     assert!(checked(&retry).unwrap_err().contains("retry_max_ms"));
     for url in [

@@ -10,6 +10,7 @@ publish = false
 [workspace.dependencies]
 adapters = { path = "adapters" }
 axum = { version = "*", default-features = false, features = ["http1", "tokio"] }
+blake3 = { version = "*", default-features = false, features = ["std", "pure"] }
 chrono = { version = "*", default-features = false, features = ["std"] }
 clap = { version = "*", default-features = false, features = ["std", "derive", "help", "usage", "error-context"] }
 domain = { path = "domain" }

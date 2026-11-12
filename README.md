@@ -69,7 +69,7 @@ YAML 文件，各项均必填（注明可选的除外），不允许其他字段
 | triage.limits | batch 每批最多消息条数，至多 200；intake 每轮最多入库的新消息条数；parallel 每轮最多并行分析或通知的不同话题数；poll_ms 轮询间隔；lookback_ms 首次启用时只处理多久以内的消息，之后入库的消息全部处理；决策时发生时间早于它的消息只归入话题、不触发转交；max_attempts 失败重试次数；retry_after_ms / retry_max_ms 重试等待的初始值与上限（逐次翻倍并加 ±1/4 抖动，上限至少 1 且不小于初始值，也是消息库故障时轮询退避的上限）；max_revivals 失败的批隔 retry_after_ms 自动重来的轮数，0 为不自动重来 |
 | triage.sizes | session_gap_ms 同一会话内相邻消息间隔超过它即另起一段；context_max_chars 单条消息的字数上限；label_chars 话题标签的字数；result_max_chars 分析结果字数上限 |
 | triage.topics | max_open 一次最多列出多少个未归档话题供归并，与 batch 之和至多 254；archive_after_ms 话题最后一条消息距今多久后归档（归档后只在强线索命中时重开）；reach 影响面权重：people、conversations、sources 为每多一个人、会话、来源类型加的分，cap 为加分上限，优先级＝紧急度 +（1 − 紧急度）× min(cap, 加分)；clues 强线索：patterns 每项 kind 与正则 pattern（有第 1 个分组取分组，否则取整个匹配），正文里相同的值把消息直接归入同一话题；subject 为邮件主题线索，先去掉 prefixes 里的前缀（小写），短于 min_chars 或在 ignore 里的主题不用；任一正则无效则 `serve` 以 sandbox_exit_code 退出 |
-| triage.redact | patterns 是按序执行的脱敏规则（pattern 为正则，placeholder 为替换文本，可含 `${1}`）；unknown_sender 是没有发送人名时的写法；任一正则无效则 `serve` 以 sandbox_exit_code 退出 |
+| triage.redact | patterns 是按序执行的脱敏规则（pattern 为正则，placeholder 为替换文本，可含 `${1}`；含 `{hash}` 时该处换成被替换值的带密钥 hash，同一值始终得到同一占位，hash 的对象缺省是整个匹配，`group` 指定为第几个分组）；hash_key 为 `${NAME}` 形式的环境变量，hash 的密钥；hash_chars 占位里 hash 的十六进制位数；digest_min_chars 正文不短于它才识别“同一内容转发到多处”；unknown_sender 是没有发送人名时的写法；任一正则无效或用了 `{hash}` 却读不到密钥则 `serve` 以 sandbox_exit_code 退出；更换密钥后新旧占位对不上，按占位归并跨批内容会失效，已存的行不会重算 |
 | triage.session | fresh 新会话追加在 codex 参数后的参数；resume 续写追加的参数（`{thread}` 换成会话 ID）；omitted 话题里未外发消息的占位模板（`{count}` 条数、`{reason}` 原因：`sealed` 仍是密文、`empty` 非文本、`risky` 筛查判为高风险、`unscreened` 筛查没有结论） |
 | triage.notice | template 发给本人的通知模板：`{label}` 话题标题、`{state}` 状态（按 states 换成显示文字，没配的原样）、`{score}` 优先级、`{urgency}` 紧急度、`{people}` `{conversations}` `{sources}` 影响面、`{changes}` 本次变化、`{late}` 晚到说明、`{topic}` 话题标识、`{analysis}` 分析结果；late 晚到说明的模板（`{time}` 为最后一条消息的发生时间，UTC），话题最后一条消息早于触发时间超过 late_after_ms 才写 |
 | triage.decide | 决策 HTTP 接口：url 为 `${NAME}` 形式的环境变量，外部地址须用 HTTPS，本机测试可用回环 HTTP；key 为可选的 `${NAME}` 环境变量；proxy 为可选的 `${NAME}` 环境变量，值形如 `http://127.0.0.1:<端口>`、`socks5://` 或 `socks5h://127.0.0.1:<端口>`（仅本机代理，无认证、无结尾 `/`，只用于 HTTPS 地址）；timeout_ms 为请求超时毫秒数 |
@@ -163,6 +163,7 @@ cd web && bun install --frozen-lockfile && bun run build && cd ..
 | DECISIONS_API_KEY | 决策接口的 API key |
 | CODEX_API_KEY | codex 专用的 API key |
 | CODEX_BASE_URL | codex 模型接口的完整地址（如 `https://<主机>/v1`，Responses 协议，端口须为 443）；展开进 codex 参数，`ps` 里本机可见 |
+| TRIAGE_HASH_KEY | 脱敏占位 hash 的密钥，任意足够长的随机串；只在本机使用，不外发 |
 | DECISIONS_PROXY | 可选，决策接口所走的本机 HTTP 或 SOCKS5 代理，配 `triage.decide.proxy` 时必填 |
 | SCREEN_URL | 可选本地模型接口的完整地址，仅允许带显式端口的回环 HTTP；启用 `triage.screen` 时必填 |
 | SELF_SENDER_ID | 本人的发送人 ID（消息里的 `sender_id`） |

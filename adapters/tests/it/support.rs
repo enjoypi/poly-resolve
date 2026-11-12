@@ -34,6 +34,7 @@ const CAP_CHARS: u32 = 1_000;
 const CHILD_EXIT: u64 = 300;
 const CIPHER_MIN: u32 = 32;
 const CONTEXT_CHARS: u32 = 10_000;
+const DIGEST_MIN: u32 = 12;
 const DWS_TIMEOUT: u64 = 60_000;
 const ERRORS: &str = r#"{"bad_request":{"code":"invalid"},"conflict":{"code":"clash"},"not_found":{"code":"absent"},"storage":{"code":"unavailable"},"unknown_action":{"code":"missing"},"unprocessable":{"code":"refused"}}"#;
 const EXEC_TIMEOUT: u64 = 5_000;
@@ -45,6 +46,7 @@ const FAKE: &str = concat!(
 const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/it/fixtures");
 pub(crate) const FRAGMENTS: &str = "title\nalice:QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo0MTIzNDU2\nQUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo0MTIzNDU2\nQUJDREVGR0hJSktMTU5PUFFSU1RV";
 const GAP: u64 = 3_600_000;
+const HASH_CHARS: u32 = 8;
 const HEAL_LIMIT: u32 = 2;
 const INTAKE: u32 = 50;
 const LABEL: u32 = 8;
@@ -308,6 +310,9 @@ impl Sandbox {
                 "urgent": {"name": "urgent"},
             },
             "redact": {
+                "digest_min_chars": DIGEST_MIN,
+                "hash_chars": HASH_CHARS,
+                "hash_key": "${CARGO_PKG_NAME}",
                 "patterns": [{"pattern": "[0-9]{11,}", "placeholder": "[num]"}],
                 "unknown_sender": "unknown",
             },

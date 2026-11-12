@@ -2,6 +2,7 @@ use serde_json::{Error, Value, from_str, json};
 
 use super::{Reply, call, patched};
 
+const COPIES: usize = 2;
 const FIRST_QUESTION: usize = 1;
 const HIGH: f64 = 0.9;
 const MINUTE: u64 = 60_000;
@@ -417,6 +418,35 @@ fn pack_rejects_invalid_rules_and_malformed_requests() {
     assert_eq!(call("pack", &invalid.to_string()).unwrap(), Err(400));
     assert_eq!(call("pack", "nope").unwrap(), Err(400));
     assert_eq!(call("pack", "{}").unwrap(), Err(400));
+}
+
+#[test]
+fn pack_sends_one_copy_of_repeated_lines() {
+    let copy = |entry: Value| patched(entry, "digest", &json!("d1"));
+    let lines = json!([
+        copy(entry(["k1", "c1", "forwarded"], NOON)),
+        copy(entry(["k2", "c2", "forwarded"], NOON + MINUTE)),
+        entry(["k3", "c2", "other"], NOON + MINUTE),
+    ]);
+    let reply = pack(&lines, &json!([]), &json!([])).unwrap().unwrap();
+    let body = body_of(&reply);
+    let input = input_of(&body);
+    assert_eq!(input.pointer("/0/lines/0/copies"), Some(&json!(COPIES)));
+    assert_eq!(
+        input.pointer("/1/lines/0"),
+        Some(&json!({"line": "L2", "repeat": "L1"}))
+    );
+    assert_eq!(input.pointer("/1/lines/1/copies"), None);
+    let layout = reply.get("layout").unwrap();
+    assert_eq!(layout.pointer("/lines/1/role"), Some(&json!("copy")));
+    let names: Vec<&str> = body
+        .get("questions")
+        .and_then(Value::as_array)
+        .unwrap()
+        .iter()
+        .filter_map(|question| question.get("name").and_then(Value::as_str))
+        .collect();
+    assert_eq!(names, ["urgent_1", "urgent_3", "topic_2"]);
 }
 
 #[test]

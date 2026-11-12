@@ -3,6 +3,7 @@ use serde_json::{Error, Value, json};
 use super::{Reply, call, patched};
 
 const CONVERSATIONS: u64 = 2;
+const COPIES: u64 = 2;
 const MINUTE: u64 = 60_000;
 const NOON: u64 = 1_783_483_235_000;
 const PEOPLE: u64 = 3;
@@ -30,6 +31,26 @@ fn brief_body(rows: &Value, template: &str, thread: &Value) -> Value {
         "template": template,
         "thread": thread,
     })
+}
+
+#[test]
+fn brief_keeps_one_copy_of_repeated_rows() {
+    let rows = json!([
+        {"digest": "d1", "occurred_at_ms": NOON, "sender": "alice", "text": "fwd"},
+        {"digest": "d1", "occurred_at_ms": NOON + MINUTE, "sender": "bob", "text": "fwd"},
+        {"digest": "d1", "occurred_at_ms": NOON + MINUTE, "omitted": "sealed", "sender": "", "text": ""},
+        {"digest": "d2", "occurred_at_ms": NOON + 2 * MINUTE, "sender": "carol", "text": "one"},
+        {"occurred_at_ms": NOON + 2 * MINUTE, "sender": "carol", "text": "two"},
+    ]);
+    let reply = brief(&rows, ROOMY, "{messages}").unwrap().unwrap();
+    let expected = json!([
+        {"copies": COPIES, "sender": "alice", "text": "fwd", "time_utc": "2026-07-08 04:00:35"},
+        {"note": "1 held: sealed"},
+        line("carol", "one", "04:02:35"),
+        line("carol", "two", "04:02:35"),
+    ])
+    .to_string();
+    assert_eq!(prompt_of(&reply), Some(expected));
 }
 
 #[test]

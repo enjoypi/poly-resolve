@@ -73,6 +73,9 @@ triage:
   prompts_dir: /nonexistent/prompts
   questions: {threshold: 0.8, topic: {min_confidence: 0.6, name: topic, new_label: n, none_label: z}, urgent: {name: urgent}}
   redact:
+    digest_min_chars: 12
+    hash_chars: 8
+    hash_key: \"${HOME}\"
     patterns:
       - pattern: \"[0-9]{11,}\"
         placeholder: \"[num]\"

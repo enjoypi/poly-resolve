@@ -1,6 +1,7 @@
 mod clue;
 mod line;
 mod pack;
+mod people;
 mod prompt;
 mod redact;
 mod reply;
@@ -16,6 +17,13 @@ type Reply = Result<Value, u16>;
 
 fn call(action: &str, request: &str) -> Result<Reply, Error> {
     match Fixture::new()?.dispatch(&local("triage", action, request)) {
+        Ok(response) => Ok(Ok(from_str(&response)?)),
+        Err(err) => Ok(Err(err.status())),
+    }
+}
+
+fn call_unsealed(action: &str, request: &str) -> Result<Reply, Error> {
+    match Fixture::new()?.dispatch_unsealed(&local("triage", action, request)) {
         Ok(response) => Ok(Ok(from_str(&response)?)),
         Err(err) => Ok(Err(err.status())),
     }

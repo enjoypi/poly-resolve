@@ -3,11 +3,13 @@ use domain::features::{Call, Context, Origin, Ports, Rules, Target, dispatch};
 use domain::inbox::{Paging, Query, Reader, Row};
 use domain::outbound::{Item, Listing, Outbox};
 use domain::prompts::Library;
+use domain::redact::Seal;
 use domain::{AppError, Errors};
 use serde_json::{Error, from_str, from_value, json};
 
 const BATCH: u64 = 1;
 pub(crate) const ERRORS: &str = r#"{"bad_request":{"code":"invalid"},"conflict":{"code":"clash"},"not_found":{"code":"absent"},"storage":{"code":"unavailable"},"unknown_action":{"code":"missing"},"unprocessable":{"code":"refused"}}"#;
+const HASH_CHARS: u32 = 8;
 pub(crate) const MARK: &str = "[x]";
 pub(crate) const PAGING: &str = r#"{"default":2,"max":3}"#;
 const STAMP: u64 = 1_000;
@@ -41,6 +43,7 @@ pub(crate) struct Fixture {
     errors: Errors,
     paging: Paging,
     placeholders: Vec<String>,
+    seal: Seal,
 }
 
 impl Fixture {
@@ -50,7 +53,10 @@ impl Fixture {
 
     fn dispatch_both(&self, ports: Ports<'_>, call: &Call<'_>) -> Result<String, AppError> {
         let rules = Rules::new(&self.paging).with_placeholders(&self.placeholders);
-        dispatch(&Context::new(&self.errors, rules, ports), call)
+        dispatch(
+            &Context::new(&self.errors, rules, ports).with_seal(&self.seal),
+            call,
+        )
     }
 
     pub(crate) fn dispatch_outbox(
@@ -81,6 +87,15 @@ impl Fixture {
         self.dispatch_both(Ports::new(&Rows::default(), &Sent::default(), roster), call)
     }
 
+    pub(crate) fn dispatch_unsealed(&self, call: &Call<'_>) -> Result<String, AppError> {
+        let rules = Rules::new(&self.paging);
+        let (reader, outbox, roster) = (Rows::default(), Sent::default(), Pool::default());
+        dispatch(
+            &Context::new(&self.errors, rules, Ports::new(&reader, &outbox, &roster)),
+            call,
+        )
+    }
+
     pub(crate) fn dispatch_with(
         &self,
         reader: &dyn Reader,
@@ -102,6 +117,7 @@ impl Fixture {
             errors: from_str(errors)?,
             paging: from_str(PAGING)?,
             placeholders: vec![MARK.to_owned()],
+            seal: Seal::new("test material", HASH_CHARS),
         })
     }
 }

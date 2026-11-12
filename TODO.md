@@ -7,4 +7,6 @@
 - 上线后首次启动会重新处理约 1500 条历史消息（此前跳过的本人、过期与积压上限外的消息），只归入话题不通知；观察决策接口是否限速
 - 上线话题第 ② 期前改线上配置：`triage.notice` 改成 `{late, late_after_ms, states, template}`（模板里 `{probability}` 换成 `{score}`）；删 `sizes.session_max_ms`、`sizes.topics_max_open`；加 `triage.topics`（照 `cli/config.yaml`）；线上提示词目录的 `session.md`、`followup.md` 换成仓库里的新版（回复第一行为 JSON，否则分析一律失败）
 - 第 ② 期上线后首次启动会把全部历史行补建线索索引，旧邮件的会话标识改成回复链；观察 `subject` 线索是否把无关邮件并进同一话题，是则加进 `topics.clues.subject.ignore`
-- 话题第 ③④ 期按根目录 `mighty-sauteeing-babbage.md` 继续
+- 上线话题第 ③ 期前：用 `sops` 往 `secrets/dev.enc.yaml`、`secrets/prod.enc.yaml` 加 `TRIAGE_HASH_KEY`（如 `openssl rand -hex 32` 的输出），pm3 的加密环境同步；线上配置的 `triage.redact` 加 `digest_min_chars`、`hash_chars`、`hash_key`，规则的占位照 `cli/config.yaml` 换成带 `{hash}` 的写法（两条“已隐藏”规则的正则多了第 2 个分组并加 `group: 2`）
+- 人员对应目前只按姓名（各来源里都唯一的同名才算同一人）；邮件签名与钉钉资料里的邮箱未用，确认 dws 有查询资料的命令后再补
+- 话题第 ④ 期按根目录 `mighty-sauteeing-babbage.md` 继续

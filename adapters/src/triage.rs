@@ -21,7 +21,7 @@ use self::batch::{seal, send};
 use self::config::Settings;
 use self::desk::Desk;
 use self::endpoint::Http;
-use self::intake::{form, index, intake, rerender};
+use self::intake::{form, identify, index, intake, rerender};
 use self::screen::screen;
 use crate::config::Settings as Ingest;
 use crate::http::{Call, Client as HttpClient, Reply};
@@ -131,6 +131,7 @@ impl Shift<'_> {
     async fn prepare(&mut self) -> Option<()> {
         intake(self);
         index(self);
+        identify(self);
         rerender(self);
         form(self);
         screen(self).await?;

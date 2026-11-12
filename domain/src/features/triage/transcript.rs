@@ -1,3 +1,5 @@
+use alloc::collections::BTreeMap;
+
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -8,6 +10,8 @@ use crate::features::ingest::clock;
 #[derive(Deserialize, JsonSchema)]
 #[schemars(rename = "TriageRow")]
 pub(crate) struct Row {
+    #[serde(default)]
+    digest: String,
     #[serde(default)]
     key: String,
     occurred_at_ms: u64,
@@ -22,6 +26,10 @@ pub(crate) struct Row {
 }
 
 impl Row {
+    pub(super) fn digest(&self) -> &str {
+        &self.digest
+    }
+
     pub(super) fn key(&self) -> &str {
         &self.key
     }
@@ -46,6 +54,14 @@ impl Row {
         if let Some((map, source)) = shown.as_object_mut().zip(self.source.as_ref()) {
             drop(map.insert("source".to_owned(), Value::String(source.clone())));
         }
+        let repeated = style
+            .copies
+            .get(&self.digest)
+            .copied()
+            .filter(|count| *count > 1);
+        if let Some((map, count)) = shown.as_object_mut().zip(repeated) {
+            drop(map.insert("copies".to_owned(), json!(count)));
+        }
         shown
     }
 
@@ -59,6 +75,7 @@ impl Row {
 }
 
 pub(super) struct Style<'style> {
+    copies: BTreeMap<String, usize>,
     mask: &'style Mask,
     max: usize,
 }
@@ -69,6 +86,22 @@ impl<'style> Style<'style> {
     }
 
     pub(super) const fn new(mask: &'style Mask, max: usize) -> Self {
-        Self { mask, max }
+        Self {
+            copies: BTreeMap::new(),
+            mask,
+            max,
+        }
+    }
+
+    pub(super) fn with_copies(self, rows: &[&Row]) -> Self {
+        let mut copies: BTreeMap<String, usize> = BTreeMap::new();
+        for row in rows
+            .iter()
+            .filter(|row| row.omitted.is_none() && !row.digest.is_empty())
+        {
+            let count = copies.entry(row.digest.clone()).or_default();
+            *count = count.saturating_add(1);
+        }
+        Self { copies, ..self }
     }
 }

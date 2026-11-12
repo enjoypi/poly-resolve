@@ -1,6 +1,6 @@
 use serde_json::{Error, Value, json};
 
-use super::{Reply, call, patched};
+use super::{Reply, call, call_unsealed, patched};
 
 const BODY: &str = "QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo0MTIzNDU2";
 const CIPHER_MIN: u32 = 32;
@@ -24,6 +24,42 @@ fn body(message: &Value) -> Value {
 
 fn line(message: &Value) -> Result<Reply, Error> {
     call("line", &body(message).to_string())
+}
+
+#[test]
+fn line_digests_long_text_with_the_key() {
+    let message = |text: &str| {
+        json!({
+            "conversation_id": "c1",
+            "sender_id": "u1",
+            "sender_name": "alice",
+            "text": text,
+        })
+    };
+    let digest = |text: &str, min: &Value| {
+        let request = patched(body(&message(text)), "digest_min_chars", min);
+        let reply = call("line", &request.to_string()).unwrap().unwrap();
+        reply
+            .get("digest")
+            .and_then(Value::as_str)
+            .unwrap()
+            .to_owned()
+    };
+    let long = digest("Forwarded   notice\nbody", &json!(SHORT));
+    assert_eq!(long.len(), 32);
+    assert_eq!(digest("forwarded notice body", &json!(SHORT)), long);
+    assert_ne!(digest("forwarded notice other", &json!(SHORT)), long);
+    assert_eq!(digest("tiny", &json!(SHORT)), "");
+    assert_eq!(digest("forwarded notice body", &Value::Null), "");
+    let request = patched(
+        body(&message("forwarded notice body")),
+        "digest_min_chars",
+        &json!(SHORT),
+    );
+    let unsealed = call_unsealed("line", &request.to_string())
+        .unwrap()
+        .unwrap();
+    assert_eq!(unsealed.get("digest"), Some(&json!("")));
 }
 
 #[test]

@@ -10,6 +10,7 @@ bench = false
 doctest = false
 
 [dependencies]
+blake3.workspace = true
 chrono.workspace = true
 mail-parser.workspace = true
 regex.workspace = true

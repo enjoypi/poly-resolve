@@ -4,11 +4,14 @@ use serde::{Deserialize, Serialize};
 use super::redact::{Mask, Rule};
 use crate::AppError;
 use crate::features::ingest::cipher::sealed;
+use crate::redact::Seal;
 
 #[derive(Deserialize, JsonSchema)]
 #[schemars(rename = "TriageLineRequest")]
 pub(crate) struct LineRequest {
     cipher_min_length: Option<u32>,
+    #[serde(default)]
+    digest_min_chars: Option<u32>,
     max_chars: u32,
     message: Subject,
     notify_conversation_id: Option<String>,
@@ -20,6 +23,7 @@ pub(crate) struct LineRequest {
 #[derive(JsonSchema, Serialize)]
 #[schemars(rename = "TriageLineResponse")]
 pub(crate) struct LineResponse {
+    digest: String,
     role: Option<Role>,
     sender: String,
     skip: Option<Skip>,
@@ -73,10 +77,20 @@ pub(crate) struct Subject {
     text: String,
 }
 
-pub(crate) fn line(req: &LineRequest) -> Result<LineResponse, AppError> {
+fn digest(req: &LineRequest, seal: Option<&Seal>) -> String {
+    let text = &req.message.text;
+    req.digest_min_chars
+        .and_then(|min| usize::try_from(min).ok())
+        .filter(|min| text.chars().count() >= *min)
+        .and(seal)
+        .map_or_default(|found| found.digest(text))
+}
+
+pub(crate) fn line(req: &LineRequest, seal: Option<&Seal>) -> Result<LineResponse, AppError> {
     let role = role(req);
     if let Some(skip) = reason(req) {
         return Ok(LineResponse {
+            digest: String::new(),
             role,
             sender: String::new(),
             skip: Some(skip),
@@ -84,7 +98,7 @@ pub(crate) fn line(req: &LineRequest) -> Result<LineResponse, AppError> {
             text: String::new(),
         });
     }
-    let mask = Mask::new(&req.rules)?;
+    let mask = Mask::new(&req.rules, seal)?;
     let message = &req.message;
     let name = if message.sender_name.is_empty() {
         &req.unknown_sender
@@ -93,6 +107,7 @@ pub(crate) fn line(req: &LineRequest) -> Result<LineResponse, AppError> {
     };
     let max = usize::try_from(req.max_chars).unwrap_or(usize::MAX);
     Ok(LineResponse {
+        digest: digest(req, seal),
         role,
         sender: mask.apply(name),
         skip: None,

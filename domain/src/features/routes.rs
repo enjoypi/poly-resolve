@@ -1,12 +1,12 @@
 use super::{
     Http, Route, Trace, asked, bare, batches, changed, fallible, health, ingest, keyed, listed,
-    messages, outbound, prompts, triage, typed,
+    messages, outbound, prompts, sealed, triage, typed,
 };
 use serde_json::to_string;
 
 use crate::AppError;
 
-pub(super) static ROUTES: [Route; 26] = [
+pub(super) static ROUTES: [Route; 27] = [
     Route {
         action: "list",
         call: |call, context| listed(call.params, context, batches::list),
@@ -169,7 +169,7 @@ pub(super) static ROUTES: [Route; 26] = [
     },
     Route {
         action: "brief",
-        call: |call, _context| fallible(call.request, triage::prompt::brief),
+        call: |call, context| sealed(call.request, context, triage::prompt::brief),
         failures: &[],
         feature: "triage",
         http: Http::Hidden,
@@ -185,7 +185,7 @@ pub(super) static ROUTES: [Route; 26] = [
     },
     Route {
         action: "line",
-        call: |call, _context| fallible(call.request, triage::line::line),
+        call: |call, context| sealed(call.request, context, triage::line::line),
         failures: &[],
         feature: "triage",
         http: Http::Hidden,
@@ -201,7 +201,15 @@ pub(super) static ROUTES: [Route; 26] = [
     },
     Route {
         action: "pack",
-        call: |call, _context| fallible(call.request, triage::pack::pack),
+        call: |call, context| sealed(call.request, context, triage::pack::pack),
+        failures: &[],
+        feature: "triage",
+        http: Http::Hidden,
+        trace: Trace::Redacted,
+    },
+    Route {
+        action: "people",
+        call: |call, _context| typed(call.request, triage::people::people),
         failures: &[],
         feature: "triage",
         http: Http::Hidden,
@@ -209,7 +217,7 @@ pub(super) static ROUTES: [Route; 26] = [
     },
     Route {
         action: "redact",
-        call: |call, _context| fallible(call.request, triage::redact::redact),
+        call: |call, context| sealed(call.request, context, triage::redact::redact),
         failures: &[],
         feature: "triage",
         http: Http::Hidden,

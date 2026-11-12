@@ -1,5 +1,7 @@
 pub(super) mod layout;
 
+use alloc::collections::BTreeMap;
+
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json, to_string};
@@ -8,8 +10,10 @@ use self::layout::{Choice, Layout, Placed, Segment};
 use super::redact::{Mask, Rule};
 use super::transcript::{Row, Style};
 use crate::AppError;
+use crate::redact::Seal;
 
 const AUTO: &str = "auto";
+const COPY: &str = "copy";
 pub(crate) const LINE: &str = "{line}";
 const NEW: &str = "new";
 const NONE: &str = "none";
@@ -214,6 +218,7 @@ fn choice(question: &Question, index: usize, options: &[Pick]) -> Value {
 
 fn draft(req: &PackRequest, found: &[Block<'_>], style: &Style<'_>) -> Draft {
     let mut seen: Vec<&str> = Vec::new();
+    let mut first: BTreeMap<&str, usize> = BTreeMap::new();
     let mut done = Draft {
         input: Vec::new(),
         lines: Vec::new(),
@@ -223,13 +228,21 @@ fn draft(req: &PackRequest, found: &[Block<'_>], style: &Style<'_>) -> Draft {
         let mut shown: Vec<Value> = Vec::new();
         for entry in &block.entries {
             let number = done.lines.len();
-            shown.push(labelled(&entry.row.render(style), &alias("L", number)));
-            if entry.row.role().is_empty() {
+            let digest = entry.row.digest();
+            let origin = first.get(digest).copied().filter(|_| !digest.is_empty());
+            let role = if let Some(before) = origin {
+                shown.push(json!({"line": alias("L", number), "repeat": alias("L", before)}));
+                COPY
+            } else {
+                let _: Option<usize> = first.insert(digest, number);
+                shown.push(labelled(&entry.row.render(style), &alias("L", number)));
+                entry.row.role()
+            };
+            if role.is_empty() {
                 done.urgent.push(predicate(&req.questions.urgent, number));
             }
             done.lines.push(
-                Placed::new(entry.key.clone(), entry.row.occurred_at_ms(), index)
-                    .with_role(entry.row.role()),
+                Placed::new(entry.key.clone(), entry.row.occurred_at_ms(), index).with_role(role),
             );
         }
         let conversation = block
@@ -338,10 +351,11 @@ fn options(req: &PackRequest, found: &[Block<'_>], style: &Style<'_>) -> Vec<Pic
         .collect()
 }
 
-pub(crate) fn pack(req: &PackRequest) -> Result<PackResponse, AppError> {
-    let mask = Mask::new(&req.rules)?;
+pub(crate) fn pack(req: &PackRequest, seal: Option<&Seal>) -> Result<PackResponse, AppError> {
+    let mask = Mask::new(&req.rules, seal)?;
     let max = usize::try_from(req.max_chars).unwrap_or(usize::MAX);
-    let style = Style::new(&mask, max);
+    let rows: Vec<&Row> = req.lines.iter().map(|entry| &entry.row).collect();
+    let style = Style::new(&mask, max).with_copies(&rows);
     let found = blocks(req);
     let drafted = draft(req, &found, &style);
     let options = options(req, &found, &style);

@@ -32,6 +32,16 @@ pub(super) fn form(shift: &Shift<'_>) {
     }
 }
 
+pub(super) fn identify(shift: &Shift<'_>) {
+    let senders = shift.ledger.strangers();
+    if senders.is_empty() {
+        return;
+    }
+    let identities = shift.desk.people(&senders);
+    let identified = shift.ledger.identify(&json!({"identities": identities}));
+    tracing::info!(identified, "senders identified");
+}
+
 pub(super) fn index(shift: &Shift<'_>) {
     let pending = shift
         .ledger
@@ -83,6 +93,7 @@ fn open(shift: &Shift<'_>, message: &Value, stamp: &Stamp<'_>) {
     let opened = shift.ledger.open_line(&json!({
         "at_ms": stamp.at_ms,
         "conversation_id": text(message, "conversation_id"),
+        "digest": line.digest(),
         "key": text(message, "key"),
         "occurred_at_ms": number(message, "occurred_at_ms"),
         "reason": line.skip(),

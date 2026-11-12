@@ -1,13 +1,15 @@
+mod topics;
+
 use alloc::collections::BTreeMap;
-use core::iter::once;
 use core::num::{NonZeroU32, NonZeroU64};
 use std::env;
 use std::path::PathBuf;
 
-use domain::redact::{Rule as Pattern, marks};
+use domain::redact::{Rule as Pattern, Seal, marks};
 use futures_util::future::join_all;
 use serde::{Deserialize, Serialize};
 
+use self::topics::{Notice, Topics};
 use super::endpoint::Http;
 use super::prompts::Folder;
 
@@ -15,30 +17,6 @@ use crate::pipe::probe;
 use crate::seatbelt::Sandbox;
 
 const THREAD: &str = "{thread}";
-
-#[derive(Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct Clue {
-    kind: String,
-    pattern: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Clues {
-    patterns: Vec<Clue>,
-    subject: Subject,
-}
-
-impl Clues {
-    pub(crate) fn patterns(&self) -> &[Clue] {
-        &self.patterns
-    }
-
-    pub(crate) const fn subject(&self) -> &Subject {
-        &self.subject
-    }
-}
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -112,33 +90,6 @@ enum Mode {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Notice {
-    late: String,
-    late_after_ms: u64,
-    states: BTreeMap<String, String>,
-    template: String,
-}
-
-impl Notice {
-    pub(crate) fn late(&self) -> &str {
-        &self.late
-    }
-
-    pub(crate) const fn late_after_ms(&self) -> u64 {
-        self.late_after_ms
-    }
-
-    pub(crate) const fn states(&self) -> &BTreeMap<String, String> {
-        &self.states
-    }
-
-    pub(crate) fn template(&self) -> &str {
-        &self.template
-    }
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct Question {
     name: String,
 }
@@ -171,18 +122,12 @@ impl Questions {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct Reach {
-    cap: f64,
-    conversations: f64,
-    people: f64,
-    sources: f64,
-}
-
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Redact {
+    digest_min_chars: u32,
+    hash_chars: NonZeroU32,
+    hash_key: Var,
     patterns: Vec<Rule>,
     unknown_sender: String,
 }
@@ -190,6 +135,8 @@ struct Redact {
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Rule {
+    #[serde(default)]
+    group: Option<usize>,
     pattern: String,
     placeholder: String,
 }
@@ -283,6 +230,10 @@ impl Settings {
         &self.decide
     }
 
+    pub(crate) const fn digest_min_chars(&self) -> u32 {
+        self.redact.digest_min_chars
+    }
+
     #[must_use = "开关需用于决定是否运行"]
     pub fn enabled(&self) -> bool {
         self.mode == Mode::Enabled
@@ -326,7 +277,8 @@ impl Settings {
 
     #[must_use = "缺失的环境变量需报告"]
     pub fn missing(&self) -> Vec<&str> {
-        once(&self.notify_target)
+        [&self.notify_target, &self.redact.hash_key]
+            .into_iter()
             .chain(self.codex.vars.values())
             .chain(self.codex.endpoint.iter().flat_map(Http::vars))
             .chain(self.decide.vars())
@@ -413,6 +365,13 @@ impl Settings {
         self.screen.as_ref()
     }
 
+    pub(crate) fn seal(&self) -> Option<Seal> {
+        self.redact
+            .hash_key
+            .value()
+            .map(|material| Seal::new(&material, self.redact.hash_chars.get()))
+    }
+
     pub(crate) const fn session_gap_ms(&self) -> u64 {
         self.sizes.session_gap_ms.get()
     }
@@ -433,14 +392,6 @@ struct Sizes {
     label_chars: NonZeroU32,
     result_max_chars: NonZeroU32,
     session_gap_ms: NonZeroU64,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct Subject {
-    ignore: Vec<String>,
-    min_chars: u32,
-    prefixes: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -467,33 +418,6 @@ impl Topic {
 
     pub(crate) fn none_label(&self) -> &str {
         &self.none_label
-    }
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Topics {
-    archive_after_ms: NonZeroU64,
-    clues: Clues,
-    max_open: NonZeroU32,
-    reach: Reach,
-}
-
-impl Topics {
-    pub(crate) const fn archive_after_ms(&self) -> u64 {
-        self.archive_after_ms.get()
-    }
-
-    pub(crate) const fn clues(&self) -> &Clues {
-        &self.clues
-    }
-
-    pub(crate) const fn max_open(&self) -> u32 {
-        self.max_open.get()
-    }
-
-    pub(crate) const fn reach(&self) -> &Reach {
-        &self.reach
     }
 }
 

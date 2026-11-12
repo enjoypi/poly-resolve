@@ -1,4 +1,4 @@
-use alloc::collections::BTreeMap;
+use alloc::collections::{BTreeMap, BTreeSet};
 
 use chrono::DateTime;
 use schemars::JsonSchema;
@@ -8,6 +8,7 @@ use serde_json::{Value, json};
 use super::redact::{Mask, Rule};
 use super::transcript::{Row, Style};
 use crate::AppError;
+use crate::redact::Seal;
 
 const ANALYSIS: &str = "{analysis}";
 const CHANGES: &str = "{changes}";
@@ -97,10 +98,11 @@ pub(crate) enum Start {
     Resume,
 }
 
-pub(crate) fn brief(req: &BriefRequest) -> Result<BriefResponse, AppError> {
-    let mask = Mask::new(&req.rules)?;
+pub(crate) fn brief(req: &BriefRequest, seal: Option<&Seal>) -> Result<BriefResponse, AppError> {
+    let mask = Mask::new(&req.rules, seal)?;
     let max = usize::try_from(req.max_chars).unwrap_or(usize::MAX);
-    let style = Style::new(&mask, max);
+    let mut sorted: Vec<&Row> = req.rows.iter().collect();
+    let style = Style::new(&mask, max).with_copies(&sorted);
     let (template, start) = req
         .thread
         .as_deref()
@@ -108,8 +110,11 @@ pub(crate) fn brief(req: &BriefRequest) -> Result<BriefResponse, AppError> {
         .map_or((&req.template, Start::Fresh), |_| {
             (&req.followup, Start::Resume)
         });
-    let mut sorted: Vec<&Row> = req.rows.iter().collect();
     sorted.sort_by_key(|row| (row.occurred_at_ms(), row.key()));
+    let mut seen: BTreeSet<&str> = BTreeSet::new();
+    sorted.retain(|row| {
+        row.omitted().is_some() || row.digest().is_empty() || seen.insert(row.digest())
+    });
     let mut lines: Vec<Value> = Vec::new();
     for run in
         sorted.chunk_by(|left, right| left.omitted().is_some() && left.omitted() == right.omitted())

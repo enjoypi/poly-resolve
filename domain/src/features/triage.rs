@@ -1,6 +1,7 @@
 pub(super) mod clue;
 pub(super) mod line;
 pub(super) mod pack;
+pub(super) mod people;
 pub(super) mod prompt;
 pub(crate) mod redact;
 pub(super) mod reply;

@@ -35,11 +35,11 @@ function item(key: string, patch: Record<string, unknown> = {}) {
 function listing() {
   return {
     items: [
-      item("a", { role: "own", text: "pin [x] <script>alert(1)</script>" }),
+      item("a", { role: "own", text: "pin [x] [n#a1b2] <script>alert(1)</script>" }),
       item("b", { reason: "sealed", sender: "", state: "withheld", text: "" }),
       item("c", { reason: "odd", role: "bot", source: "slack", state: "withheld" }),
     ],
-    placeholders: ["[x]"],
+    placeholders: ["[x]", "[n#{hash}]"],
   };
 }
 
@@ -86,8 +86,8 @@ test("只读列出外发记录：来源、会话、发送人、时间、角色�
   for (const part of [TEXT.batch(1), "邮箱 hf", "c1", "alice", "2026-10-28 01:20:09", "本人"]) {
     expect(meta).toContain(part);
   }
-  expect(root.querySelector(".payload")?.textContent).toBe("pin [x] <script>alert(1)</script>");
-  expect(root.querySelector(".masked")?.textContent).toBe("[x]");
+  expect(root.querySelector(".payload")?.textContent).toBe("pin [x] [n#a1b2] <script>alert(1)</script>");
+  expect([...root.querySelectorAll(".masked")].map((mark) => mark.textContent)).toEqual(["[x]", "[n#a1b2]"]);
   expect(root.querySelector("script")).toBeNull();
   expect(root.querySelectorAll("button")).toHaveLength(1);
   expect(root.querySelector("textarea")).toBeNull();

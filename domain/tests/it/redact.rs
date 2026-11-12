@@ -4,7 +4,7 @@ use std::fs;
 use serde_json::{Value, from_str as parse, json};
 use serde_saphyr::from_str;
 
-use domain::redact::{Redactor, Rule, marks};
+use domain::redact::{Redactor, Rule, Seal, marks};
 
 use crate::support::{Fixture, local};
 
@@ -36,6 +36,10 @@ fn log_redactor_applies_rules_in_order() {
     ];
     let redactor = Redactor::new(&rules).unwrap();
     assert_eq!(redactor.apply("pin 1234"), "pix [x]");
+    let hashed = [Rule::new("[0-9]{4}".to_owned(), "[n#{hash}]".to_owned())];
+    let plain = Redactor::new(&hashed).unwrap();
+    assert_eq!(plain.apply("pin 1234"), "pin [n#-]");
+    assert!(!format!("{:?}", Seal::new("material", 8)).contains("material"));
     let broken = [Rule::new("(".to_owned(), String::new())];
     assert_eq!(Redactor::new(&broken).unwrap_err().status(), 400);
 }

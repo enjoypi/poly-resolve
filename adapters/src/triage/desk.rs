@@ -1,5 +1,6 @@
 use domain::AppError;
 use domain::features::{Call, Context, Origin, Target, dispatch};
+use domain::redact::Seal;
 use serde::Deserialize;
 use serde_json::{Map, Value, from_str, json, to_value};
 
@@ -33,13 +34,18 @@ impl Brief {
 pub(crate) struct Desk<'desk> {
     context: &'desk Context<'desk>,
     ingest: &'desk Ingest,
+    seal: Option<Seal>,
     triage: &'desk Settings,
 }
 
 impl<'desk> Desk<'desk> {
     fn ask(&self, target: Target<'_>, request: &Value) -> Result<String, AppError> {
+        let context = self
+            .seal
+            .as_ref()
+            .map_or(*self.context, |seal| self.context.with_seal(seal));
         dispatch(
-            self.context,
+            &context,
             &Call::new(
                 Origin::new(TRANSPORT, None, None),
                 target,
@@ -83,6 +89,7 @@ impl<'desk> Desk<'desk> {
             .profile(&label(text(message, "source"), text(message, "account")));
         let request = json!({
             "cipher_min_length": profile.cipher_min_length(),
+            "digest_min_chars": triage.digest_min_chars(),
             "max_chars": triage.context_max_chars(),
             "message": message,
             "notify_conversation_id": profile.notify_conversation_id(),
@@ -106,7 +113,7 @@ impl<'desk> Desk<'desk> {
     }
 
     #[must_use = "桌面需交给调度"]
-    pub(crate) const fn new(
+    pub(crate) fn new(
         context: &'desk Context<'desk>,
         ingest: &'desk Ingest,
         triage: &'desk Settings,
@@ -114,6 +121,7 @@ impl<'desk> Desk<'desk> {
         Self {
             context,
             ingest,
+            seal: triage.seal(),
             triage,
         }
     }
@@ -171,6 +179,15 @@ impl<'desk> Desk<'desk> {
         });
         self.call("pack", &merged(parts, &extra))
             .map_or_default(|reply| from_str(&reply).ok())
+    }
+
+    pub(crate) fn people(&self, senders: &[Value]) -> Vec<Value> {
+        self.call("people", &json!({"senders": senders}))
+            .map_or_default(|reply| from_str::<Value>(&reply).unwrap_or_default())
+            .get("identities")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default()
     }
 
     pub(crate) fn prompt(&self, name: &str) -> Option<String> {
@@ -238,6 +255,7 @@ impl<'desk> Desk<'desk> {
 
 #[derive(Default, Deserialize)]
 pub(crate) struct Line {
+    digest: String,
     role: Option<String>,
     sender: String,
     skip: Option<String>,
@@ -246,6 +264,10 @@ pub(crate) struct Line {
 }
 
 impl Line {
+    pub(crate) fn digest(&self) -> &str {
+        &self.digest
+    }
+
     pub(crate) fn role(&self) -> &str {
         self.role.as_deref().unwrap_or_default()
     }

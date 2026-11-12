@@ -51,19 +51,15 @@
 - 归档只看 `last_at_ms`：强线索重开的归档话题若最后一条消息仍超龄，下一轮又归档。
 - 旧话题的 `reach` 为 `{}`，要到下次有新成员才重算；第 ④ 期的话题视图须容忍空值。
 
-## 第 ③ 期：keyed hash 占位、人员对应、转发去重
+## 第 ③ 期：已完成
 
-- 依赖：`blake3 = { version = "*", default-features = false, features = ["std"] }`。若出现 linker-info 或 `multiple_crate_versions`，改加 `pure` feature。
-- `redact.rs`：
-  - `Rule` 加 `kind` 和 `group`。有 kind 的规则把匹配值规范化，算 `keyed_hash`，占位写成 `<kind>#<前 8 位十六进制>`。单号不配规则。
-  - `marks` 改为输出占位前缀的正则，供页面标红。
-- 密钥：环境变量 `TRIAGE_HASH_KEY`（32 字节），由 cli 读入 `Context`。不实现 Debug，不进请求体；缺失时开关开启即启动失败。
-- 重新脱敏以 `messages.text` 原文为源，叠加 `lines.spans`（本地模型给出的遮盖片段），满足“每次外发前按当时规则”；删掉 STALE 和 RESTATE。
-- 新表 `identities(source, sender_id, person_id, name, email)`。`features/triage/people.rs` 判定同一人：邮箱相同即确定，规范化姓名全库唯一也算确定，有冲突时视为不同的人。reach 的人数按 `person_id` 计。
-- 转发去重：`lines.digest = blake3::hash(规范化正文)`。同一批内只外发一份，并注明出现在 N 处；reach 也按 digest 去重。
-- 钉钉资料邮箱：先确认 dws 有查询资料的命令；没有就退回到只按姓名和签名判定，并写进盲区。
-- 配置：`redact.patterns[].kind/group`、`redact.hash_chars`；同步改 `cli/config.yaml` 和 `domain/tests/it/redact.rs` 的样例。
-- 风险写进 README：换密钥后历史占位对不上。
+实现与原计划的出入，第 ④ 期以此为准：
+- 规则不加 `kind`：占位模板里写 `{hash}` 即按值 hash，`group` 指定 hash 哪个分组；密钥经 `redact.hash_key: "${TRIAGE_HASH_KEY}"` 读入，`Desk` 造 `Seal` 后用 `Context::with_seal` 附上，值为任意随机串（经 `derive_key`），不要求 32 字节。
+- 没有改成“按原文重新脱敏”：本地模型遮盖的片段是脱敏后文字的子串，规则一变就对不上原文，可能漏掉模型拦下的内容；仍在已存文字上叠加当前规则（hash 规则对自己产出的占位幂等），`STALE`、`RESTATE` 保留。
+- `marks` 不改成正则：`{hash}` 原样给页面，由页面换成十六进制匹配。
+- 转发去重：`lines.digest` 是带密钥的摘要（正文不短于 `digest_min_chars`），同时作为 `digest` 线索把各处的副本归入同一话题；同批只外发最早一条，其余以 `repeat` 指向它；影响面在 `REACH` 里按 `digest` 去重。
+- `identities(source, sender_id, person_id, name)` 没有 `email` 列；只按姓名对应，签名与钉钉资料邮箱未做，已写进 TODO.md 与需求的盲区。
+- `triage/config.rs` 超 512 行，话题与通知的子结构拆到 `triage/config/topics.rs`。
 
 ## 第 ④ 期：自动合并、拆分、移动，通知合并，话题视图
 

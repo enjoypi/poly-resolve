@@ -21,6 +21,10 @@ export const COPY_FEEDBACK_MS = 1500;
 
 export const DEFAULT_SORT = "occurred_at_ms";
 
+export const HASH = "{hash}";
+
+export const HASH_PATTERN = "[0-9a-f]+";
+
 export const DETAIL = {
   body: "text",
   conversation: "conversation_id",

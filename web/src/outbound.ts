@@ -1,6 +1,6 @@
 import type { components } from "./api.gen";
 import type { connect } from "./client";
-import { CARD_LIMIT, HELD, OUTBOUND_STATES, ROLES, SOURCES, TEXT } from "./config";
+import { CARD_LIMIT, HASH, HASH_PATTERN, HELD, OUTBOUND_STATES, ROLES, SOURCES, TEXT } from "./config";
 import { area, button } from "./dom";
 import { stamp } from "./stamp";
 
@@ -13,11 +13,12 @@ function escape(text: string): string {
 
 function paint(text: string, marks: string[]): Node[] {
   if (marks.length === 0) return [document.createTextNode(text)];
-  const pattern = new RegExp(`(${marks.map(escape).join("|")})`);
+  const source = marks.map((mark) => escape(mark).replace(escape(HASH), HASH_PATTERN)).join("|");
+  const whole = new RegExp(`^(?:${source})$`);
   return text
-    .split(pattern)
+    .split(new RegExp(`(${source})`))
     .filter((part) => part !== "")
-    .map((part) => (marks.includes(part) ? area("span", "masked", part) : document.createTextNode(part)));
+    .map((part) => (whole.test(part) ? area("span", "masked", part) : document.createTextNode(part)));
 }
 
 function option(label: string, value: string): HTMLOptionElement {

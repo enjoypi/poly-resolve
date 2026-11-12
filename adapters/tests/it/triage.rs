@@ -13,6 +13,7 @@ mod repack;
 mod revive;
 mod rig;
 mod screen;
+mod seal;
 pub(crate) mod stub;
 mod thread;
 mod topic;

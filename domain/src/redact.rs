@@ -1,7 +1,13 @@
 use core::cmp::Reverse;
 
+use blake3::{Hasher, derive_key};
+
 use crate::AppError;
-use crate::features::triage::redact::{Mask, Rule as Step};
+use crate::features::triage::redact::{HASH, Mask, Rule as Step};
+
+const DIGEST_CHARS: usize = 32;
+const DOMAIN: &str = "poly-resolve triage placeholder";
+const PLAIN: &str = "-";
 
 #[derive(Debug)]
 pub struct Redactor {
@@ -17,10 +23,10 @@ impl Redactor {
     pub fn new(rules: &[Rule]) -> Result<Self, AppError> {
         let steps: Vec<Step> = rules
             .iter()
-            .map(|rule| Step::new(&rule.pattern, &rule.placeholder))
+            .map(|rule| Step::new(&rule.pattern, &rule.placeholder.replace(HASH, PLAIN)))
             .collect();
         Ok(Self {
-            mask: Mask::new(&steps)?,
+            mask: Mask::new(&steps, None)?,
         })
     }
 }
@@ -38,6 +44,46 @@ impl Rule {
             pattern,
             placeholder,
         }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Seal {
+    chars: usize,
+    hasher: Hasher,
+}
+
+impl Seal {
+    pub(crate) const fn chars(&self) -> usize {
+        self.chars
+    }
+
+    pub(crate) fn digest(&self, text: &str) -> String {
+        let normal = text.split_whitespace().collect::<Vec<_>>().join(" ");
+        self.hex(&normal, DIGEST_CHARS)
+    }
+
+    fn hex(&self, value: &str, chars: usize) -> String {
+        self.hasher
+            .clone()
+            .update(value.trim().to_lowercase().as_bytes())
+            .finalize()
+            .to_hex()
+            .chars()
+            .take(chars)
+            .collect()
+    }
+
+    #[must_use = "密钥需交给 Context"]
+    pub fn new(material: &str, chars: u32) -> Self {
+        Self {
+            chars: usize::try_from(chars).unwrap_or(usize::MAX),
+            hasher: Hasher::new_keyed(&derive_key(DOMAIN, material.as_bytes())),
+        }
+    }
+
+    pub(crate) fn tag(&self, value: &str) -> String {
+        self.hex(value, self.chars)
     }
 }
 

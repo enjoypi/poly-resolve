@@ -21,6 +21,7 @@ use crate::batches::Roster;
 use crate::inbox::{Paging, Reader};
 use crate::outbound::Outbox;
 use crate::prompts::{Library, Vacant};
+use crate::redact::Seal;
 use crate::{AppError, Errors};
 
 static VACANT: Vacant = Vacant;
@@ -95,6 +96,21 @@ impl<'ctx> Context<'ctx> {
 
     const fn roster(&self) -> &dyn Roster {
         self.ports.roster
+    }
+
+    const fn seal(&self) -> Option<&Seal> {
+        self.rules.seal
+    }
+
+    #[must_use = "上下文需交给 dispatch"]
+    pub const fn with_seal(self, seal: &'ctx Seal) -> Self {
+        Self {
+            rules: Rules {
+                seal: Some(seal),
+                ..self.rules
+            },
+            ..self
+        }
     }
 }
 
@@ -187,6 +203,7 @@ struct Route {
 pub struct Rules<'rules> {
     paging: &'rules Paging,
     placeholders: &'rules [String],
+    seal: Option<&'rules Seal>,
 }
 
 impl<'rules> Rules<'rules> {
@@ -195,6 +212,7 @@ impl<'rules> Rules<'rules> {
         Self {
             paging,
             placeholders: &[],
+            seal: None,
         }
     }
 
@@ -206,6 +224,8 @@ impl<'rules> Rules<'rules> {
         }
     }
 }
+
+type Sealed<Req, Resp> = fn(&Req, Option<&Seal>) -> Result<Resp, AppError>;
 
 type Shapes = (Option<Schema>, Option<Schema>, Schema);
 
@@ -356,6 +376,19 @@ fn route(target: Target<'_>) -> Option<&'static Route> {
     ROUTES
         .iter()
         .find(|hit| hit.feature == target.feature && hit.action == target.action)
+}
+
+fn sealed<Req, Resp>(
+    request: &str,
+    context: &Context<'_>,
+    handler: Sealed<Req, Resp>,
+) -> Result<String, AppError>
+where
+    Req: DeserializeOwned,
+    Resp: Serialize,
+{
+    let resp = handler(&decode(request)?, context.seal())?;
+    Ok(to_string(&resp).unwrap_or_default())
 }
 
 fn typed<Req, Resp>(request: &str, handler: fn(Req) -> Resp) -> Result<String, AppError>
