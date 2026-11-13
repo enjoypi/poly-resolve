@@ -1,12 +1,9 @@
 # TODO
 
-- 线上已于 2026-11-12 部署并切自动通过加本地模型筛查；筛查地址暂以字面量写在线上配置的 `triage.screen.http.url`，把 `SCREEN_URL` 加进 pm3 的加密环境后改回 `${SCREEN_URL}`
-- 抽查 `misses` 表：`unmasked`、`unscreened` 样本里误判多则改 `screen.md`；`rules` 样本里反复出现的模式写成 `triage.redact.patterns` 规则
-- 运行一周后按真实流量复核 `questions.threshold`（现 0.85）与 `triage.questions.topic.min_confidence`，观察决策接口限速；限速则调小 `batch`；观察期间通知改发本人测试会话
-- 上线话题第 ① 期前改线上配置：删 `triage.review` 与 `limits` 的 `backlog_max_ms`、`handoff_cooldown_ms`、`max_decisions_per_hour`、`max_handoffs_per_hour`；加 `questions.topic.none_label`、`session.omitted`、`screen.min_chars`；各邮箱加发件文件夹数据源；授权范围补上本人消息与自动邮件
-- 上线后首次启动会重新处理约 1500 条历史消息（此前跳过的本人、过期与积压上限外的消息），只归入话题不通知；观察决策接口是否限速
-- 上线话题第 ② 期前改线上配置：`triage.notice` 改成 `{late, late_after_ms, states, template}`（模板里 `{probability}` 换成 `{score}`）；删 `sizes.session_max_ms`、`sizes.topics_max_open`；加 `triage.topics`（照 `cli/config.yaml`）；线上提示词目录的 `session.md`、`followup.md` 换成仓库里的新版（回复第一行为 JSON，否则分析一律失败）
-- 第 ② 期上线后首次启动会把全部历史行补建线索索引，旧邮件的会话标识改成回复链；观察 `subject` 线索是否把无关邮件并进同一话题，是则加进 `topics.clues.subject.ignore`
-- 上线话题第 ③ 期前：用 `sops` 往 `secrets/dev.enc.yaml`、`secrets/prod.enc.yaml` 加 `TRIAGE_HASH_KEY`（如 `openssl rand -hex 32` 的输出），pm3 的加密环境同步；线上配置的 `triage.redact` 加 `digest_min_chars`、`hash_chars`、`hash_key`，规则的占位照 `cli/config.yaml` 换成带 `{hash}` 的写法（两条“已隐藏”规则的正则多了第 2 个分组并加 `group: 2`）
-- 上线话题第 ④ 期前改线上配置：线上提示词目录加 `review.md`；加 `questions.review`、`limits.notice_cooldown_ms`、`notice.origins`、`notice.summary`、`topics.merge_after`、`topics.review_max`、`topics.split_after`（均照 `cli/config.yaml`）；通知模板可加 `{origin}`
-- 第 ④ 期上线后观察 `changes` 表（话题详情页的自动调整记录）：误合并多则调大 `topics.merge_after` 或改 `review.md`，误拆多则调大 `topics.split_after`
+- 各邮箱加发件文件夹数据源：需要两个邮箱发件文件夹的准确名字；`account` 另取（如 `t4f-sent`），`initial_backfill_ms` 先用 1 天；上线后看日志里新账号是否反复出现 `imap session ended`（文件夹名写错时如此）
+- 2026-11-14 起（上线次日）：
+  - `misses` 表按 `kind` 与日期计数；`rules` 里同一片段出现 3 次以上，请用户看原文后写成 `triage.redact.patterns` 规则；`unscreened` 超过同期筛查行数 5% 再调大 `screen.max_tokens`（现 512）；`unmasked` 超过 2% 改 `screen.md`
+  - `changes` 表按类型、原因、日期计数，随机抽 10 条在话题详情页核对；误合并 2 条以上把 `topics.merge_after` 调到 3 或改 `review.md`，误拆 2 条以上把 `topics.split_after` 调到 3
+  - `subject` 线索：跨 3 个以上会话而互不相关的主题加进 `topics.clues.subject.ignore`
+- 2026-11-20 起（上线一周后）：看话题分数分布、每日通知数、决策接口非 200 的次数，复核 `questions.threshold`（现 0.85）、`questions.topic.min_confidence`、`topics.clues.max_conversations`；决策接口限速则调小 `limits.batch`
+- 线上备份 `~/.local/share/poly-resolve/backup-20261113/` 含明文消息，观察期结束（2026-11-20）后删除
