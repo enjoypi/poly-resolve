@@ -142,7 +142,7 @@ export const TEXT = {
   all: "加载全部",
   back: "消息",
   batch: (id: number) => `批 ${id}`,
-  blind: "已知盲区：未外发、已跳过的消息不参与分析；邮件签名与钉钉资料里的邮箱未用于对应同一人。",
+  blind: "已知盲区：未外发、已跳过的消息不参与分析；钉钉与邮箱之间只按姓名对应同一人。",
   brand: "Poly Resolve",
   changes: (count: number) => `自动调整记录（${count}）`,
   capped: (max: number) => `已达 ${max} 条上限，请缩小时间范围。`,

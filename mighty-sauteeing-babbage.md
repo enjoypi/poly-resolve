@@ -75,7 +75,9 @@
 
 完成后：`TODO.md` 删上线相关各项；`backup-<日期>` 观察期结束后删除。
 
-## 第 C 期：人员按邮箱对应（代码，上线稳定后做，一个 commit）
+## 第 C 期：人员按邮箱对应（代码，上线稳定后做，一个 commit）——验证后止步
+
+验证结论：消息里的发送人标识是 openDingTalkId，经 `contact user get-by-open-dingtalk-id` 只得 `user_id`；`contact user get` 与 `contact user search` 都不返回邮箱；`get-self` 有 `orgEmail` 但只限本人；花名册 `profile` 报“操作人无花名册管理权限”。拿不到同事的邮箱，按计划止步，结论已写入需求文档的盲区。
 
 先验证：在沙箱策略下真实调用一次 `dws contact user get-by-dingtalk-id`（查本人），确认参数形式、返回里邮箱字段名、失败时的退出码与输出。字段不含邮箱则本期止步，把结论记进需求文档的盲区。
 
