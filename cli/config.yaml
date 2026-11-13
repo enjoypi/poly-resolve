@@ -133,14 +133,21 @@ triage:
       open: 进行中
       resolved: 已解决
     summary:
-      item: "【{state}】{label}｜优先级 {score}"
+      item: "- 【{state}】{label}｜优先级 {score}"
       template: |-
         停机期间有 {count} 个话题的结论更新，详情见话题页：
+
         {items}
     template: |-
-      【{state}】{label}｜优先级 {score}（紧急度 {urgency}，{people} 人、{conversations} 个会话、{sources} 个来源）{late}{origin}
-      变化：{changes}
+      **【{state}】{label}**
+
+      **变化**：{changes}
+
       {analysis}
+
+      ---
+
+      优先级 {score}｜紧急度 {urgency}｜{people} 人、{conversations} 个会话、{sources} 个来源{late}{origin}
   notify:
     args:
       - chat
