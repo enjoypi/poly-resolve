@@ -4,6 +4,7 @@ use super::{Reply, call};
 
 const MIN_CHARS: u32 = 4;
 const SECRET: &str = "abc-secret-9";
+const STAMPED: &str = "[mail#3fa2c1d0]";
 
 fn completion(content: &Value) -> String {
     json!({"choices": [{"message": {"content": content.to_string()}}]}).to_string()
@@ -56,8 +57,8 @@ fn screened_flags_risky_lines_without_usable_spans_and_missing_verdicts() {
 #[test]
 fn screened_masks_valid_spans_and_keeps_known_hints_once() {
     let content = json!({"lines": [
-        verdict("L1", "high", [&json!([SECRET, "  ", "no", "absent-text"]), &json!(["t3-0", "zzz", "t3-0"])]),
-        verdict("L2", "low", [&json!([]), &json!(["t4-0"])]),
+        verdict("L1", "high", [&json!([SECRET, "  ", "no", "absent-text"]), &json!(["T1", "zzz", "t3-0", "T1"])]),
+        verdict("L2", "low", [&json!([]), &json!(["T2"])]),
         verdict("L3", "low", [&json!([]), &json!([])]),
     ]});
     let reply = screened(&completion(&content)).unwrap().unwrap();
@@ -67,6 +68,35 @@ fn screened_masks_valid_spans_and_keeps_known_hints_once() {
             {"flag": "", "hints": ["t3-0"], "key": "k1", "spans": [SECRET], "text": "token [x] here"},
             {"flag": "", "hints": ["t4-0"], "key": "k2", "spans": [], "text": "plain words"},
             {"flag": "", "hints": [], "key": "k3", "spans": [], "text": "more words"},
+        ]))
+    );
+}
+
+#[test]
+fn screened_never_masks_placeholders_again() {
+    let request = json!({
+        "lines": [
+            {"key": "k1", "text": format!("mail {STAMPED} token {SECRET}")},
+            {"key": "k2", "text": format!("key: {STAMPED}")},
+            {"key": "k3", "text": "nothing here"},
+        ],
+        "marks": ["[mail#{hash}]", "[x]"],
+        "min_chars": MIN_CHARS,
+        "placeholder": "[x]",
+        "response": completion(&json!({"lines": [
+            verdict("L1", "high", [&json!([STAMPED, SECRET]), &json!([])]),
+            verdict("L2", "high", [&json!([format!("key: {STAMPED}")]), &json!([])]),
+            verdict("L3", "high", [&json!([]), &json!([])]),
+        ]})),
+        "topics": [],
+    });
+    let reply = call("screened", &request.to_string()).unwrap().unwrap();
+    assert_eq!(
+        reply.get("lines"),
+        Some(&json!([
+            {"flag": "", "hints": [], "key": "k1", "spans": [SECRET], "text": format!("mail {STAMPED} token [x]")},
+            {"flag": "", "hints": [], "key": "k2", "spans": [], "text": format!("key: {STAMPED}")},
+            {"flag": "unmasked", "hints": [], "key": "k3", "spans": [], "text": "nothing here"},
         ]))
     );
 }

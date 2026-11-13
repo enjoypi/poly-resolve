@@ -40,10 +40,7 @@ fn screen_asks_for_a_json_verdict_on_aliased_lines() {
             .unwrap(),
     )
     .unwrap();
-    assert_eq!(
-        known,
-        json!({"topics": [{"label": "old", "topic": "t3-0"}]})
-    );
+    assert_eq!(known, json!({"topics": [{"label": "old", "topic": "T1"}]}));
     let shown: Value = from_str(
         body.pointer("/messages/2/content")
             .and_then(Value::as_str)

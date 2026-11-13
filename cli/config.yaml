@@ -207,6 +207,9 @@ triage:
       - pattern: '(?i)([A-Za-z0-9_.-]*(?:key|secret|token|password|passwd|pwd)[A-Za-z0-9_.-]*[ \t]*[=:][ \t]*)([^\s,，;；]{1,128})'
         placeholder: "${1}[已隐藏#{hash}]"
         group: 2
+      - pattern: '(?i)((?:验证码|校验码|动态码|登录码|登录代码|安全码|verification code|security code|login code|one-time code|passcode|otp)[^\n]{0,80}?\s{1,8})([0-9]{4,8})\b'
+        placeholder: "${1}[已隐藏#{hash}]"
+        group: 2
       - pattern: '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}'
         placeholder: "[邮箱#{hash}]"
       - pattern: '(?:\+?86[ -]?)?1[3-9][0-9][ -]?[0-9]{4}[ -]?[0-9]{4}'

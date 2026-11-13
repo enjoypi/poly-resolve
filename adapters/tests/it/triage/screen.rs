@@ -149,7 +149,7 @@ async fn hints_follow_renamed_topics() {
     sandbox
         .write(
             "screen.json",
-            r#"{"lines":[{"line":"L1","risk":"low","spans":[],"topics":["t1-0"]}]}"#,
+            r#"{"lines":[{"line":"L1","risk":"low","spans":[],"topics":["T1"]}]}"#,
         )
         .unwrap();
     sandbox
@@ -191,7 +191,7 @@ async fn hints_narrow_the_topic_options() {
     sandbox
         .write(
             "screen.json",
-            r#"{"lines":[{"line":"L1","risk":"low","spans":[],"topics":["t1-0"]}]}"#,
+            r#"{"lines":[{"line":"L1","risk":"low","spans":[],"topics":["T1"]}]}"#,
         )
         .unwrap();
     let mut patch = screened(&sandbox);

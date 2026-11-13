@@ -120,6 +120,13 @@ fn secrets() -> Vec<(String, &'static str)> {
         ("pwd=hunter2xyz".to_owned(), "hunter2xyz"),
         (format!("{password}hunter2xyz"), "hunter2xyz"),
         (format!("{code}123456"), "123456"),
+        (format!("{code}\u{662f}\n 482913\n"), "482913"),
+        (format!("{code}\n\n482913"), "482913"),
+        (
+            "Enter this temporary verification code to continue:\n\n482913".to_owned(),
+            "482913",
+        ),
+        ("Your login code is 482913.".to_owned(), "482913"),
         ("DB_PASSWORD=hunter2xyz".to_owned(), "hunter2xyz"),
         ("pass\u{200b}word: hunter2xyz".to_owned(), "hunter2xyz"),
         ("mail bob@example.com".to_owned(), "bob@example.com"),

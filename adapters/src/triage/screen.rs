@@ -185,6 +185,7 @@ fn land(shift: &Shift<'_>, round: &Round<'_>, landing: Landing) -> Result<(), St
         .desk
         .screened(&json!({
             "lines": [candidate(&job.line)],
+            "marks": shift.triage.marks(),
             "min_chars": round.setup.min_chars(),
             "placeholder": round.setup.placeholder(),
             "response": reply.body(),

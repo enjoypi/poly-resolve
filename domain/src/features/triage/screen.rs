@@ -56,7 +56,8 @@ pub(crate) fn screen(req: ScreenRequest) -> ScreenResponse {
         .collect();
     let known: Vec<Value> = topics
         .iter()
-        .map(|open| json!({"label": open.label(), "topic": open.topic()}))
+        .enumerate()
+        .map(|(index, open)| json!({"label": open.label(), "topic": alias("T", index)}))
         .collect();
     let body = json!({
         "messages": [
