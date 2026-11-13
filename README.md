@@ -93,7 +93,7 @@ RESTful，路径挂在 `/api` 下，请求与响应体为 JSON（`content-type: 
 | `GET /api/outbound?state=&limit=` | 只读列出外发记录，缺省列已外发（`approved`），`state=withheld` 列未外发；`placeholders` 为全部脱敏占位符 |
 | `GET /api/topics?state=&limit=` | 只读列出话题（按最近进展降序，`state` 可选：open、resolved、cancelled、archived），并给出话题与消息各状态的数量 |
 | `GET /api/sources` | 各数据源的状态（ok、retrying、manual）、最近成功时间、最近一条消息时间、连续失败次数，以及分析、决策、通知、筛查各自的连续失败次数 |
-| `GET /api/usage?limit=` | 最近 limit 个 UTC 日按日、按类型的调用次数、失败次数与 token 用量 |
+| `GET /api/usage?limit=` | 最近 limit 个 UTC 日按日、按类型的调用次数、失败次数与 token 用量；决策取接口返回的 `usage`，分析取 codex 的 `turn.completed`，续写会话已扣除此前累计，输入含命中缓存的部分 |
 | `GET /api/topics/{topic_id}` | 一个话题的时间线（未外发的成员不带正文，写明原因）与自动合并、拆分、移动记录；已并入别处的旧标识跳到现话题，不存在则 404 |
 
 | 请求头 | 说明 |
@@ -252,7 +252,7 @@ topics：该消息可能属于的已有话题别名（如 T1），至多 3 个�
 
 实测（合成消息 120 条共 4.3 万字，含 3 条约 1.1 万字的长消息，每条请求带 20 个开放话题，并发 4，连跑 3 轮）：每条都有判断；25 个埋入的密钥遮住 23 个，漏掉的 1 个在长消息末尾；95 条正常消息有 4 条被判高风险；每轮 5 至 9 分钟，最慢一条 50 至 80 秒，`timeout_ms` 按最慢一条留足余量。单条消息连同提示词与话题须放得进共享上下文（约 0.7 token/字）。
 
-漏判样本：模型遮住了规则没拦住的片段（`rules`）、模型判高风险却给不出片段（`unmasked`）、模型给不出可用判断（`unscreened`）时，该条当时的文字与片段存进消息库的 `misses` 表，不经接口与日志返回、不自动清理；查看：`sqlite3 -readonly <库> "SELECT kind, text, spans FROM misses"`。
+漏判样本：模型遮住了规则没拦住的片段（`rules`）、模型判高风险却给不出片段（`unmasked`）、模型给不出可用判断（`unscreened`）时，该条当时的文字与片段存进消息库的 `misses` 表，不经接口与日志返回，随 `topics.retain` 保留期清空；查看：`sqlite3 -readonly <库> "SELECT kind, text, spans FROM misses"`。
 
 Qwen3 默认先输出思考过程，提示词末尾的 `/no_think` 关掉它。4B 模型的话题候选常有偏差，只用于收窄选项。
 
