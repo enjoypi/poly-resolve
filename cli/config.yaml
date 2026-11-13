@@ -244,6 +244,7 @@ triage:
   topics:
     archive_after_ms: 1209600000
     clues:
+      max_conversations: 5
       patterns:
         - kind: link
           pattern: '(?i)https?://[a-z0-9._~:/?#@!$&*+,;=%\[\]()''-]{12,}'

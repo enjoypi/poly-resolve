@@ -59,7 +59,7 @@
 
 - 只读，不自动轮询；列表 `GET /api/topics` 取 `CARD_LIMIT` 条，`state` 取下拉框（空为全部，其余为 `TOPIC_STATES`），页首三行：话题各状态数量、消息各状态数量（原因按 `HELD` 映射）、已知盲区 `TEXT.blind`
 - 每个话题一张卡片（类 `review topic`）：标题（空则用话题 ID）链到 `TOPIC_HASH` + 编码后的 ID，说明行为状态、优先级与紧急度（缺失显示 `TEXT.none`）、人数与会话数、来源、消息数、最近进展时间，再是最新分析（`<pre>` 文本）
-- 详情 `GET /api/topics/{topic_id}`：话题卡片、时间线（每条一张卡片：时间、来源、会话、发送人、角色、归入方式 `VIAS`；状态不是 `approved` 的加 `flagged` 并写状态与原因，没有正文的不放 `<pre>`）、自动调整记录（类 `review change`：时间、类型 `CHANGE_KINDS`、起止话题与条数、原因、状态）
+- 详情 `GET /api/topics/{topic_id}`：话题卡片、时间线（每条一张卡片：时间、来源、会话、发送人、角色、归入方式 `VIAS`；状态不是 `approved` 的加 `flagged` 并写状态与原因，没有正文的不放 `<pre>`）、自动调整记录（类 `review change`：时间、类型 `CHANGE_KINDS`、起止话题与条数、原因 `CHANGE_REASONS`（未登记原样）、状态）
 - 消息详情“全部字段”里 `DETAIL.topic` 的值是指向话题详情的链接（`detail.ts` 的 `jump`）
 
 ## 失败批页

@@ -315,6 +315,10 @@ impl Ledger {
         !self.rows(sql::SUPERSEDED, args).is_empty()
     }
 
+    pub(crate) fn suspect(&self, args: &Value) -> usize {
+        self.exec(sql::SUSPECT, args)
+    }
+
     pub(crate) fn topic_lines(&self, args: &Value) -> Vec<Value> {
         self.rows(sql::TOPIC_LINES, args)
     }

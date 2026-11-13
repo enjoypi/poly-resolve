@@ -4,14 +4,18 @@ use serde_json::json;
 
 use super::rig::{
     KEY, LATER, PLACEMENTS, QUICK, SECOND, SHORT, THIRD, TOPICS, decided, logged, questions_of,
-    seed, seed_from, start, table,
+    seed, seed_from, seed_raw, start, table,
 };
 use crate::support::{Fallible, Sandbox};
 
 const ALIASES: &str = "SELECT old || '|' || new AS item FROM topic_aliases ORDER BY old";
 const CHANGES: &str = "SELECT kind || '|' || from_topic || '|' || to_topic || '|' || state || '|' || reason AS item FROM changes ORDER BY id";
 const FOURTH: &str = "dingtalk:acct:m4";
+const ORIGIN: &str = r#"{"message_id":"m1"}"#;
+const PAIR: u64 = 2;
+const PLAIN: &str = "{}";
 const RELATIONS: &str = "SELECT a || '|' || b || '|' || kind || '|' || count AS item FROM relations ORDER BY a, b, kind";
+const REPLY: &str = r#"{"in_reply_to":"m1"}"#;
 const STATES: &str = "SELECT key || '|' || state AS item FROM alerts ORDER BY key";
 const VIA: &str = "SELECT key || '|' || topic_id || '|' || via AS item FROM members ORDER BY key";
 
@@ -53,6 +57,26 @@ async fn blocked_and_orphaned_changes_wait_or_drop() {
         ["t1-0@1|pending", "t1-1@1|merged"]
     );
     assert_eq!(table(&sandbox, TOPICS).unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn changes_wait_until_every_line_has_clues() {
+    let sandbox = Sandbox::new("regroup-unindexed").unwrap();
+    seed(&sandbox, &[(KEY, "u1", "c1", "server down")]).unwrap();
+    sandbox
+        .seed("INSERT INTO changes (kind, from_topic, to_topic, keys, reason, state, at_ms) VALUES ('merge', 't9-9', 't8-8', '[]', 'vote', 'pending', 1);")
+        .unwrap();
+    let broken = json!({"topics": {"clues": {"patterns": [{"kind": "x", "pattern": "("}]}}});
+    start(&sandbox, &broken, QUICK).await.unwrap();
+    assert_eq!(
+        table(&sandbox, CHANGES).unwrap(),
+        ["merge|t9-9|t8-8|pending|vote"]
+    );
+    start(&sandbox, &json!({}), QUICK).await.unwrap();
+    assert_eq!(
+        table(&sandbox, CHANGES).unwrap(),
+        ["merge|t9-9|t8-8|dropped|vote"]
+    );
 }
 
 #[tokio::test]
@@ -119,21 +143,29 @@ async fn kept_choices_are_not_asked_again() {
 #[tokio::test]
 async fn minor_overlaps_move_only_the_shared_lines() {
     let sandbox = Sandbox::new("regroup-move").unwrap();
-    seed(
+    seed_raw(
         &sandbox,
         &[
-            (KEY, "u1", "c1", "OPS-1 down"),
-            (SECOND, "u2", "c2", "hello"),
-            (THIRD, "u2", "c2", "see OPS-1"),
-            (FOURTH, "u2", "c2", "bye"),
+            ((KEY, "u1", "c1", "server down"), ORIGIN),
+            ((SECOND, "u2", "c2", "hello"), PLAIN),
         ],
+        0,
+    )
+    .unwrap();
+    seed_raw(
+        &sandbox,
+        &[
+            ((THIRD, "u2", "c2", "about that"), REPLY),
+            ((FOURTH, "u2", "c2", "bye"), PLAIN),
+        ],
+        PAIR,
     )
     .unwrap();
     let quiet = json!({"stub": {"decide": {"p": "0.1"}}});
     start(&sandbox, &quiet, QUICK).await.unwrap();
     assert_eq!(
         table(&sandbox, CHANGES).unwrap(),
-        ["move|t1-1|t1-0|applied|clue"]
+        ["move|t1-1|t1-0|applied|mail"]
     );
     assert_eq!(
         table(&sandbox, VIA).unwrap(),
@@ -168,8 +200,36 @@ async fn repeated_votes_merge_related_topics_and_tell_the_owner() {
 }
 
 #[tokio::test]
-async fn shared_clues_merge_topics_of_one_batch() {
+async fn shared_threads_merge_topics_of_one_batch() {
     let sandbox = Sandbox::new("regroup-clue").unwrap();
+    seed_raw(
+        &sandbox,
+        &[
+            ((KEY, "u1", "c1", "OPS-1 down"), ORIGIN),
+            ((SECOND, "u2", "c2", "OPS-1 again"), REPLY),
+        ],
+        0,
+    )
+    .unwrap();
+    let quiet = json!({"stub": {"decide": {"p": "0.1"}}});
+    let logs = logged(&sandbox, &quiet, QUICK).await.unwrap();
+    assert!(logs.contains("topic changes proposed") && logs.contains("topic change settled"));
+    assert_eq!(
+        table(&sandbox, CHANGES).unwrap(),
+        ["merge|t1-1|t1-0|applied|mail"]
+    );
+    assert_eq!(table(&sandbox, RELATIONS).unwrap(), [""; 0]);
+    assert_eq!(
+        table(&sandbox, PLACEMENTS).unwrap(),
+        [format!("{KEY}|t1-0|0.1"), format!("{SECOND}|t1-0|0.1")]
+    );
+    assert_eq!(table(&sandbox, ALIASES).unwrap(), ["t1-1|t1-0"]);
+    assert_eq!(table(&sandbox, TOPICS).unwrap(), ["t1-0|OPS-1 do|"]);
+}
+
+#[tokio::test]
+async fn shared_weak_clues_ask_before_merging() {
+    let sandbox = Sandbox::new("regroup-weak").unwrap();
     seed(
         &sandbox,
         &[
@@ -179,18 +239,26 @@ async fn shared_clues_merge_topics_of_one_batch() {
     )
     .unwrap();
     let quiet = json!({"stub": {"decide": {"p": "0.1"}}});
-    let logs = logged(&sandbox, &quiet, QUICK).await.unwrap();
-    assert!(logs.contains("topic changes proposed") && logs.contains("topic change settled"));
+    start(&sandbox, &quiet, QUICK).await.unwrap();
+    assert_eq!(table(&sandbox, CHANGES).unwrap(), [""; 0]);
+    assert_eq!(
+        table(&sandbox, RELATIONS).unwrap(),
+        ["t1-1|t1-0|clued|1", "t1-1|t1-0|maybe|0"]
+    );
+    let agree = json!({"stub": {"decide": {"p": "0.1", "review": "0.95"}}});
+    seed_from(&sandbox, &[(THIRD, "u3", "c3", "third thing")], LATER).unwrap();
+    start(&sandbox, &agree, QUICK).await.unwrap();
+    assert_eq!(
+        questions_of(&decided(&sandbox).unwrap()),
+        ["urgent_1", "review_1", "topic_1"]
+    );
+    assert_eq!(table(&sandbox, CHANGES).unwrap(), [""; 0]);
+    seed_from(&sandbox, &[(FOURTH, "u4", "c4", "fourth thing")], 2 * LATER).unwrap();
+    start(&sandbox, &agree, QUICK).await.unwrap();
     assert_eq!(
         table(&sandbox, CHANGES).unwrap(),
-        ["merge|t1-1|t1-0|applied|clue"]
+        ["merge|t1-1|t1-0|applied|vote"]
     );
-    assert_eq!(
-        table(&sandbox, PLACEMENTS).unwrap(),
-        [format!("{KEY}|t1-0|0.1"), format!("{SECOND}|t1-0|0.1")]
-    );
-    assert_eq!(table(&sandbox, ALIASES).unwrap(), ["t1-1|t1-0"]);
-    assert_eq!(table(&sandbox, TOPICS).unwrap(), ["t1-0|OPS-1 do|"]);
 }
 
 #[tokio::test]

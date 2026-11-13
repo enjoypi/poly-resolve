@@ -9,6 +9,7 @@ use crate::support::{BUSY, NOON, Sandbox};
 const COPIES: u64 = 2;
 const FORWARDED: &str = "forwarded announcement text";
 const HASH_CHARS: usize = 8;
+const ONE: u32 = 1;
 const PEOPLE: &str =
     "SELECT source || '|' || sender_id || '|' || person_id AS item FROM identities ORDER BY 1";
 const REACH: &str = "SELECT reach AS item FROM topics ORDER BY id";
@@ -26,7 +27,10 @@ async fn forwarded_copies_are_sent_once_and_counted_once() {
         ],
     )
     .unwrap();
-    let patch = json!({"stub": {"decide": {"p": "0.1", "topics": "x S1"}}});
+    let patch = json!({
+        "stub": {"decide": {"p": "0.1", "topics": "x S1"}},
+        "topics": {"clues": {"max_conversations": ONE}},
+    });
     start(&sandbox, &patch, QUICK).await.unwrap();
     let input = input_of(&decided(&sandbox).unwrap()).unwrap();
     assert_eq!(input.pointer("/0/lines/0/copies"), Some(&json!(COPIES)));

@@ -19,6 +19,9 @@ fn idle_screening_and_endless_waits_are_rejected() {
     let endless = json!({"limits": {"retry_max_ms": ZERO}});
     let unbounded = sandbox.triage(&endless).unwrap_err().to_string();
     assert!(unbounded.contains("nonzero"), "{unbounded}");
+    let boundless = json!({"topics": {"clues": {"max_conversations": ZERO}}});
+    let unlimited = sandbox.triage(&boundless).unwrap_err().to_string();
+    assert!(unlimited.contains("nonzero"), "{unlimited}");
 }
 
 #[test]

@@ -112,7 +112,10 @@ fn packed(shift: &Shift<'_>, batch_id: u64, rules: &Value) -> Option<Packed> {
         .ledger
         .open_topics(&json!({"limit": shift.triage.topics().max_open()}));
     let attach = shift.ledger.attach(&json!({"batch_id": batch_id}));
-    let linked = shift.ledger.linked(&json!({"batch_id": batch_id}));
+    let linked = shift.ledger.linked(&json!({
+        "batch_id": batch_id,
+        "max_conversations": shift.triage.topics().clues().max_conversations(),
+    }));
     let reviews = shift.ledger.reviews(&json!({
         "limit": shift.triage.topics().review_max(),
         "merge_after": shift.triage.topics().merge_after(),

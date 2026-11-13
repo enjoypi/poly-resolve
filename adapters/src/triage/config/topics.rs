@@ -13,11 +13,16 @@ pub(crate) struct Clue {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Clues {
+    max_conversations: NonZeroU32,
     patterns: Vec<Clue>,
     subject: Subject,
 }
 
 impl Clues {
+    pub(crate) const fn max_conversations(&self) -> u32 {
+        self.max_conversations.get()
+    }
+
     pub(crate) fn patterns(&self) -> &[Clue] {
         &self.patterns
     }

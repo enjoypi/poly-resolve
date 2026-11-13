@@ -67,7 +67,7 @@ function overview() {
 function detail() {
   return {
     changes: [
-      { at_ms: NOW, from_topic: "t9", keys: 2, kind: "move", reason: "clue", serial: 1, state: "applied", to_topic: "t/1" },
+      { at_ms: NOW, from_topic: "t9", keys: 2, kind: "move", reason: "mail", serial: 1, state: "applied", to_topic: "t/1" },
       { at_ms: NOW, from_topic: "t8", keys: 0, kind: "fuse", reason: "", serial: 2, state: "applied", to_topic: "t/1" },
     ],
     timeline: [
@@ -172,7 +172,7 @@ test("话题详情：跨来源时间线标出未外发成员及原因，列出�
   expect(queued).toContain("bot");
   expect(queued).toContain("odd");
   expect(queued.endsWith("排队中")).toBe(true);
-  for (const part of ["移动", "t9 → t/1（2 条）", "clue", "applied"]) expect(moved).toContain(part);
+  for (const part of ["移动", "t9 → t/1（2 条）", "邮件回复链", "applied"]) expect(moved).toContain(part);
   expect(fused).toContain("fuse");
   expect(fused).not.toContain(" ·  · ");
   expect([...root.querySelectorAll(".payload")].map((node) => node.textContent)).toEqual([

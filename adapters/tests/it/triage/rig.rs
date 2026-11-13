@@ -53,6 +53,21 @@ pub(super) fn decided(sandbox: &Sandbox) -> Fallible<Value> {
     Ok(from_str(&sandbox.read("decide-body.txt")?)?)
 }
 
+fn envelope((key, sender, conversation, text): Seed<'_>, stamp: u64, raw: &str) -> Value {
+    json!({
+        "account": "acct",
+        "conversation_id": conversation,
+        "key": key,
+        "occurred_at_ms": stamp,
+        "raw": raw,
+        "received_at_ms": stamp,
+        "sender_id": sender,
+        "sender_name": "name",
+        "source": "dingtalk",
+        "text": text,
+    })
+}
+
 pub(super) fn home() -> Fallible<String> {
     Ok(env::var("HOME")?)
 }
@@ -122,22 +137,21 @@ pub(super) fn seed_from(sandbox: &Sandbox, rows: &[Seed<'_>], shift: u64) -> Fal
     seed_stamped(sandbox, &stamped)
 }
 
+pub(super) fn seed_raw(sandbox: &Sandbox, rows: &[(Seed<'_>, &str)], shift: u64) -> Fallible<()> {
+    let archive = Archive::open(&sandbox.database(), BUSY)?;
+    for (index, &(row, raw)) in rows.iter().enumerate() {
+        let stamp = NOON
+            .saturating_add(shift)
+            .saturating_add(u64::try_from(index)?);
+        let _: usize = archive.save_event(&envelope(row, stamp, raw).to_string())?;
+    }
+    Ok(())
+}
+
 pub(super) fn seed_stamped(sandbox: &Sandbox, rows: &[(Seed<'_>, u64)]) -> Fallible<()> {
     let archive = Archive::open(&sandbox.database(), BUSY)?;
-    for &((key, sender, conversation, text), stamp) in rows {
-        let envelope = json!({
-            "account": "acct",
-            "conversation_id": conversation,
-            "key": key,
-            "occurred_at_ms": stamp,
-            "raw": "{}",
-            "received_at_ms": stamp,
-            "sender_id": sender,
-            "sender_name": "name",
-            "source": "dingtalk",
-            "text": text,
-        });
-        let _: usize = archive.save_event(&envelope.to_string())?;
+    for &(row, stamp) in rows {
+        let _: usize = archive.save_event(&envelope(row, stamp, "{}").to_string())?;
     }
     Ok(())
 }

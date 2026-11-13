@@ -11,4 +11,3 @@
 - 人员对应目前只按姓名（各来源里都唯一的同名才算同一人）；邮件签名与钉钉资料里的邮箱未用，确认 dws 有查询资料的命令后再补
 - 上线话题第 ④ 期前改线上配置：线上提示词目录加 `review.md`；加 `questions.review`、`limits.notice_cooldown_ms`、`notice.origins`、`notice.summary`、`topics.merge_after`、`topics.review_max`、`topics.split_after`（均照 `cli/config.yaml`）；通知模板可加 `{origin}`
 - 第 ④ 期上线后观察 `changes` 表（话题详情页的自动调整记录）：误合并多则调大 `topics.merge_after` 或改 `review.md`，误拆多则调大 `topics.split_after`
-- 强线索没有“出现范围”上限：线上库副本演练中，自动邮件页脚里的同一链接出现在 24 个会话，这些会话被并成一个话题；需给线索加“同一值出现在超过若干会话即不算强线索”的规则（现有配置只能改 `topics.clues.patterns` 的正则，排除不了具体链接）

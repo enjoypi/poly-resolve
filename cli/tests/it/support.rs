@@ -90,7 +90,7 @@ triage:
     session_gap_ms: 1000
   topics:
     archive_after_ms: 1000
-    clues: {patterns: [], subject: {ignore: [], min_chars: 4, prefixes: []}}
+    clues: {max_conversations: 5, patterns: [], subject: {ignore: [], min_chars: 4, prefixes: []}}
     max_open: 5
     merge_after: 2
     review_max: 3

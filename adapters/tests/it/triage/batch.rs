@@ -184,6 +184,24 @@ async fn messages_before_the_lookback_are_ignored() {
 }
 
 #[tokio::test]
+async fn new_batches_skip_numbers_already_taken() {
+    let sandbox = Sandbox::new("batch-number").unwrap();
+    seed(&sandbox, &[(KEY, "u1", "c1", "server down")]).unwrap();
+    sandbox
+        .seed("INSERT INTO batches (id, state, payload, layout, attempts, reason, created_at_ms, updated_at_ms) VALUES (1, 'sent', '{}', '{}', 0, '', 1, 1);")
+        .unwrap();
+    start(&sandbox, &json!({}), QUICK).await.unwrap();
+    assert_eq!(
+        table(&sandbox, LINES).unwrap(),
+        [format!("{KEY}|approved||2")]
+    );
+    assert_eq!(
+        table(&sandbox, BATCHES).unwrap(),
+        ["1|sent|0|", "2|sent|0|"]
+    );
+}
+
+#[tokio::test]
 async fn next_batch_sees_topics_from_the_previous_one() {
     let sandbox = stalled("batch-overlap-topic").await.unwrap();
     let resume = json!({

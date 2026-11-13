@@ -33,6 +33,7 @@ pub(crate) const BUSY: u64 = 5_000;
 const CAP_CHARS: u32 = 1_000;
 const CHILD_EXIT: u64 = 300;
 const CIPHER_MIN: u32 = 32;
+const CLUE_CONVERSATIONS: u32 = 5;
 const CONTEXT_CHARS: u32 = 10_000;
 const DIGEST_MIN: u32 = 12;
 const DWS_TIMEOUT: u64 = 60_000;
@@ -464,6 +465,7 @@ fn text_settings() -> Value {
         "topics": {
             "archive_after_ms": ARCHIVE_AFTER,
             "clues": {
+                "max_conversations": CLUE_CONVERSATIONS,
                 "patterns": [{"kind": "ticket", "pattern": "[A-Z]+-[0-9]+"}],
                 "subject": {"ignore": [], "min_chars": SUBJECT_CHARS, "prefixes": ["re:"]},
             },

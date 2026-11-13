@@ -13,6 +13,7 @@ pub(crate) struct Candidate {
     into: String,
     keys: Vec<String>,
     kind: String,
+    reason: String,
     size: usize,
 }
 
@@ -84,7 +85,7 @@ pub(crate) fn regroup(req: RegroupRequest) -> RegroupResponse {
                 Kind::Move | Kind::Split => candidate.keys,
             },
             kind,
-            reason: candidate.kind,
+            reason: candidate.reason,
         });
     }
     RegroupResponse { changes }

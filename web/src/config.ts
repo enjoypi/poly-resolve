@@ -19,6 +19,13 @@ export const CARD_LIMIT = 200;
 
 export const CHANGE_KINDS: Record<string, string> = { merge: "合并", move: "移动", split: "拆分" };
 
+export const CHANGE_REASONS: Record<string, string> = {
+  apart: "复核判为不属于",
+  digest: "同一内容转发",
+  mail: "邮件回复链",
+  vote: "复核判为同一件事",
+};
+
 export const COPY_FEEDBACK_MS = 1500;
 
 export const DEFAULT_SORT = "occurred_at_ms";

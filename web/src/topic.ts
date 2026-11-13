@@ -1,6 +1,6 @@
 import type { components } from "./api.gen";
 import type { connect } from "./client";
-import { CHANGE_KINDS, HELD, ROLES, SOURCES, STATES, TEXT, TOPIC_HASH, TOPIC_STATES, TOPICS_HASH, VIAS } from "./config";
+import { CHANGE_KINDS, CHANGE_REASONS, HELD, ROLES, SOURCES, STATES, TEXT, TOPIC_HASH, TOPIC_STATES, TOPICS_HASH, VIAS } from "./config";
 import { area, button } from "./dom";
 import { stamp } from "./stamp";
 
@@ -41,7 +41,7 @@ class Topic {
       stamp(entry.at_ms, this.timeZone),
       CHANGE_KINDS[entry.kind] ?? entry.kind,
       TEXT.moved(entry.from_topic, entry.to_topic, entry.keys),
-      entry.reason,
+      CHANGE_REASONS[entry.reason] ?? entry.reason,
       entry.state,
     ].filter((part) => part !== "");
     return area("article", "review change", area("p", "meta", notes.join(" · ")));
