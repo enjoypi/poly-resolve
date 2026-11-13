@@ -217,6 +217,7 @@ fn ledgered(head: &Value, state: &str, spent: &Value) -> Value {
         "input_tokens": number(spent, "input_tokens"),
         "kind": head.get("kind"),
         "output_tokens": number(spent, "output_tokens"),
+        "resumed": head.get("resumed").and_then(Value::as_bool).unwrap_or_default(),
         "state": state,
         "subject": head.get("subject"),
     })

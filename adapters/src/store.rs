@@ -40,10 +40,15 @@ const CHANGES: Column = Column {
     name: "changes",
     table: "alerts",
 };
-static COLUMNS: [Column; 14] = [
-    ATTEMPTS, CALLED, CHANGES, CURSOR, DIGEST, MERGED, PURGED, REVIVALS, ROLE, SCORE, SEALED_BY,
-    STATE, STUDIED, TREND,
+static COLUMNS: [Column; 15] = [
+    ATTEMPTS, CALLED, CHANGES, CUMULATIVE, CURSOR, DIGEST, MERGED, PURGED, REVIVALS, ROLE, SCORE,
+    SEALED_BY, STATE, STUDIED, TREND,
 ];
+const CUMULATIVE: Column = Column {
+    alter: "ALTER TABLE calls ADD COLUMN total_input INTEGER NOT NULL DEFAULT 0; ALTER TABLE calls ADD COLUMN total_output INTEGER NOT NULL DEFAULT 0",
+    name: "total_input",
+    table: "calls",
+};
 const CURSOR: Column = Column {
     alter: "ALTER TABLE topics ADD COLUMN until_key TEXT NOT NULL DEFAULT ''",
     name: "until_key",

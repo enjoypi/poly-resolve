@@ -52,6 +52,17 @@ async fn failed_calls_are_counted_as_failures() {
 }
 
 #[tokio::test]
+async fn resumed_sessions_record_only_the_new_tokens() {
+    let sandbox = Sandbox::new("usage-resumed").unwrap();
+    seed(&sandbox, &one()).unwrap();
+    start(&sandbox, &json!({}), SHORT).await.unwrap();
+    seed_from(&sandbox, &[(SECOND, "u1", "c1", "still down")], LATER).unwrap();
+    start(&sandbox, &json!({}), SHORT).await.unwrap();
+    let analyses = "SELECT input_tokens || '|' || output_tokens || '|' || total_input AS item FROM calls WHERE kind = 'analysis' ORDER BY at_ms";
+    assert_eq!(table(&sandbox, analyses).unwrap(), ["20|5|20", "0|0|20"]);
+}
+
+#[tokio::test]
 async fn unchanged_topics_are_not_analyzed_again() {
     let sandbox = Sandbox::new("usage-unchanged").unwrap();
     seed(&sandbox, &one()).unwrap();

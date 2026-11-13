@@ -49,7 +49,7 @@ fn analysis_jobs(shift: &Shift<'_>, alerts: &[Value]) -> Vec<Analysis> {
             } else {
                 shift.triage.fresh_args()
             };
-            let claim = claim_of(shift, alert, (PENDING, brief.version()));
+            let claim = claim_of(shift, alert, (PENDING, brief.version(), brief.resumed()));
             if shift.ledger.claim_alert(&claim) == 0 {
                 return None;
             }
@@ -126,8 +126,8 @@ fn brief(shift: &Shift<'_>, alert: &Value) -> Option<Brief> {
     }))
 }
 
-fn claim_of(shift: &Shift<'_>, alert: &Value, step: (&str, &str)) -> Value {
-    let (state, version) = step;
+fn claim_of(shift: &Shift<'_>, alert: &Value, step: (&str, &str, bool)) -> Value {
+    let (state, version, resumed) = step;
     let now = now_ms();
     json!({
         "at_ms": now,
@@ -136,6 +136,7 @@ fn claim_of(shift: &Shift<'_>, alert: &Value, step: (&str, &str)) -> Value {
         "key": alert.get("key"),
         "kind": if state == PENDING { "analysis" } else { "notify" },
         "max_attempts": shift.triage.max_attempts(),
+        "resumed": resumed,
         "state": state,
         "subject": alert.get("key"),
         "version": version,
@@ -162,7 +163,7 @@ fn conclude(shift: &Shift<'_>, job: &Analysis, found: &Reply) {
         "topic_id": found.thread_id(),
     }));
     let quiet = found.quiet() || superseded;
-    if recorded > 0 && !superseded {
+    if !superseded {
         let studied = shift.ledger.studied(&json!({
             "digest": job.brief.digest(),
             "topic_id": found.thread_id(),
@@ -229,7 +230,7 @@ fn delivery_jobs(shift: &Shift<'_>, alerts: &[Value]) -> Vec<Delivery> {
         .iter()
         .filter_map(|alert| {
             let key = text(alert, "key");
-            let claim = claim_of(shift, alert, (ANALYZED, ""));
+            let claim = claim_of(shift, alert, (ANALYZED, "", false));
             if shift.ledger.claim_alert(&claim) == 0 {
                 return None;
             }
@@ -317,7 +318,7 @@ fn reserved(shift: &Shift<'_>, waiting: &[Value]) -> Vec<Value> {
     }
     let claims: Vec<Value> = waiting
         .iter()
-        .map(|alert| claim_of(shift, alert, (ANALYZED, "")))
+        .map(|alert| claim_of(shift, alert, (ANALYZED, "", false)))
         .collect();
     if claims
         .iter()
