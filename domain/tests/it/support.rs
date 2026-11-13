@@ -1,5 +1,6 @@
 use domain::batches::{Item as Batch, Roster};
 use domain::features::{Call, Context, Origin, Ports, Rules, Target, dispatch};
+use domain::gauge::{Day, Health, Meter};
 use domain::inbox::{Paging, Query, Reader, Row};
 use domain::outbound::{Item, Listing, Outbox};
 use domain::prompts::Library;
@@ -28,6 +29,16 @@ impl Board for Broken {
     }
 
     fn overview(&self, _listing: &Listing<'_>) -> Result<Overview, AppError> {
+        Err(AppError::Storage)
+    }
+}
+
+impl Meter for Broken {
+    fn sources(&self) -> Result<Health, AppError> {
+        Err(AppError::Storage)
+    }
+
+    fn usage(&self, _days: u32) -> Result<Vec<Day>, AppError> {
         Err(AppError::Storage)
     }
 }
@@ -63,8 +74,8 @@ pub(crate) struct Desk {
 impl Desk {
     pub(crate) fn new() -> Result<Self, Error> {
         let topic = json!({
-            "conversations": PAIR, "label": "outage", "last_at_ms": STAMP, "members": TRIO,
-            "people": PAIR, "score": SCORE, "sources": ["dingtalk"], "state": "open",
+            "conversations": PAIR, "first_at_ms": STAMP, "label": "outage", "last_at_ms": STAMP, "members": TRIO,
+            "people": PAIR, "previous": null, "score": SCORE, "sources": ["dingtalk"], "state": "open",
             "topic_id": KNOWN, "urgency": SCORE, "verdict": "act",
         });
         Ok(Self {
@@ -122,6 +133,20 @@ impl Fixture {
         let rules = Rules::new(&self.paging).with_placeholders(&self.placeholders);
         dispatch(
             &Context::new(&self.errors, rules, ports).with_seal(&self.seal),
+            call,
+        )
+    }
+
+    pub(crate) fn dispatch_gauge(
+        &self,
+        gauge: &dyn Meter,
+        call: &Call<'_>,
+    ) -> Result<String, AppError> {
+        let rules = Rules::new(&self.paging);
+        let (reader, outbox, roster) = (Rows::default(), Sent::default(), Pool::default());
+        dispatch(
+            &Context::new(&self.errors, rules, Ports::new(&reader, &outbox, &roster))
+                .with_gauge(gauge),
             call,
         )
     }

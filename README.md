@@ -66,12 +66,12 @@ YAML 文件，各项均必填（注明可选的除外），不允许其他字段
 | triage.model | 决策接口的模型名 |
 | triage.prompts_dir | 提示词目录，每个提示词一个文件：`session.md` 话题第一次交给 codex 的提示词、`followup.md` 同一话题续写的提示词（两者须恰含一次 `{messages}`，每次都给话题的全部消息；回复第一行须是一行 JSON `{"status","title","changes","changed"}`，status 取 open、resolved、cancelled）、`urgent.md` 每条消息一问的优先级问题（须恰含一次 `{line}`）、`topic.md` 每个新会话段一问的话题归属问题（须恰含一次 `{segment}`）、`review.md` 复核两段内容是否同一件事的是非问题（须恰含一次 `{review}`）、`screen.md` 本地模型筛查的系统提示词（配了 `triage.screen` 才用）；每次调用时读取，改完下一次调用生效；文件缺失或不合规时启动失败，运行中则该次调用失败并按重试规则重来 |
 | triage.questions | urgent、topic、review 各自的 `name`；review 另有 `threshold`（复核概率不低于它算“是”）；topic 另有 `min_confidence`（低于它按新话题）、`new_label`（“新话题”选项的说明）与 `none_label`（只含自动邮件的段“不属于任何话题”选项的说明）；threshold：话题优先级不低于它即高优先级，大于 1 则新话题不转交（已分析过的话题有新消息仍会重新分析） |
-| triage.limits | batch 每批最多消息条数，至多 200；intake 每轮最多入库的新消息条数；parallel 每轮最多并行分析或通知的不同话题数；poll_ms 轮询间隔；lookback_ms 首次启用时只处理多久以内的消息，之后入库的消息全部处理；决策时发生时间早于它的消息只归入话题、不触发转交；max_attempts 失败重试次数；retry_after_ms / retry_max_ms 重试等待的初始值与上限（逐次翻倍并加 ±1/4 抖动，上限至少 1 且不小于初始值，也是消息库故障时轮询退避的上限）；max_revivals 失败的批隔 retry_after_ms 自动重来的轮数，0 为不自动重来；notice_cooldown_ms 同一话题两次通知的最短间隔，期间的新结论只留最新一条，到点再发 |
+| triage.limits | batch 每批最多消息条数，至多 200；daily_tokens 每日（UTC）决策与分析的 token 上限，当日首次超过时通知本人一次，只提醒、不停止调用，0 为不检查；down_after_ms 数据源处于重连中或待人工超过它即通知本人一次，恢复后再通知一次；intake 每轮最多入库的新消息条数；parallel 每轮最多并行分析或通知的不同话题数；poll_ms 轮询间隔；lookback_ms 首次启用时只处理多久以内的消息，之后入库的消息全部处理；决策时发生时间早于它的消息只归入话题、不触发转交；max_attempts 失败重试次数；retry_after_ms / retry_max_ms 重试等待的初始值与上限（逐次翻倍并加 ±1/4 抖动，上限至少 1 且不小于初始值，也是消息库故障时轮询退避的上限）；max_revivals 失败的批隔 retry_after_ms 自动重来的轮数，0 为不自动重来；notice_cooldown_ms 同一话题两次通知的最短间隔，期间的新结论只留最新一条，到点再发 |
 | triage.sizes | session_gap_ms 同一会话内相邻消息间隔超过它即另起一段；context_max_chars 单条消息的字数上限；label_chars 话题标签的字数；result_max_chars 分析结果字数上限 |
-| triage.topics | max_open 一次最多列出多少个未归档话题供归并，与 batch 之和至多 254；archive_after_ms 话题最后一条消息距今多久后归档（归档后只在强线索命中时重开）；reach 影响面权重：people、conversations、sources 为每多一个人、会话、来源类型加的分，cap 为加分上限，优先级＝紧急度 +（1 − 紧急度）× min(cap, 加分)；clues 线索：邮件回复链与同一内容转发为强线索，直接归入、可自动合并与移动；patterns 每项 kind 与正则 pattern（有第 1 个分组取分组，否则取整个匹配）与 subject 为弱线索，只在指向唯一话题时归入，两个话题有共同弱线索时先经复核问题确认（见 merge_after）才合并；max_conversations 弱线索的同一值出现在超过它个会话即不算线索；subject 为邮件主题线索，先去掉 prefixes 里的前缀（小写），短于 min_chars 或在 ignore 里的主题不用；任一正则无效则 `serve` 以 sandbox_exit_code 退出；review_max 每批最多附带几道复核问题；merge_after 两个话题被复核判为同一件事达到几次即自动合并（判为不同达到同样次数则不再复核）；split_after 某会话的内容被复核判为不属于所在话题达到几次即自动拆出 |
+| triage.topics | max_open 一次最多列出多少个未归档话题供归并，与 batch 之和至多 254；archive_after_ms 话题最后一条消息距今多久后归档（归档后只在强线索命中时重开）；reach 影响面权重：people、conversations、sources 为每多一个人、会话、来源类型加的分，cap 为加分上限，优先级＝紧急度 +（1 − 紧急度）× min(cap, 加分)；clues 线索：邮件回复链与同一内容转发为强线索，直接归入、可自动合并与移动；patterns 每项 kind 与正则 pattern（有第 1 个分组取分组，否则取整个匹配）与 subject 为弱线索，只在指向唯一话题时归入，两个话题有共同弱线索时先经复核问题确认（见 merge_after）才合并；max_conversations 弱线索的同一值出现在超过它个会话即不算线索；subject 为邮件主题线索，先去掉 prefixes 里的前缀（小写），短于 min_chars 或在 ignore 里的主题不用；任一正则无效则 `serve` 以 sandbox_exit_code 退出；retain.after_ms 保留期：发生时间早于它、且所在话题都已归档（或不属于任何话题）的消息清除正文、原始内容、外发文字与漏判样本，已归档话题的 codex 会话一并删除，未归档话题不清除；review_max 每批最多附带几道复核问题；merge_after 两个话题被复核判为同一件事达到几次即自动合并（判为不同达到同样次数则不再复核）；split_after 某会话的内容被复核判为不属于所在话题达到几次即自动拆出 |
 | triage.redact | patterns 是按序执行的脱敏规则（pattern 为正则，placeholder 为替换文本，可含 `${1}`；含 `{hash}` 时该处换成被替换值的带密钥 hash，同一值始终得到同一占位，hash 的对象缺省是整个匹配，`group` 指定为第几个分组）；hash_key 为 `${NAME}` 形式的环境变量，hash 的密钥；hash_chars 占位里 hash 的十六进制位数；digest_min_chars 正文不短于它才识别“同一内容转发到多处”；unknown_sender 是没有发送人名时的写法；任一正则无效或用了 `{hash}` 却读不到密钥则 `serve` 以 sandbox_exit_code 退出；更换密钥后新旧占位对不上，按占位归并跨批内容会失效，已存的行不会重算 |
-| triage.session | fresh 新会话追加在 codex 参数后的参数；resume 续写追加的参数（`{thread}` 换成会话 ID）；omitted 话题里未外发消息的占位模板（`{count}` 条数、`{reason}` 原因：`sealed` 仍是密文、`empty` 非文本、`risky` 筛查判为高风险、`unscreened` 筛查没有结论） |
-| triage.notice | template 发给本人的通知模板：`{label}` 话题标题、`{state}` 状态（按 states 换成显示文字，没配的原样）、`{score}` 优先级、`{urgency}` 紧急度、`{people}` `{conversations}` `{sources}` 影响面、`{changes}` 本次变化、`{late}` 晚到说明、`{topic}` 话题标识、`{analysis}` 分析结果；late 晚到说明的模板（`{time}` 为最后一条消息的发生时间，UTC），话题最后一条消息早于触发时间超过 late_after_ms 才写；`{origin}` 按 origins 换成自动调整的说明（键为 merge、move、split，没配或不是调整引起的为空）；summary 为启动时多个话题有待发结论时合成一条的汇总：template 含 `{count}` 话题数与 `{items}`，item 为每个话题一行的模板（`{state}` `{label}` `{score}`） |
+| triage.session | purge 删除 codex 会话的外部命令（字段同 triage.codex，程序追加会话 ID，如 `codex delete`）；fresh 新会话追加在 codex 参数后的参数；resume 续写追加的参数（`{thread}` 换成会话 ID）；omitted 话题里未外发消息的占位模板（`{count}` 条数、`{reason}` 原因：`sealed` 仍是密文、`empty` 非文本、`risky` 筛查判为高风险、`unscreened` 筛查没有结论、`purged` 已过保留期清除） |
+| triage.notice | alarm 为采集异常与用量的通知：down 异常模板（`{source}` 来源类型、`{account}` 账号、`{state}` 状态、`{streak}` 连续失败次数、`{since}` 异常开始时间，UTC）、recovered 恢复模板（`{source}` `{account}`）、budget 超用量模板（`{tokens}` 当日用量）、names 把来源类型与状态换成显示文字；template 发给本人的通知模板：`{label}` 话题标题、`{state}` 状态（按 states 换成显示文字，没配的原样）、`{score}` 优先级、`{urgency}` 紧急度、`{people}` `{conversations}` `{sources}` 影响面、`{changes}` 本次变化、`{late}` 晚到说明、`{topic}` 话题标识、`{analysis}` 分析结果；late 晚到说明的模板（`{time}` 为最后一条消息的发生时间，UTC），话题最后一条消息早于触发时间超过 late_after_ms 才写；`{origin}` 按 origins 换成自动调整的说明（键为 merge、move、split，没配或不是调整引起的为空）；summary 为启动时多个话题有待发结论时合成一条的汇总：template 含 `{count}` 话题数与 `{items}`，item 为每个话题一行的模板（`{state}` `{label}` `{score}`） |
 | triage.decide | 决策 HTTP 接口：url 为 `${NAME}` 形式的环境变量，外部地址须用 HTTPS，本机测试可用回环 HTTP；key 为可选的 `${NAME}` 环境变量；proxy 为可选的 `${NAME}` 环境变量，值形如 `http://127.0.0.1:<端口>`、`socks5://` 或 `socks5h://127.0.0.1:<端口>`（仅本机代理，无认证、无结尾 `/`，只用于 HTTPS 地址）；timeout_ms 为请求超时毫秒数 |
 | triage.codex.endpoint | 可选，启动冒烟用的 codex 模型接口：url、proxy、timeout_ms 写法同 triage.decide；只建连接与 TLS 握手，不发请求 |
 | triage.codex / notify | 外部命令，共同字段：bin、args、env（字面量环境变量）、vars（`${NAME}` 写法，运行时读同名环境变量传给子进程；args 里的 `${NAME}` 若在 vars 里声明则换成其值）、sandbox、timeout_ms；子进程环境先清空再只放 env 与 vars |
@@ -92,6 +92,8 @@ RESTful，路径挂在 `/api` 下，请求与响应体为 JSON（`content-type: 
 | `PATCH /api/prompts/{name}` | 改写一个提示词：`{"text":"…"}`，写回 triage.prompts_dir 下的同名文件；未知或未启用的名字 404，缺占位符或为空 422 |
 | `GET /api/outbound?state=&limit=` | 只读列出外发记录，缺省列已外发（`approved`），`state=withheld` 列未外发；`placeholders` 为全部脱敏占位符 |
 | `GET /api/topics?state=&limit=` | 只读列出话题（按最近进展降序，`state` 可选：open、resolved、cancelled、archived），并给出话题与消息各状态的数量 |
+| `GET /api/sources` | 各数据源的状态（ok、retrying、manual）、最近成功时间、最近一条消息时间、连续失败次数，以及分析、决策、通知、筛查各自的连续失败次数 |
+| `GET /api/usage?limit=` | 最近 limit 个 UTC 日按日、按类型的调用次数、失败次数与 token 用量 |
 | `GET /api/topics/{topic_id}` | 一个话题的时间线（未外发的成员不带正文，写明原因）与自动合并、拆分、移动记录；已并入别处的旧标识跳到现话题，不存在则 404 |
 
 | 请求头 | 说明 |
@@ -207,7 +209,7 @@ cd web && bun install --frozen-lockfile && bun run build && cd ..
 sops exec-env secrets/prod.enc.yaml './target/release/cli serve --config cli/config.yaml'
 ```
 
-变量只经环境变量传给子进程，不出现在命令行参数与日志里；缺任一变量，`serve` 以退出码 2 退出并列出缺的变量名。首次开启只处理 `lookback_ms` 内的消息；之后入库的消息全部处理，含停机或停用期间到达的。升级到本版本后首次启动会把此前记为跳过的本人消息与过期消息重新处理（只归入话题，不触发转交），各邮箱重拉一次 `initial_backfill_ms` 内的邮件以补回此前不收的自动邮件。codex 的会话文件落在 `.debug/codex-home/sessions`，含脱敏后的对话，不自动清理。
+变量只经环境变量传给子进程，不出现在命令行参数与日志里；缺任一变量，`serve` 以退出码 2 退出并列出缺的变量名。首次开启只处理 `lookback_ms` 内的消息；之后入库的消息全部处理，含停机或停用期间到达的。升级到本版本后首次启动会把此前记为跳过的本人消息与过期消息重新处理（只归入话题，不触发转交），各邮箱重拉一次 `initial_backfill_ms` 内的邮件以补回此前不收的自动邮件。codex 的会话文件落在 `.debug/codex-home/sessions`，含脱敏后的对话，按 `topics.retain` 随话题清除。
 
 ### 外发记录
 
@@ -217,7 +219,7 @@ sops exec-env secrets/prod.enc.yaml './target/release/cli serve --config cli/con
 
 ### 话题
 
-浏览器打开 `<服务地址>/#topics`（消息页右上角“话题”），只读列出话题：标题、状态、优先级及其构成、来源、最近进展、最新分析，页首是话题与消息各状态的数量和已知盲区；点标题进详情 `#topic/<话题标识>`，按发生时间混排各来源的消息，标出未外发的成员及原因，并列出自动合并、拆分、移动的记录。消息详情“全部字段”里的话题可直接跳到详情。话题由程序自动合并、拆分、移动，页面不提供纠正。
+浏览器打开 `<服务地址>/#topics`（消息页右上角“话题”），只读列出话题：标题、状态、优先级及其构成、来源、最近进展、最新分析，页首是话题与消息各状态的数量和已知盲区；点标题进详情 `#topic/<话题标识>`，按发生时间混排各来源的消息，标出未外发的成员及原因，并列出自动合并、拆分、移动的记录；列表另有首次消息时间、消息条数、优先级较上次的升降（↑↓）与所用分析提示词的标识，已过保留期的正文显示“[已清除]”。消息详情“全部字段”里的话题可直接跳到详情。话题由程序自动合并、拆分、移动，页面不提供纠正。
 
 ### 提示词
 
@@ -259,6 +261,10 @@ Qwen3 默认先输出思考过程，提示词末尾的 `/no_think` 关掉它。4
 - 关闭：`triage.mode` 改回 `disabled` 并重启，收集照常
 - 只停转交、照常打分：`triage.questions.threshold` 设为大于 1 并重启
 - 不要清库里的表：会让消息重新外发、通知被当成重复而吞掉
+
+### 来源与调用量
+
+浏览器打开 `<服务地址>/#sources`（消息页右上角“来源”），只读列出各数据源的状态、最近成功时间、最近一条消息时间与连续失败次数，各环节的连续失败次数，以及最近 14 个 UTC 日的调用次数、失败次数与 token 用量；有失败的项高亮。外发记录页每条另显示外发时所用决策提示词的标识。
 
 ## 子进程沙箱
 

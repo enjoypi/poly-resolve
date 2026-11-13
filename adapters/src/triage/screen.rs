@@ -10,7 +10,7 @@ use serde_json::{Value, from_value, json, to_string};
 use super::TRIAGE;
 use super::config::Screen;
 use super::desk::Screened;
-use super::{Shift, number, pace, retry_in, text};
+use super::{FAILED, SUCCESS, Shift, number, pace, retry_in, text};
 use crate::http::{Call, Client, Reply};
 use crate::ingest::now_ms;
 use crate::race::race;
@@ -175,11 +175,20 @@ fn grounded(jobs: &[Arc<Job>], landed: &[String]) {
 
 fn land(shift: &Shift<'_>, round: &Round<'_>, landing: Landing) -> Result<(), String> {
     let Landing { done, job } = landing;
+    let attempt = number(&job.line, "attempts").saturating_add(1);
     external(
         "screen",
         job.body.len(),
-        &outcome(&done, elapsed(&job)).attempt(number(&job.line, "attempts").saturating_add(1)),
+        &outcome(&done, elapsed(&job)).attempt(attempt),
     );
+    let counted = shift.ledger.note_call(&json!({
+        "at_ms": now_ms(),
+        "attempt": attempt,
+        "key": text(&job.line, "key"),
+        "kind": "screen",
+        "state": if done.is_ok() { SUCCESS } else { FAILED },
+    }));
+    tracing::debug!(counted, "call settled");
     let reply = done?;
     let verdict = shift
         .desk

@@ -19,7 +19,7 @@ use crate::config::Settings as Shared;
 use crate::ingest::cycle::{Backoff, Halt, Retry, fault};
 use crate::ingest::{Site, now_ms};
 use crate::race::{Stop, race};
-use crate::store::{Archive, Scope};
+use crate::store::{Archive, Pulse, Scope};
 
 pub(crate) const SOURCE: &str = "dingtalk";
 
@@ -45,6 +45,7 @@ impl Run<'_> {
             .store
             .save_page(&page.render())
             .map_err(|err| fault(self.shared, &err))?;
+        self.pulse(Pulse::healthy());
         tracing::info!(
             inserted,
             skipped = page.skipped(),
@@ -115,6 +116,13 @@ impl Run<'_> {
         self.reconcile().await?;
         self.heal().await?;
         self.pump(listener).await
+    }
+
+    fn halted(&self, code: u8, streak: u32) -> u8 {
+        if code == self.shared.manual_exit_code() {
+            self.pulse(Pulse::manual(streak));
+        }
+        code
     }
 
     async fn heal(&mut self) -> Result<(), Halt> {
@@ -193,6 +201,13 @@ impl Run<'_> {
         }
     }
 
+    fn pulse(&self, pulse: Pulse<'_>) {
+        let marked = self
+            .store
+            .mark(Scope::new(SOURCE, self.config.account()), pulse);
+        tracing::debug!(marked, "source health marked");
+    }
+
     async fn pump(&mut self, listener: &mut Listener) -> Result<u64, Halt> {
         let mut received: u64 = 0;
         loop {
@@ -203,6 +218,7 @@ impl Run<'_> {
             match read {
                 Ok(Some(line)) => {
                     self.ingest(&line).await?;
+                    self.pulse(Pulse::healthy());
                     received = received.saturating_add(1);
                 }
                 Ok(None) | Err(_) => return Ok(received),
@@ -229,9 +245,10 @@ impl Run<'_> {
             let retry = match self.session().await {
                 Ok(retry) => retry,
                 Err(Halt::Busy) => Retry::Failed,
-                Err(Halt::Exit(code)) => return code,
+                Err(Halt::Exit(code)) => return self.halted(code, backoff.streak()),
             };
             let wait = backoff.next(retry);
+            self.pulse(Pulse::retrying(backoff.streak()));
             tracing::warn!(
                 account = self.config.account(),
                 attempt = backoff.streak(),

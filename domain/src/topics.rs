@@ -51,6 +51,8 @@ pub struct Entry {
     conversation_id: String,
     key: String,
     occurred_at_ms: u64,
+    #[serde(default)]
+    purged_at_ms: u64,
     reason: String,
     role: String,
     sender: String,
@@ -72,16 +74,20 @@ pub struct Overview {
 #[schemars(rename = "TopicItem")]
 pub struct Summary {
     conversations: u64,
+    first_at_ms: u64,
     label: String,
     last_at_ms: u64,
     members: u64,
     people: u64,
+    previous: Option<f64>,
     score: Option<f64>,
     sources: Vec<String>,
     state: String,
     topic_id: String,
     urgency: Option<f64>,
     verdict: String,
+    #[serde(default)]
+    version: String,
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]

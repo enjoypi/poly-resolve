@@ -28,6 +28,7 @@ function item(key: string, patch: Record<string, unknown> = {}) {
     source: "imap",
     state: "approved",
     text: `text-${key}`,
+    version: "abc123",
     ...patch,
   };
 }
@@ -36,7 +37,7 @@ function listing() {
   return {
     items: [
       item("a", { role: "own", text: "pin [x] [n#a1b2] <script>alert(1)</script>" }),
-      item("b", { reason: "sealed", sender: "", state: "withheld", text: "" }),
+      item("b", { reason: "sealed", sender: "", state: "withheld", text: "", version: "" }),
       item("c", { reason: "odd", role: "bot", source: "slack", state: "withheld" }),
     ],
     placeholders: ["[x]", "[n#{hash}]"],
@@ -83,7 +84,7 @@ test("只读列出外发记录：来源、会话、发送人、时间、角色�
   expect(cards(root)).toHaveLength(3);
   expect(root.querySelector(".count")?.textContent).toBe(TEXT.outboundCount(3));
   const meta = root.querySelector(".meta")?.textContent ?? "";
-  for (const part of [TEXT.batch(1), "邮箱 hf", "c1", "alice", "2026-10-28 01:20:09", "本人"]) {
+  for (const part of [TEXT.batch(1), TEXT.version("abc123"), "邮箱 hf", "c1", "alice", "2026-10-28 01:20:09", "本人"]) {
     expect(meta).toContain(part);
   }
   expect(root.querySelector(".payload")?.textContent).toBe("pin [x] [n#a1b2] <script>alert(1)</script>");

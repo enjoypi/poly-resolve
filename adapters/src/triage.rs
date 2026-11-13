@@ -5,7 +5,9 @@ mod desk;
 pub(crate) mod endpoint;
 mod intake;
 pub mod prompts;
+mod purge;
 mod regroup;
+mod remind;
 mod screen;
 
 use alloc::collections::BTreeMap;
@@ -23,7 +25,9 @@ use self::config::Settings;
 use self::desk::Desk;
 use self::endpoint::Http;
 use self::intake::{form, identify, index, intake, rerender};
+use self::purge::purge;
 use self::regroup::regroup;
+use self::remind::remind;
 use self::screen::screen;
 use crate::config::Settings as Ingest;
 use crate::http::{Call, Client as HttpClient, Reply};
@@ -34,6 +38,7 @@ use crate::race::{Stop, race};
 use crate::trace::{Caller, failure};
 
 const ANALYZED: &str = "analyzed";
+const FAILED: &str = "failed";
 const MAX_BATCH: u32 = 200;
 const MAX_CHOICES: u32 = 254;
 const MAX_DOUBLINGS: u32 = 20;
@@ -41,6 +46,7 @@ pub(super) const NONE: u64 = 0;
 const PENDING: &str = "pending";
 const QUIET: &str = "quiet";
 const SENT: &str = "sent";
+const SUCCESS: &str = "success";
 pub(super) const TRIAGE: Caller<'static> = Caller::new("external", "triage", "");
 
 #[derive(Clone, Copy, Debug)]
@@ -81,6 +87,7 @@ struct Shift<'shift> {
     ledger: Ledger,
     notes: RefCell<BTreeMap<&'static str, String>>,
     seen: u64,
+    started_ms: u64,
     stop: Stop<'shift>,
     ticks: u64,
     triage: &'shift Settings,
@@ -146,7 +153,7 @@ impl Shift<'_> {
         if archived > 0 {
             tracing::info!(archived, "idle topics archived");
         }
-        Some(())
+        purge(self).await
     }
 
     async fn relay(&mut self) -> Option<()> {
@@ -155,6 +162,7 @@ impl Shift<'_> {
             tracing::debug!(woken, "alerts activated");
         }
         recap(self).await?;
+        remind(self).await?;
         self.ticks = self.ticks.saturating_add(1);
         let pending = self.waiting(PENDING);
         let analyzed = self.waiting(ANALYZED);
@@ -201,6 +209,17 @@ async fn knock(client: &HttpClient, http: &Http) -> Result<(), String> {
     let proxy = http.proxy().ok().flatten();
     let call = Call::new(&url, "", http.timeout_ms()).with_proxy(proxy.as_ref());
     client.probe(&call).await
+}
+
+fn ledgered(head: &Value, state: &str, spent: &Value) -> Value {
+    json!({
+        "attempt": head.get("attempt"),
+        "input_tokens": number(spent, "input_tokens"),
+        "kind": head.get("kind"),
+        "output_tokens": number(spent, "output_tokens"),
+        "state": state,
+        "subject": head.get("subject"),
+    })
 }
 
 fn number(row: &Value, key: &str) -> u64 {
@@ -259,6 +278,7 @@ pub async fn run(setup: Setup<'_>, lane: Lane, stop: Stop<'_>) {
                 ledger,
                 notes: RefCell::default(),
                 seen: 0,
+                started_ms: now_ms(),
                 stop,
                 ticks: 0,
                 triage: setup.triage,

@@ -5,6 +5,29 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
+pub(crate) struct Alarm {
+    budget: String,
+    down: String,
+    names: BTreeMap<String, String>,
+    recovered: String,
+}
+
+impl Alarm {
+    pub(crate) const fn names(&self) -> &BTreeMap<String, String> {
+        &self.names
+    }
+
+    pub(crate) fn template(&self, kind: &str) -> &str {
+        match kind {
+            "budget" => &self.budget,
+            "up" => &self.recovered,
+            _ => &self.down,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct Clue {
     kind: String,
     pattern: String,
@@ -35,6 +58,7 @@ impl Clues {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Notice {
+    alarm: Alarm,
     late: String,
     late_after_ms: u64,
     origins: BTreeMap<String, String>,
@@ -44,6 +68,10 @@ pub(crate) struct Notice {
 }
 
 impl Notice {
+    pub(crate) const fn alarm(&self) -> &Alarm {
+        &self.alarm
+    }
+
     pub(crate) fn late(&self) -> &str {
         &self.late
     }
@@ -76,6 +104,18 @@ pub(crate) struct Reach {
     conversations: f64,
     people: f64,
     sources: f64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Retain {
+    after_ms: NonZeroU64,
+}
+
+impl Retain {
+    pub(crate) const fn after_ms(&self) -> u64 {
+        self.after_ms.get()
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -111,6 +151,7 @@ pub(crate) struct Topics {
     max_open: NonZeroU32,
     merge_after: NonZeroU32,
     reach: Reach,
+    retain: Retain,
     review_max: u32,
     split_after: NonZeroU32,
 }
@@ -134,6 +175,10 @@ impl Topics {
 
     pub(crate) const fn reach(&self) -> &Reach {
         &self.reach
+    }
+
+    pub(crate) const fn retain(&self) -> &Retain {
+        &self.retain
     }
 
     pub(crate) const fn review_max(&self) -> u32 {

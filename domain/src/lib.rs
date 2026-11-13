@@ -2,6 +2,7 @@ extern crate alloc;
 
 pub mod batches;
 pub mod features;
+pub mod gauge;
 pub mod inbox;
 pub mod outbound;
 pub mod prompts;

@@ -63,6 +63,7 @@ impl Settings {
             Ports::new(reader, reader, reader).with_library(&self.prompts),
         )
         .with_board(reader)
+        .with_gauge(reader)
     }
 
     pub(crate) const fn errors(&self) -> &Errors {

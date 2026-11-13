@@ -34,6 +34,22 @@ fn brief_body(rows: &Value, template: &str, thread: &Value) -> Value {
 }
 
 #[test]
+fn brief_digest_follows_prompts_and_messages() {
+    let first = brief(&rows(), ROOMY, "a{messages}").unwrap().unwrap();
+    let again = brief(&rows(), ROOMY, "a{messages}").unwrap().unwrap();
+    let other = brief(&rows(), ROOMY, "b{messages}").unwrap().unwrap();
+    let fewer = brief(&json!([]), ROOMY, "a{messages}").unwrap().unwrap();
+    assert_eq!(first.get("digest"), again.get("digest"));
+    assert_eq!(first.get("version"), again.get("version"));
+    assert_ne!(first.get("version"), other.get("version"));
+    assert_ne!(first.get("digest"), other.get("digest"));
+    assert_eq!(first.get("version"), fewer.get("version"));
+    assert_ne!(first.get("digest"), fewer.get("digest"));
+    let version = first.get("version").and_then(Value::as_str).unwrap();
+    assert_eq!(version.len(), 12);
+}
+
+#[test]
 fn brief_keeps_one_copy_of_repeated_rows() {
     let rows = json!([
         {"digest": "d1", "occurred_at_ms": NOON, "sender": "alice", "text": "fwd"},

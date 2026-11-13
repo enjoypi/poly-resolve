@@ -1,9 +1,11 @@
 mod capture;
 mod feeds;
+mod gauge;
 mod http;
 mod imap;
 mod ingest;
 mod outbound;
+mod peek;
 mod sandbox;
 mod sources;
 mod store;

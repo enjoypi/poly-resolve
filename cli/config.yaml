@@ -74,9 +74,9 @@ triage:
       proxy: "${CODEX_PROXY}"
       timeout_ms: 10000
       url: "${CODEX_BASE_URL}"
-    env:
+    env: &codex_env
       CODEX_HOME: .debug/codex-home
-    sandbox:
+    sandbox: &codex_sandbox
       bin: /usr/bin/sandbox-exec
       canary: /usr/bin/true
       paths:
@@ -103,6 +103,8 @@ triage:
     url: "${DECISIONS_URL}"
   limits:
     batch: 100
+    daily_tokens: 0
+    down_after_ms: 600000
     intake: 200
     lookback_ms: 3600000
     max_attempts: 3
@@ -115,6 +117,11 @@ triage:
   mode: enabled
   model: gpt-6-luna
   notice:
+    alarm:
+      budget: "【用量】今日已用 {tokens} token，超过每日上限，调用照常进行"
+      down: "【采集异常】{source} {account} 自 {since} 起{state}，已连续失败 {streak} 次，详情见来源页"
+      names: {dingtalk: 钉钉, imap: 邮箱, manual: 待人工处理, retrying: 重连中}
+      recovered: "【采集恢复】{source} {account} 已恢复正常"
     late: "（消息实际发生于 {time}）"
     late_after_ms: 1800000
     origins:
@@ -238,6 +245,14 @@ triage:
   session:
     fresh: ["-"]
     omitted: "此处有 {count} 条消息未提供，原因：{reason}"
+    purge:
+      args: [delete]
+      bin: codex
+      env: *codex_env
+      sandbox: *codex_sandbox
+      timeout_ms: 30000
+      vars:
+        PATH: "${PATH}"
     resume: [resume, "{thread}", "-"]
   sizes:
     context_max_chars: 12000
@@ -264,6 +279,8 @@ triage:
       conversations: 0.05
       people: 0.05
       sources: 0.1
+    retain:
+      after_ms: 7776000000
     review_max: 5
     split_after: 2
 ingest:

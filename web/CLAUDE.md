@@ -14,7 +14,7 @@
 
 ## 入口与模块
 
-- `index.html` 是入口，`<link>` 引入 `src/style.css` 与 `src/favicon.svg`；`src/main.ts` 用 `connect(location.origin)` 按 `location.hash` 调 `renderMessages`、（`OUTBOUND_HASH`）`renderOutbound` 或（`FAILED_HASH`）`renderFailed`、（`PROMPTS_HASH`）`renderPrompts`、（`TOPICS_HASH`）`renderTopics`、（以 `TOPIC_HASH` 开头，其后为百分号编码的话题 ID）`renderTopic`；消息页 `.bar` 追加话题页、外发记录页与提示词页链接，外发记录页追加失败批页链接，`hashchange` 时整页重载
+- `index.html` 是入口，`<link>` 引入 `src/style.css` 与 `src/favicon.svg`；`src/main.ts` 用 `connect(location.origin)` 按 `location.hash` 调 `renderMessages`、（`OUTBOUND_HASH`）`renderOutbound` 或（`FAILED_HASH`）`renderFailed`、（`PROMPTS_HASH`）`renderPrompts`、（`TOPICS_HASH`）`renderTopics`、（以 `TOPIC_HASH` 开头，其后为百分号编码的话题 ID）`renderTopic`、（`SOURCES_HASH`）`renderSources`；消息页 `.bar` 追加话题页、外发记录页、提示词页与来源页链接，外发记录页追加失败批页链接，`hashchange` 时整页重载
 - `bun run build` 把产物平铺写到 `dist/`（已忽略），由 `cli serve` 的 `web_dir` 托管，不清旧产物；`bun build` 会按哈希重命名资源并改写引用
 - `src/` 保持平铺（contract 测试只扫这一层；改成子目录须同步改扫描范围）；一个模块一件事，文件名即职责，以下几个需注明：
   - `messages.ts`：`renderMessages(client, root, timeZone?)`，只构造 `Board`
@@ -27,6 +27,7 @@
   - `prompts.ts`：`renderPrompts(client, root)`，提示词页
   - `topics.ts`：`renderTopics(client, root, timeZone?)`，话题列表页
   - `topic.ts`：`renderTopic(client, root, topic, timeZone?)`，话题详情页；`brief` 生成话题摘要（标题链接与一行说明），列表页复用
+  - `sources.ts`：`renderSources(client, root, timeZone?)`，来源与调用量页
   - `dom.ts`：`area`、`button`，各卡片页共用
 - `config.ts` 是前端唯一的常量源：字段呈现表 `FIELDS`（标签、类型、默认隐藏、回退字段、占位、`look`、`primary`、`values` 显示值映射）、`DETAIL`、`PIN`、`TEXT` 及各项上限与时长；`PAGE_LIMIT` 须不超过 `cli/config.yaml` 的 `messages.max`
 - 字段：新增字段不必改 `config.ts`；已登记 `priority`（数字，默认显示）、`state`（处理状态，按 `STATES` 映射，默认显示）、`reason`、`topic` 与 `analysis`（默认隐藏）；未登记的字段按值推断（键以 `_ms` 结尾的整数为时间，全数值为数字，其余为文本）并默认显示
@@ -58,9 +59,13 @@
 ## 话题页
 
 - 只读，不自动轮询；列表 `GET /api/topics` 取 `CARD_LIMIT` 条，`state` 取下拉框（空为全部，其余为 `TOPIC_STATES`），页首三行：话题各状态数量、消息各状态数量（原因按 `HELD` 映射）、已知盲区 `TEXT.blind`
-- 每个话题一张卡片（类 `review topic`）：标题（空则用话题 ID）链到 `TOPIC_HASH` + 编码后的 ID，说明行为状态、优先级与紧急度（缺失显示 `TEXT.none`）、人数与会话数、来源、消息数、最近进展时间，再是最新分析（`<pre>` 文本）
+- 每个话题一张卡片（类 `review topic`）：标题（空则用话题 ID）链到 `TOPIC_HASH` + 编码后的 ID，说明行为状态、优先级（较 `previous` 升降加 `TEXT.rise`／`TEXT.fall`）与紧急度（缺失显示 `TEXT.none`）、人数与会话数、来源、消息数、首次与最近进展时间、提示词标识（空则不显示），再是最新分析（`<pre>` 文本）；时间线里 `purged_at_ms > 0` 的条目正文显示 `TEXT.purged`，消息表正文为空且已清除时同样显示它
 - 详情 `GET /api/topics/{topic_id}`：话题卡片、时间线（每条一张卡片：时间、来源、会话、发送人、角色、归入方式 `VIAS`；状态不是 `approved` 的加 `flagged` 并写状态与原因，没有正文的不放 `<pre>`）、自动调整记录（类 `review change`：时间、类型 `CHANGE_KINDS`、起止话题与条数、原因 `CHANGE_REASONS`（未登记原样）、状态）
 - 消息详情“全部字段”里 `DETAIL.topic` 的值是指向话题详情的链接（`detail.ts` 的 `jump`）
+
+## 来源页
+
+- 只读，同时请求 `GET /api/sources` 与 `GET /api/usage`（`limit` 取 `PAGE_DAYS`），任一失败只显示错误码；三段：数据源（类型按 `SOURCES`、状态按 `SOURCE_STATES`，非 `ok` 加 `flagged` 并写异常起始与连续失败次数）、各环节（`STAGES`，连续失败大于 0 加 `flagged`）、按日调用量（有失败加 `flagged`）
 
 ## 失败批页
 

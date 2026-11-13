@@ -7,7 +7,8 @@ use adapters::store::Archive;
 use serde_json::{Value, from_value, json};
 
 use self::fake::{Step, fetched, hello, serve};
-use crate::support::{BUSY, Fallible, Sandbox, keys, merge, run_logged};
+use crate::peek::{health, keys};
+use crate::support::{BUSY, Fallible, Sandbox, merge, run_logged};
 
 const BACKFILL: u64 = 86_400_000;
 const BATCH: u32 = 1;
@@ -200,6 +201,11 @@ async fn polling_refresh_and_refusals_back_off() {
     ] {
         assert!(logs.contains(part), "{part}");
     }
+    let marked = health(&sandbox.database()).unwrap();
+    assert!(
+        marked.first().unwrap().starts_with("imap|work|"),
+        "{marked:?}"
+    );
     drop(fake.finish());
 }
 

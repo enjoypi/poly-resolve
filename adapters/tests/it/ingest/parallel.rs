@@ -2,7 +2,8 @@ use adapters::store::Archive;
 use serde_json::json;
 
 use crate::feeds::sealed_page;
-use crate::support::{BUSY, NOON, Sandbox, keys, run_logged, sealed_envelope, texts};
+use crate::peek::{keys, texts};
+use crate::support::{BUSY, NOON, Sandbox, run_logged, sealed_envelope};
 
 const PAIR: u32 = 2;
 const SHORT: u64 = 4_000;

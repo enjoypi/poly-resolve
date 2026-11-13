@@ -3,7 +3,7 @@ use serde_json::json;
 
 use crate::support::{Fixture, local};
 
-static ROUTES: [Bound; 9] = [
+static ROUTES: [Bound; 11] = [
     ("batches", "list", "get", "/api/batches"),
     ("batches", "update", "patch", "/api/batches/{batch_id}"),
     ("health", "check", "get", "/api/health"),
@@ -11,10 +11,12 @@ static ROUTES: [Bound; 9] = [
     ("outbound", "list", "get", "/api/outbound"),
     ("prompts", "list", "get", "/api/prompts"),
     ("prompts", "update", "patch", "/api/prompts/{name}"),
+    ("sources", "list", "get", "/api/sources"),
     ("topics", "get", "get", "/api/topics/{topic_id}"),
     ("topics", "list", "get", "/api/topics"),
+    ("usage", "list", "get", "/api/usage"),
 ];
-static SCHEMAS: [&str; 27] = [
+static SCHEMAS: [&str; 33] = [
     "BatchItem",
     "BatchKey",
     "BatchListRequest",
@@ -34,6 +36,9 @@ static SCHEMAS: [&str; 27] = [
     "PromptsListResponse",
     "PromptsNameResponse",
     "PromptsUpdateRequest",
+    "SourcesHealth",
+    "SourcesItem",
+    "SourcesStage",
     "TopicChange",
     "TopicDetail",
     "TopicEntry",
@@ -42,6 +47,9 @@ static SCHEMAS: [&str; 27] = [
     "TopicListRequest",
     "TopicOverview",
     "TopicTally",
+    "UsageDay",
+    "UsageListRequest",
+    "UsageListResponse",
 ];
 
 type Bound = (&'static str, &'static str, &'static str, &'static str);
@@ -117,7 +125,8 @@ fn lists_failures_per_route() {
             )
         })
         .collect();
-    let (head, tail) = failing.split_at(4);
+    let (head, rest) = failing.split_at(4);
+    let (middle, tail) = rest.split_at(3);
     assert_eq!(
         head,
         [
@@ -128,13 +137,20 @@ fn lists_failures_per_route() {
         ]
     );
     assert_eq!(
-        tail,
+        middle,
         [
             ("outbound", vec![400, 503]),
             ("prompts", vec![503]),
             ("prompts", vec![400, 404, 422, 503]),
+        ]
+    );
+    assert_eq!(
+        tail,
+        [
+            ("sources", vec![503]),
             ("topics", vec![400, 404, 503]),
             ("topics", vec![400, 503]),
+            ("usage", vec![400, 503]),
         ]
     );
 }

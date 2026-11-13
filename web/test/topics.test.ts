@@ -19,16 +19,19 @@ type Reply = { body: unknown; status?: number };
 function topic(id: string, patch: Record<string, unknown> = {}) {
   return {
     conversations: 2,
+    first_at_ms: NOW - 3_600_000,
     label: `label-${id}`,
     last_at_ms: NOW,
     members: 4,
     people: 3,
+    previous: 0.5,
     score: 0.75,
     sources: ["imap", "slack"],
     state: "open",
     topic_id: id,
     urgency: 0.5,
     verdict: `verdict-${id} <b>x</b>`,
+    version: "abc123",
     ...patch,
   };
 }
@@ -38,6 +41,7 @@ function entry(key: string, patch: Record<string, unknown> = {}) {
     conversation_id: "c1",
     key,
     occurred_at_ms: NOW,
+    purged_at_ms: 0,
     reason: "",
     role: "",
     sender: "alice",
@@ -51,7 +55,7 @@ function entry(key: string, patch: Record<string, unknown> = {}) {
 
 function overview() {
   return {
-    items: [topic("t/1"), topic("t2", { label: "", score: null, state: "odd", urgency: null, verdict: "" })],
+    items: [topic("t/1"), topic("t2", { label: "", previous: null, score: null, state: "odd", urgency: null, verdict: "" }), topic("t3", { previous: 0.9 }), topic("t4", { previous: 0.75 })],
     lines: [
       { count: 5, reason: "", state: "approved" },
       { count: 2, reason: "sealed", state: "withheld" },
@@ -74,6 +78,7 @@ function detail() {
       entry("a", { role: "own" }),
       entry("b", { reason: "sealed", source: "dingtalk", state: "withheld", text: "", via: "new" }),
       entry("c", { reason: "", role: "bot", source: "slack", state: "queued", via: "odd" }),
+      entry("d", { purged_at_ms: NOW, text: "" }),
     ],
     topic: topic("t/1"),
   };
@@ -106,17 +111,19 @@ test("话题列表：标题链到详情，显示状态、优先级构成、来�
   const root = document.createElement("div");
   await renderTopics(client, root, "UTC");
   expect(calls).toEqual([{ path: route("/topics"), query: { limit: "200", state: "" } }]);
-  expect(cards(root)).toHaveLength(2);
+  expect(cards(root)).toHaveLength(4);
   const titles = [...root.querySelectorAll<HTMLAnchorElement>(".title")];
-  expect(titles.map((node) => node.textContent)).toEqual(["label-t/1", "t2"]);
+  expect(titles.map((node) => node.textContent)).toEqual(["label-t/1", "t2", "label-t3", "label-t4"]);
   expect(titles[0]?.getAttribute("href")).toBe("#topic/t%2F1");
-  const [first = "", second = ""] = metas(root);
-  for (const part of ["进行中", "优先级 0.75（紧急 0.50）", "3 人 2 个会话", "邮箱、slack", "4 条消息", "2026-10-28 01:20:09"]) {
+  const [first = "", second = "", third = "", fourth = ""] = metas(root);
+  expect(third).toContain("优先级 0.75↓（紧急 0.50）");
+  expect(fourth).toContain("优先级 0.75（紧急 0.50）");
+  for (const part of ["进行中", "优先级 0.75↑（紧急 0.50）", "3 人 2 个会话", "邮箱、slack", "4 条消息", "始于 2026-10-28 00:20:09", "最近 2026-10-28 01:20:09"]) {
     expect(first).toContain(part);
   }
   expect(second).toContain("odd");
   expect(second).toContain(`优先级 ${TEXT.none}（紧急 ${TEXT.none}）`);
-  expect([...root.querySelectorAll(".payload")].map((node) => node.textContent)).toEqual(["verdict-t/1 <b>x</b>"]);
+  expect([...root.querySelectorAll(".payload")].map((node) => node.textContent)).toEqual(["verdict-t/1 <b>x</b>", "verdict-t3 <b>x</b>", "verdict-t4 <b>x</b>"]);
   expect(root.querySelector("b")).toBeNull();
   expect(root.querySelector(".count")?.textContent).toBe("话题：进行中 1 · odd 1");
   expect(root.querySelector(".lines")?.textContent).toBe("消息：已外发 5 · 未外发（仍是密文） 2 · weird（why） 1");
@@ -154,7 +161,7 @@ test("话题详情：跨来源时间线标出未外发成员及原因，列出�
   expect(calls).toEqual([{ path: route("/topics/{topic_id}").replace("{topic_id}", "t%2F1"), query: {} }]);
   expect(root.querySelector(".title")?.textContent).toBe("label-t/1");
   expect([...root.querySelectorAll(".section")].map((node) => node.textContent)).toEqual([
-    TEXT.timeline(3),
+    TEXT.timeline(4),
     TEXT.changes(2),
   ]);
   expect([...cards(root)].map((node) => node.className)).toEqual([
@@ -162,10 +169,13 @@ test("话题详情：跨来源时间线标出未外发成员及原因，列出�
     "review",
     "review flagged",
     "review flagged",
+    "review",
     "review change",
+
     "review change",
   ]);
-  const [, own = "", sealed = "", queued = "", moved = "", fused = ""] = metas(root);
+  const [head = "", own = "", sealed = "", queued = "", , moved = "", fused = ""] = metas(root);
+  expect(head).toContain(TEXT.version("abc123"));
   for (const part of ["2026-10-28 01:20:09", "邮箱", "c1", "alice", "本人", "强线索"]) expect(own).toContain(part);
   for (const part of ["钉钉", "新话题", "未外发：仍是密文"]) expect(sealed).toContain(part);
   expect(queued).toContain("slack");
@@ -179,12 +189,13 @@ test("话题详情：跨来源时间线标出未外发成员及原因，列出�
     "verdict-t/1 <b>x</b>",
     "text-a",
     "text-c",
+    TEXT.purged,
   ]);
   expect((root.querySelector(".back") as HTMLAnchorElement).getAttribute("href")).toBe("#topics");
 });
 
 test("话题详情：没有分析时不放正文框，刷新重取，出错与网络失败", async () => {
-  const bare = { changes: [], timeline: [], topic: topic("t2", { verdict: "" }) };
+  const bare = { changes: [], timeline: [], topic: topic("t2", { verdict: "", version: "" }) };
   const { calls, client } = stub([{ body: bare }, { body: { code: "not_found" }, status: 404 }]);
   const root = document.createElement("div");
   await renderTopic(client, root, "t2", "UTC");

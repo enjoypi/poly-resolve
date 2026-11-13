@@ -7,10 +7,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json, to_string};
 
 use self::layout::{Choice, Layout, Placed, Segment};
+use super::prompt::VERSION_CHARS;
 use super::redact::{Mask, Rule};
 use super::transcript::{Row, Style};
 use crate::AppError;
-use crate::redact::Seal;
+use crate::redact::{Seal, fingerprint};
 
 const AUTO: &str = "auto";
 const COPY: &str = "copy";
@@ -126,6 +127,7 @@ pub(crate) struct PackResponse {
     body: String,
     layout: Layout,
     questions: usize,
+    version: String,
 }
 
 struct Pick {
@@ -150,6 +152,19 @@ pub(crate) struct Questions {
     urgent: Question,
 }
 
+impl Questions {
+    fn version(&self) -> String {
+        fingerprint(
+            &[
+                &self.urgent.instructions,
+                &self.topic.instructions,
+                &self.review.instructions,
+            ],
+            VERSION_CHARS,
+        )
+    }
+}
+
 #[derive(Deserialize, JsonSchema)]
 #[schemars(rename = "TriageReview")]
 pub(crate) struct Review {
@@ -160,6 +175,17 @@ pub(crate) struct Review {
 
 pub(super) fn alias(prefix: &str, index: usize) -> String {
     format!("{prefix}{}", index.saturating_add(1))
+}
+
+fn asked<'all>(
+    req: &'all PackRequest,
+    options: &'all [Picks],
+) -> impl Iterator<Item = Value> + 'all {
+    options
+        .iter()
+        .enumerate()
+        .filter(|&(_, picks)| !picks.is_empty())
+        .map(|(index, picks)| choice(&req.questions.topic, index, picks))
 }
 
 fn attached<'req>(req: &'req PackRequest, first: &Entry) -> Option<&'req str> {
@@ -412,16 +438,11 @@ pub(crate) fn pack(req: &PackRequest, seal: Option<&Seal>) -> Result<PackRespons
             .with_role(if block.auto() { AUTO } else { "" })
         })
         .collect();
-    let asked = options
-        .iter()
-        .enumerate()
-        .filter(|&(_, picks)| !picks.is_empty())
-        .map(|(index, picks)| choice(&req.questions.topic, index, picks));
     let questions: Vec<Value> = drafted
         .urgent
         .into_iter()
         .chain(checks)
-        .chain(asked)
+        .chain(asked(req, &options))
         .collect();
     let count = questions.len();
     let input: Vec<Value> = drafted.input.into_iter().chain(shown).collect();
@@ -441,6 +462,7 @@ pub(crate) fn pack(req: &PackRequest, seal: Option<&Seal>) -> Result<PackRespons
             )
             .with_probabilities(history(req)),
         questions: count,
+        version: req.questions.version(),
     })
 }
 

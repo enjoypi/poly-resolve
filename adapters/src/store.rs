@@ -1,3 +1,5 @@
+mod gauge;
+
 use core::error::Error as Cause;
 use core::time::Duration;
 use std::path::Path;
@@ -14,7 +16,7 @@ use crate::ingest::now_ms;
 
 macro_rules! topic {
     () => {
-        "json_object('conversations', COALESCE(json_extract(t.reach, '$.conversations'), 0), 'label', t.label, 'last_at_ms', t.last_at_ms, 'members', (SELECT COUNT(*) FROM members m WHERE m.topic_id = t.id), 'people', COALESCE(json_extract(t.reach, '$.people'), 0), 'score', COALESCE(t.score, t.probability), 'sources', json((SELECT json_group_array(DISTINCT g.source) FROM members m JOIN messages g ON g.key = m.key WHERE m.topic_id = t.id)), 'state', t.state, 'topic_id', t.id, 'urgency', t.urgency, 'verdict', COALESCE(NULLIF(t.verdict, ''), (SELECT a.analysis FROM alerts a WHERE a.topic_id = t.id AND a.analysis IS NOT NULL ORDER BY a.created_at_ms DESC LIMIT 1), ''))"
+        "json_object('conversations', COALESCE(json_extract(t.reach, '$.conversations'), 0), 'first_at_ms', COALESCE((SELECT MIN(l.occurred_at_ms) FROM members m JOIN lines l ON l.key = m.key WHERE m.topic_id = t.id), t.last_at_ms), 'label', t.label, 'last_at_ms', t.last_at_ms, 'members', (SELECT COUNT(*) FROM members m WHERE m.topic_id = t.id), 'people', COALESCE(json_extract(t.reach, '$.people'), 0), 'previous', t.previous, 'score', COALESCE(t.score, t.probability), 'sources', json((SELECT json_group_array(DISTINCT g.source) FROM members m JOIN messages g ON g.key = m.key WHERE m.topic_id = t.id)), 'state', t.state, 'topic_id', t.id, 'urgency', t.urgency, 'version', t.version, 'verdict', COALESCE(NULLIF(t.verdict, ''), (SELECT a.analysis FROM alerts a WHERE a.topic_id = t.id AND a.analysis IS NOT NULL ORDER BY a.created_at_ms DESC LIMIT 1), ''))"
     };
 }
 
@@ -28,13 +30,19 @@ const BACKFILLED: &str =
     "SELECT COUNT(*) FROM backfills WHERE source = ?1 AND account = ?2 AND version = ?3";
 const BATCHES: &str = "SELECT json_group_array(json_object('attempts', attempts, 'batch_id', id, 'lines', (SELECT COUNT(*) FROM lines l WHERE l.batch_id = b.id AND l.state = 'approved'), 'reason', reason, 'state', state, 'updated_at_ms', updated_at_ms)) FROM (SELECT * FROM batches WHERE state = ?1 ORDER BY id LIMIT ?2) b";
 const BATCH_STATE: &str = "SELECT json_group_array(state) FROM batches WHERE id = ?1";
+const CALLED: Column = Column {
+    alter: "ALTER TABLE calls ADD COLUMN state TEXT NOT NULL DEFAULT ''; ALTER TABLE calls ADD COLUMN input_tokens INTEGER NOT NULL DEFAULT 0; ALTER TABLE calls ADD COLUMN output_tokens INTEGER NOT NULL DEFAULT 0; ALTER TABLE calls ADD COLUMN version TEXT NOT NULL DEFAULT ''",
+    name: "state",
+    table: "calls",
+};
 const CHANGES: Column = Column {
     alter: "ALTER TABLE alerts ADD COLUMN changes TEXT NOT NULL DEFAULT ''",
     name: "changes",
     table: "alerts",
 };
-static COLUMNS: [Column; 9] = [
-    ATTEMPTS, CHANGES, CURSOR, DIGEST, MERGED, REVIVALS, ROLE, SCORE, STATE,
+static COLUMNS: [Column; 14] = [
+    ATTEMPTS, CALLED, CHANGES, CURSOR, DIGEST, MERGED, PURGED, REVIVALS, ROLE, SCORE, SEALED_BY,
+    STATE, STUDIED, TREND,
 ];
 const CURSOR: Column = Column {
     alter: "ALTER TABLE topics ADD COLUMN until_key TEXT NOT NULL DEFAULT ''",
@@ -42,7 +50,7 @@ const CURSOR: Column = Column {
     table: "topics",
 };
 const DETAIL: &str = concat!(
-    "SELECT json_group_array(json(found)) FROM (SELECT json_object('changes', json((SELECT json_group_array(json_object('at_ms', at_ms, 'from_topic', from_topic, 'keys', json_array_length(keys), 'kind', kind, 'reason', reason, 'serial', id, 'state', state, 'to_topic', to_topic)) FROM (SELECT * FROM changes c WHERE c.from_topic = t.id OR c.to_topic = t.id ORDER BY c.id DESC LIMIT 100))), 'timeline', json((SELECT json_group_array(json_object('conversation_id', conversation_id, 'key', key, 'occurred_at_ms', occurred_at_ms, 'reason', reason, 'role', role, 'sender', sender, 'source', source, 'state', state, 'text', text, 'via', via)) FROM (SELECT l.conversation_id AS conversation_id, l.key AS key, l.occurred_at_ms AS occurred_at_ms, l.reason AS reason, l.role AS role, l.sender AS sender, COALESCE(g.source, '') AS source, l.state AS state, CASE WHEN l.state = 'withheld' THEN '' ELSE l.text END AS text, m.via AS via FROM members m JOIN lines l ON l.key = m.key LEFT JOIN messages g ON g.key = m.key WHERE m.topic_id = t.id ORDER BY l.occurred_at_ms, l.key))), 'topic', json(",
+    "SELECT json_group_array(json(found)) FROM (SELECT json_object('changes', json((SELECT json_group_array(json_object('at_ms', at_ms, 'from_topic', from_topic, 'keys', json_array_length(keys), 'kind', kind, 'reason', reason, 'serial', id, 'state', state, 'to_topic', to_topic)) FROM (SELECT * FROM changes c WHERE c.from_topic = t.id OR c.to_topic = t.id ORDER BY c.id DESC LIMIT 100))), 'timeline', json((SELECT json_group_array(json_object('conversation_id', conversation_id, 'key', key, 'occurred_at_ms', occurred_at_ms, 'purged_at_ms', purged_at_ms, 'reason', reason, 'role', role, 'sender', sender, 'source', source, 'state', state, 'text', text, 'via', via)) FROM (SELECT l.conversation_id AS conversation_id, l.key AS key, l.occurred_at_ms AS occurred_at_ms, COALESCE(g.purged_at_ms, 0) AS purged_at_ms, l.reason AS reason, l.role AS role, l.sender AS sender, COALESCE(g.source, '') AS source, l.state AS state, CASE WHEN l.state = 'withheld' THEN '' ELSE l.text END AS text, m.via AS via FROM members m JOIN lines l ON l.key = m.key LEFT JOIN messages g ON g.key = m.key WHERE m.topic_id = t.id ORDER BY l.occurred_at_ms, l.key))), 'topic', json(",
     topic!(),
     ")) AS found FROM topics t WHERE t.id = COALESCE((SELECT new FROM topic_aliases WHERE old = ?1), ?1))"
 );
@@ -52,19 +60,25 @@ const DIGEST: Column = Column {
     table: "lines",
 };
 const INSERT: &str = "INSERT OR IGNORE INTO messages (key, source, account, conversation_id, sender_id, sender_name, text, occurred_at_ms, received_at_ms, raw) SELECT json_extract(value, '$.key'), json_extract(value, '$.source'), json_extract(value, '$.account'), json_extract(value, '$.conversation_id'), json_extract(value, '$.sender_id'), json_extract(value, '$.sender_name'), json_extract(value, '$.text'), json_extract(value, '$.occurred_at_ms'), json_extract(value, '$.received_at_ms'), json_extract(value, '$.raw') FROM json_each(?1, ?2)";
-const LIST: &str = "SELECT json_group_array(json_object('account', account, 'analysis', analysis, 'conversation_id', conversation_id, 'key', key, 'occurred_at_ms', occurred_at_ms, 'priority', priority, 'reason', reason, 'received_at_ms', received_at_ms, 'sender_id', sender_id, 'sender_name', sender_name, 'source', source, 'state', state, 'text', text, 'topic', topic) ORDER BY occurred_at_ms DESC, key DESC) FROM (SELECT m.*, COALESCE(t.score, p.probability) AS priority, l.reason AS reason, l.state AS state, p.topic_id AS topic, (SELECT a.analysis FROM alerts a WHERE a.topic_id = p.topic_id AND a.analysis IS NOT NULL ORDER BY a.created_at_ms DESC LIMIT 1) AS analysis FROM messages m LEFT JOIN members p ON p.key = m.key AND p.topic_id = (SELECT MIN(o.topic_id) FROM members o WHERE o.key = m.key) LEFT JOIN topics t ON t.id = p.topic_id LEFT JOIN lines l ON l.key = m.key WHERE (?1 IS NULL OR (m.occurred_at_ms, m.key) < (?1, ?2)) AND (?4 IS NULL OR m.occurred_at_ms >= ?4) AND (?5 IS NULL OR m.occurred_at_ms < ?5) ORDER BY m.occurred_at_ms DESC, m.key DESC LIMIT ?3)";
+const LIST: &str = "SELECT json_group_array(json_object('account', account, 'analysis', analysis, 'conversation_id', conversation_id, 'key', key, 'occurred_at_ms', occurred_at_ms, 'priority', priority, 'purged_at_ms', purged_at_ms, 'reason', reason, 'received_at_ms', received_at_ms, 'sender_id', sender_id, 'sender_name', sender_name, 'source', source, 'state', state, 'text', text, 'topic', topic) ORDER BY occurred_at_ms DESC, key DESC) FROM (SELECT m.*, COALESCE(t.score, p.probability) AS priority, l.reason AS reason, l.state AS state, p.topic_id AS topic, (SELECT a.analysis FROM alerts a WHERE a.topic_id = p.topic_id AND a.analysis IS NOT NULL ORDER BY a.created_at_ms DESC LIMIT 1) AS analysis FROM messages m LEFT JOIN members p ON p.key = m.key AND p.topic_id = (SELECT MIN(o.topic_id) FROM members o WHERE o.key = m.key) LEFT JOIN topics t ON t.id = p.topic_id LEFT JOIN lines l ON l.key = m.key WHERE (?1 IS NULL OR (m.occurred_at_ms, m.key) < (?1, ?2)) AND (?4 IS NULL OR m.occurred_at_ms >= ?4) AND (?5 IS NULL OR m.occurred_at_ms < ?5) ORDER BY m.occurred_at_ms DESC, m.key DESC LIMIT ?3)";
+const MARK: &str = "INSERT INTO source_health (source, account, state, streak, ok_at_ms, down_at_ms) VALUES (?1, ?2, ?3, ?4, CASE WHEN ?3 = 'ok' THEN ?5 ELSE 0 END, CASE WHEN ?3 = 'ok' THEN 0 ELSE ?5 END) ON CONFLICT(source, account) DO UPDATE SET down_at_ms = CASE WHEN excluded.state <> 'ok' AND source_health.state = 'ok' THEN ?5 ELSE source_health.down_at_ms END, ok_at_ms = CASE WHEN excluded.state = 'ok' THEN ?5 ELSE source_health.ok_at_ms END, state = excluded.state, streak = excluded.streak";
 const MERGED: Column = Column {
     alter: "ALTER TABLE alerts ADD COLUMN merged_into TEXT NOT NULL DEFAULT ''; ALTER TABLE alerts ADD COLUMN origin TEXT NOT NULL DEFAULT ''; ALTER TABLE alerts ADD COLUMN sent_at_ms INTEGER NOT NULL DEFAULT 0",
     name: "merged_into",
     table: "alerts",
 };
-const OUTBOUND: &str = "SELECT json_group_array(json_object('account', account, 'batch_id', batch_id, 'conversation_id', conversation_id, 'flag', flag, 'key', key, 'occurred_at_ms', occurred_at_ms, 'reason', reason, 'role', role, 'sender', sender, 'source', source, 'state', state, 'text', text)) FROM (SELECT l.*, COALESCE(m.source, '') AS source, COALESCE(m.account, '') AS account FROM lines l LEFT JOIN messages m ON m.key = l.key WHERE l.state = ?1 ORDER BY l.occurred_at_ms DESC, l.key DESC LIMIT ?2)";
+const OUTBOUND: &str = "SELECT json_group_array(json_object('account', account, 'batch_id', batch_id, 'conversation_id', conversation_id, 'flag', flag, 'key', key, 'occurred_at_ms', occurred_at_ms, 'reason', reason, 'role', role, 'sender', sender, 'source', source, 'state', state, 'text', text, 'version', version)) FROM (SELECT l.*, COALESCE(m.source, '') AS source, COALESCE(m.account, '') AS account, COALESCE(b.version, '') AS version FROM lines l LEFT JOIN messages m ON m.key = l.key LEFT JOIN batches b ON b.id = l.batch_id WHERE l.state = ?1 ORDER BY l.occurred_at_ms DESC, l.key DESC LIMIT ?2)";
 const OVERVIEW: &str = concat!(
     "SELECT json_object('items', json((SELECT json_group_array(json(item)) FROM (SELECT ",
     topic!(),
     " AS item FROM topics t WHERE (?1 = '' OR t.state = ?1) ORDER BY t.last_at_ms DESC, t.id LIMIT ?2))), 'lines', json((SELECT json_group_array(json_object('count', total, 'reason', reason, 'state', state)) FROM (SELECT state, reason, COUNT(*) AS total FROM lines GROUP BY state, reason ORDER BY state, reason))), 'topics', json((SELECT json_group_array(json_object('count', total, 'reason', '', 'state', state)) FROM (SELECT state, COUNT(*) AS total FROM topics GROUP BY state ORDER BY state))))"
 );
 const PRESENT: &str = "SELECT COUNT(*) FROM pragma_table_info(?1) WHERE name = ?2";
+const PURGED: Column = Column {
+    alter: "ALTER TABLE messages ADD COLUMN purged_at_ms INTEGER NOT NULL DEFAULT 0; CREATE INDEX IF NOT EXISTS messages_by_purge ON messages (purged_at_ms, occurred_at_ms)",
+    name: "purged_at_ms",
+    table: "messages",
+};
 const REPLACE: &str = "UPDATE messages SET text = json_extract(?2, '$.text') WHERE key = json_extract(?2, '$.key') AND text = json_extract(?1, '$.text')";
 const REVIVALS: Column = Column {
     alter: "ALTER TABLE batches ADD COLUMN revivals INTEGER NOT NULL DEFAULT 0; UPDATE batches SET revivals = -1 WHERE state = 'failed'",
@@ -77,19 +91,36 @@ const ROLE: Column = Column {
     name: "role",
     table: "lines",
 };
-pub(crate) const SCHEMA: &str = "CREATE TABLE IF NOT EXISTS messages (key TEXT PRIMARY KEY NOT NULL, source TEXT NOT NULL, account TEXT NOT NULL, conversation_id TEXT NOT NULL, sender_id TEXT NOT NULL, sender_name TEXT NOT NULL, text TEXT NOT NULL, occurred_at_ms INTEGER NOT NULL, received_at_ms INTEGER NOT NULL, raw TEXT NOT NULL) WITHOUT ROWID; CREATE INDEX IF NOT EXISTS messages_by_time ON messages (source, account, occurred_at_ms); CREATE INDEX IF NOT EXISTS messages_by_when ON messages (occurred_at_ms, key); CREATE TABLE IF NOT EXISTS lines (key TEXT PRIMARY KEY NOT NULL, conversation_id TEXT NOT NULL, occurred_at_ms INTEGER NOT NULL, sender TEXT NOT NULL, text TEXT NOT NULL, state TEXT NOT NULL, reason TEXT NOT NULL, reviewer TEXT NOT NULL, flag TEXT NOT NULL, hints TEXT NOT NULL, rules_rev INTEGER NOT NULL, batch_id INTEGER NOT NULL, created_at_ms INTEGER NOT NULL, updated_at_ms INTEGER NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, role TEXT NOT NULL DEFAULT '') WITHOUT ROWID; CREATE TABLE IF NOT EXISTS misses (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, kind TEXT NOT NULL, key TEXT NOT NULL, text TEXT NOT NULL, spans TEXT NOT NULL, created_at_ms INTEGER NOT NULL); CREATE INDEX IF NOT EXISTS lines_by_batch ON lines (batch_id, state); CREATE INDEX IF NOT EXISTS lines_by_state ON lines (state, occurred_at_ms); CREATE INDEX IF NOT EXISTS lines_by_conversation ON lines (conversation_id, occurred_at_ms); CREATE TABLE IF NOT EXISTS answers (batch_id INTEGER PRIMARY KEY NOT NULL, body TEXT NOT NULL); CREATE TABLE IF NOT EXISTS batches (id INTEGER PRIMARY KEY NOT NULL, state TEXT NOT NULL, payload TEXT NOT NULL, layout TEXT NOT NULL, attempts INTEGER NOT NULL, reason TEXT NOT NULL, created_at_ms INTEGER NOT NULL, updated_at_ms INTEGER NOT NULL, revivals INTEGER NOT NULL DEFAULT 0); CREATE TABLE IF NOT EXISTS topics (id TEXT PRIMARY KEY NOT NULL, label TEXT NOT NULL, probability REAL, thread_id TEXT NOT NULL, until_ms INTEGER NOT NULL, until_key TEXT NOT NULL, thread_at_ms INTEGER NOT NULL, created_at_ms INTEGER NOT NULL, last_at_ms INTEGER NOT NULL) WITHOUT ROWID; CREATE TABLE IF NOT EXISTS placements (key TEXT PRIMARY KEY NOT NULL, topic_id TEXT NOT NULL, probability REAL, batch_id INTEGER NOT NULL) WITHOUT ROWID; CREATE INDEX IF NOT EXISTS placements_by_topic ON placements (topic_id); CREATE TABLE IF NOT EXISTS alerts (key TEXT PRIMARY KEY NOT NULL, topic_id TEXT NOT NULL, state TEXT NOT NULL, attempts INTEGER NOT NULL, analysis TEXT, reason TEXT NOT NULL, created_at_ms INTEGER NOT NULL, updated_at_ms INTEGER NOT NULL, score REAL) WITHOUT ROWID; CREATE INDEX IF NOT EXISTS alerts_by_topic ON alerts (topic_id, created_at_ms); CREATE TABLE IF NOT EXISTS learned_rules (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, pattern TEXT NOT NULL, placeholder TEXT NOT NULL, source_key TEXT NOT NULL, reviewer TEXT NOT NULL, created_at_ms INTEGER NOT NULL); CREATE UNIQUE INDEX IF NOT EXISTS learned_rules_unique ON learned_rules (pattern, placeholder); CREATE TABLE IF NOT EXISTS topic_aliases (old TEXT PRIMARY KEY NOT NULL, new TEXT NOT NULL) WITHOUT ROWID; CREATE TABLE IF NOT EXISTS triage_state (id INTEGER PRIMARY KEY NOT NULL, enabled INTEGER NOT NULL, since_ms INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS calls (kind TEXT NOT NULL, subject TEXT NOT NULL, topic_id TEXT NOT NULL, attempt INTEGER NOT NULL, at_ms INTEGER NOT NULL, PRIMARY KEY (kind, subject, attempt)) WITHOUT ROWID; CREATE INDEX IF NOT EXISTS calls_by_time ON calls (kind, at_ms); CREATE INDEX IF NOT EXISTS calls_by_topic ON calls (topic_id, at_ms); CREATE TABLE IF NOT EXISTS backfills (source TEXT NOT NULL, account TEXT NOT NULL, version INTEGER NOT NULL, done_at_ms INTEGER NOT NULL, PRIMARY KEY (source, account, version)) WITHOUT ROWID; CREATE TABLE IF NOT EXISTS members (key TEXT NOT NULL, topic_id TEXT NOT NULL, probability REAL, batch_id INTEGER NOT NULL, via TEXT NOT NULL, created_at_ms INTEGER NOT NULL, PRIMARY KEY (key, topic_id)) WITHOUT ROWID; CREATE INDEX IF NOT EXISTS members_by_topic ON members (topic_id); CREATE INDEX IF NOT EXISTS members_by_time ON members (created_at_ms); CREATE TABLE IF NOT EXISTS clues (kind TEXT NOT NULL, value TEXT NOT NULL, key TEXT NOT NULL, occurred_at_ms INTEGER NOT NULL, PRIMARY KEY (kind, value, key)) WITHOUT ROWID; CREATE INDEX IF NOT EXISTS clues_by_key ON clues (key); CREATE TABLE IF NOT EXISTS relations (a TEXT NOT NULL, b TEXT NOT NULL, kind TEXT NOT NULL, count INTEGER NOT NULL, PRIMARY KEY (a, b, kind)) WITHOUT ROWID; CREATE TABLE IF NOT EXISTS changes (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, kind TEXT NOT NULL, from_topic TEXT NOT NULL, to_topic TEXT NOT NULL, keys TEXT NOT NULL, reason TEXT NOT NULL, state TEXT NOT NULL, at_ms INTEGER NOT NULL); CREATE INDEX IF NOT EXISTS changes_by_state ON changes (state, id); CREATE TABLE IF NOT EXISTS identities (source TEXT NOT NULL, sender_id TEXT NOT NULL, person_id TEXT NOT NULL, name TEXT NOT NULL, PRIMARY KEY (source, sender_id)) WITHOUT ROWID; DROP TRIGGER IF EXISTS messages_unsealed; DROP TRIGGER IF EXISTS messages_revealed; CREATE TRIGGER IF NOT EXISTS messages_decrypted AFTER UPDATE OF text ON messages BEGIN DELETE FROM placements WHERE key = NEW.key AND EXISTS (SELECT 1 FROM lines WHERE key = NEW.key AND state = 'withheld' AND reason = 'sealed'); DELETE FROM members WHERE key = NEW.key AND EXISTS (SELECT 1 FROM lines WHERE key = NEW.key AND state = 'withheld' AND reason = 'sealed'); DELETE FROM clues WHERE key = NEW.key AND EXISTS (SELECT 1 FROM lines WHERE key = NEW.key AND state = 'withheld' AND reason = 'sealed'); DELETE FROM lines WHERE key = NEW.key AND state = 'withheld' AND reason = 'sealed'; END;";
+pub(crate) const SCHEMA: &str = "CREATE TABLE IF NOT EXISTS messages (key TEXT PRIMARY KEY NOT NULL, source TEXT NOT NULL, account TEXT NOT NULL, conversation_id TEXT NOT NULL, sender_id TEXT NOT NULL, sender_name TEXT NOT NULL, text TEXT NOT NULL, occurred_at_ms INTEGER NOT NULL, received_at_ms INTEGER NOT NULL, raw TEXT NOT NULL) WITHOUT ROWID; CREATE INDEX IF NOT EXISTS messages_by_time ON messages (source, account, occurred_at_ms); CREATE INDEX IF NOT EXISTS messages_by_when ON messages (occurred_at_ms, key); CREATE TABLE IF NOT EXISTS lines (key TEXT PRIMARY KEY NOT NULL, conversation_id TEXT NOT NULL, occurred_at_ms INTEGER NOT NULL, sender TEXT NOT NULL, text TEXT NOT NULL, state TEXT NOT NULL, reason TEXT NOT NULL, reviewer TEXT NOT NULL, flag TEXT NOT NULL, hints TEXT NOT NULL, rules_rev INTEGER NOT NULL, batch_id INTEGER NOT NULL, created_at_ms INTEGER NOT NULL, updated_at_ms INTEGER NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, role TEXT NOT NULL DEFAULT '') WITHOUT ROWID; CREATE TABLE IF NOT EXISTS misses (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, kind TEXT NOT NULL, key TEXT NOT NULL, text TEXT NOT NULL, spans TEXT NOT NULL, created_at_ms INTEGER NOT NULL); CREATE INDEX IF NOT EXISTS lines_by_batch ON lines (batch_id, state); CREATE INDEX IF NOT EXISTS lines_by_state ON lines (state, occurred_at_ms); CREATE INDEX IF NOT EXISTS lines_by_conversation ON lines (conversation_id, occurred_at_ms); CREATE TABLE IF NOT EXISTS answers (batch_id INTEGER PRIMARY KEY NOT NULL, body TEXT NOT NULL); CREATE TABLE IF NOT EXISTS batches (id INTEGER PRIMARY KEY NOT NULL, state TEXT NOT NULL, payload TEXT NOT NULL, layout TEXT NOT NULL, attempts INTEGER NOT NULL, reason TEXT NOT NULL, created_at_ms INTEGER NOT NULL, updated_at_ms INTEGER NOT NULL, revivals INTEGER NOT NULL DEFAULT 0); CREATE TABLE IF NOT EXISTS topics (id TEXT PRIMARY KEY NOT NULL, label TEXT NOT NULL, probability REAL, thread_id TEXT NOT NULL, until_ms INTEGER NOT NULL, until_key TEXT NOT NULL, thread_at_ms INTEGER NOT NULL, created_at_ms INTEGER NOT NULL, last_at_ms INTEGER NOT NULL) WITHOUT ROWID; CREATE TABLE IF NOT EXISTS placements (key TEXT PRIMARY KEY NOT NULL, topic_id TEXT NOT NULL, probability REAL, batch_id INTEGER NOT NULL) WITHOUT ROWID; CREATE INDEX IF NOT EXISTS placements_by_topic ON placements (topic_id); CREATE TABLE IF NOT EXISTS alerts (key TEXT PRIMARY KEY NOT NULL, topic_id TEXT NOT NULL, state TEXT NOT NULL, attempts INTEGER NOT NULL, analysis TEXT, reason TEXT NOT NULL, created_at_ms INTEGER NOT NULL, updated_at_ms INTEGER NOT NULL, score REAL) WITHOUT ROWID; CREATE INDEX IF NOT EXISTS alerts_by_topic ON alerts (topic_id, created_at_ms); CREATE TABLE IF NOT EXISTS learned_rules (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, pattern TEXT NOT NULL, placeholder TEXT NOT NULL, source_key TEXT NOT NULL, reviewer TEXT NOT NULL, created_at_ms INTEGER NOT NULL); CREATE UNIQUE INDEX IF NOT EXISTS learned_rules_unique ON learned_rules (pattern, placeholder); CREATE TABLE IF NOT EXISTS topic_aliases (old TEXT PRIMARY KEY NOT NULL, new TEXT NOT NULL) WITHOUT ROWID; CREATE TABLE IF NOT EXISTS triage_state (id INTEGER PRIMARY KEY NOT NULL, enabled INTEGER NOT NULL, since_ms INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS calls (kind TEXT NOT NULL, subject TEXT NOT NULL, topic_id TEXT NOT NULL, attempt INTEGER NOT NULL, at_ms INTEGER NOT NULL, PRIMARY KEY (kind, subject, attempt)) WITHOUT ROWID; CREATE INDEX IF NOT EXISTS calls_by_time ON calls (kind, at_ms); CREATE INDEX IF NOT EXISTS calls_by_topic ON calls (topic_id, at_ms); CREATE TABLE IF NOT EXISTS backfills (source TEXT NOT NULL, account TEXT NOT NULL, version INTEGER NOT NULL, done_at_ms INTEGER NOT NULL, PRIMARY KEY (source, account, version)) WITHOUT ROWID; CREATE TABLE IF NOT EXISTS members (key TEXT NOT NULL, topic_id TEXT NOT NULL, probability REAL, batch_id INTEGER NOT NULL, via TEXT NOT NULL, created_at_ms INTEGER NOT NULL, PRIMARY KEY (key, topic_id)) WITHOUT ROWID; CREATE INDEX IF NOT EXISTS members_by_topic ON members (topic_id); CREATE INDEX IF NOT EXISTS members_by_time ON members (created_at_ms); CREATE TABLE IF NOT EXISTS clues (kind TEXT NOT NULL, value TEXT NOT NULL, key TEXT NOT NULL, occurred_at_ms INTEGER NOT NULL, PRIMARY KEY (kind, value, key)) WITHOUT ROWID; CREATE INDEX IF NOT EXISTS clues_by_key ON clues (key); CREATE TABLE IF NOT EXISTS relations (a TEXT NOT NULL, b TEXT NOT NULL, kind TEXT NOT NULL, count INTEGER NOT NULL, PRIMARY KEY (a, b, kind)) WITHOUT ROWID; CREATE TABLE IF NOT EXISTS changes (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, kind TEXT NOT NULL, from_topic TEXT NOT NULL, to_topic TEXT NOT NULL, keys TEXT NOT NULL, reason TEXT NOT NULL, state TEXT NOT NULL, at_ms INTEGER NOT NULL); CREATE INDEX IF NOT EXISTS changes_by_state ON changes (state, id); CREATE TABLE IF NOT EXISTS identities (source TEXT NOT NULL, sender_id TEXT NOT NULL, person_id TEXT NOT NULL, name TEXT NOT NULL, PRIMARY KEY (source, sender_id)) WITHOUT ROWID; CREATE TABLE IF NOT EXISTS source_health (source TEXT NOT NULL, account TEXT NOT NULL, state TEXT NOT NULL, streak INTEGER NOT NULL, ok_at_ms INTEGER NOT NULL, down_at_ms INTEGER NOT NULL, PRIMARY KEY (source, account)) WITHOUT ROWID; CREATE TABLE IF NOT EXISTS reminders (key TEXT PRIMARY KEY NOT NULL, state TEXT NOT NULL, attempts INTEGER NOT NULL, updated_at_ms INTEGER NOT NULL) WITHOUT ROWID;";
 const SCORE: Column = Column {
     alter: "ALTER TABLE alerts ADD COLUMN score REAL",
     name: "score",
     table: "alerts",
 };
 const SEALED: &str = "SELECT json_group_array(json_object('account', account, 'conversation_id', conversation_id, 'key', key, 'occurred_at_ms', occurred_at_ms, 'raw', raw, 'received_at_ms', received_at_ms, 'sender_id', sender_id, 'sender_name', sender_name, 'source', source, 'text', text)) FROM (SELECT * FROM messages WHERE source = ?1 AND account = ?2 AND text GLOB '*||[0-9]*||[0-9]*||[0-9]*' ORDER BY occurred_at_ms DESC, key DESC LIMIT ?3)";
+const SEALED_BY: Column = Column {
+    alter: "ALTER TABLE batches ADD COLUMN version TEXT NOT NULL DEFAULT ''",
+    name: "version",
+    table: "batches",
+};
 const STATE: Column = Column {
     alter: "ALTER TABLE topics ADD COLUMN state TEXT NOT NULL DEFAULT 'open'; ALTER TABLE topics ADD COLUMN urgency REAL; ALTER TABLE topics ADD COLUMN reach TEXT NOT NULL DEFAULT '{}'; ALTER TABLE topics ADD COLUMN score REAL; ALTER TABLE topics ADD COLUMN verdict TEXT NOT NULL DEFAULT ''; ALTER TABLE topics ADD COLUMN closed_at_ms INTEGER NOT NULL DEFAULT 0",
     name: "state",
     table: "topics",
 };
+const STUDIED: Column = Column {
+    alter: "ALTER TABLE topics ADD COLUMN digest TEXT NOT NULL DEFAULT ''; ALTER TABLE topics ADD COLUMN version TEXT NOT NULL DEFAULT ''; ALTER TABLE topics ADD COLUMN purged_at_ms INTEGER NOT NULL DEFAULT 0",
+    name: "digest",
+    table: "topics",
+};
+const TREND: Column = Column {
+    alter: "ALTER TABLE topics ADD COLUMN previous REAL; CREATE TRIGGER IF NOT EXISTS topics_rescored AFTER UPDATE OF score ON topics WHEN OLD.score IS NOT NEW.score BEGIN UPDATE topics SET previous = OLD.score WHERE id = NEW.id; END;",
+    name: "previous",
+    table: "topics",
+};
+const TRIGGERS: &str = "DROP TRIGGER IF EXISTS messages_unsealed; DROP TRIGGER IF EXISTS messages_revealed; DROP TRIGGER IF EXISTS messages_decrypted; CREATE TRIGGER IF NOT EXISTS messages_healed AFTER UPDATE OF text ON messages WHEN NEW.purged_at_ms = 0 BEGIN DELETE FROM placements WHERE key = NEW.key AND EXISTS (SELECT 1 FROM lines WHERE key = NEW.key AND state = 'withheld' AND reason = 'sealed'); DELETE FROM members WHERE key = NEW.key AND EXISTS (SELECT 1 FROM lines WHERE key = NEW.key AND state = 'withheld' AND reason = 'sealed'); DELETE FROM clues WHERE key = NEW.key AND EXISTS (SELECT 1 FROM lines WHERE key = NEW.key AND state = 'withheld' AND reason = 'sealed'); DELETE FROM lines WHERE key = NEW.key AND state = 'withheld' AND reason = 'sealed'; END;";
 const TUNE: &str = "PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;";
+const UPRIGHT: &str = "ok";
 const WATERMARK: &str =
     "SELECT MAX(occurred_at_ms) FROM messages WHERE source = ?1 AND account = ?2";
 
@@ -106,6 +137,21 @@ impl Archive {
             |row| row.get(0).map_err(Box::new),
         )?;
         Ok(done > 0)
+    }
+
+    pub(crate) fn mark(&self, scope: Scope<'_>, pulse: Pulse<'_>) -> usize {
+        self.connection
+            .execute(
+                MARK,
+                params![
+                    scope.source,
+                    scope.account,
+                    pulse.state,
+                    i64::from(pulse.streak),
+                    signed(now_ms())
+                ],
+            )
+            .unwrap_or_default()
     }
 
     pub fn mark_backfilled(&self, scope: Scope<'_>, version: u32) -> Fallible<usize> {
@@ -178,6 +224,35 @@ struct Column {
 type Failure = Box<dyn Cause>;
 
 pub type Fallible<T> = Result<T, Box<Error>>;
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Pulse<'pulse> {
+    state: &'pulse str,
+    streak: u32,
+}
+
+impl Pulse<'_> {
+    pub(crate) const fn healthy() -> Self {
+        Self {
+            state: UPRIGHT,
+            streak: 0,
+        }
+    }
+
+    pub(crate) const fn manual(streak: u32) -> Self {
+        Self {
+            state: "manual",
+            streak,
+        }
+    }
+
+    pub(crate) const fn retrying(streak: u32) -> Self {
+        Self {
+            state: "retrying",
+            streak,
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug)]
 pub struct Scope<'scope> {
@@ -338,7 +413,9 @@ impl Roster for Shelf<'_> {
 pub(crate) fn connect(path: &Path, busy_ms: u64) -> Fallible<Connection> {
     let connection = Connection::open(path).map_err(Box::new)?;
     connection
-        .execute_batch(&format!("PRAGMA busy_timeout = {busy_ms}; {TUNE} {SCHEMA}"))
+        .execute_batch(&format!(
+            "PRAGMA busy_timeout = {busy_ms}; {TUNE} {SCHEMA} {TRIGGERS}"
+        ))
         .map_err(Box::new)?;
     COLUMNS
         .iter()

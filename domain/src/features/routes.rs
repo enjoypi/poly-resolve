@@ -1,13 +1,14 @@
 use super::{
-    Http, Route, Trace, asked, bare, batches, changed, fallible, health, ingest, keyed, listed,
-    messages, outbound, prompts, sealed, topics, triage, typed,
+    Http, Route, Trace, asked, bare, batches, changed, fallible, gauge, health, ingest, keyed,
+    listed, messages, outbound, prompts, sealed, topics, triage, typed,
 };
 use serde_json::to_string;
 
 use crate::AppError;
+use crate::gauge::Health;
 use crate::topics::{Detail, Overview};
 
-pub(super) static ROUTES: [Route; 31] = [
+pub(super) static ROUTES: [Route; 35] = [
     Route {
         action: "list",
         call: |call, context| listed(call.params, context, batches::list),
@@ -169,6 +170,16 @@ pub(super) static ROUTES: [Route; 31] = [
         trace: Trace::Redacted,
     },
     Route {
+        action: "list",
+        call: |_call, context| {
+            gauge::sources(context).map(|resp| to_string(&resp).unwrap_or_default())
+        },
+        failures: &[AppError::Storage],
+        feature: "sources",
+        http: Http::Bound("get", "/api/sources", bare::<Health>),
+        trace: Trace::Full,
+    },
+    Route {
         action: "get",
         call: |call, context| listed(call.params, context, topics::get),
         failures: &[AppError::BadRequest, AppError::NotFound, AppError::Storage],
@@ -261,6 +272,14 @@ pub(super) static ROUTES: [Route; 31] = [
         trace: Trace::Redacted,
     },
     Route {
+        action: "remind",
+        call: |call, _context| typed(call.request, triage::remind::remind),
+        failures: &[],
+        feature: "triage",
+        http: Http::Hidden,
+        trace: Trace::Redacted,
+    },
+    Route {
         action: "reply",
         call: |call, _context| fallible(call.request, triage::reply::reply),
         failures: &[],
@@ -291,5 +310,25 @@ pub(super) static ROUTES: [Route; 31] = [
         feature: "triage",
         http: Http::Hidden,
         trace: Trace::Redacted,
+    },
+    Route {
+        action: "spent",
+        call: |call, _context| typed(call.request, triage::usage::spent),
+        failures: &[],
+        feature: "triage",
+        http: Http::Hidden,
+        trace: Trace::Redacted,
+    },
+    Route {
+        action: "list",
+        call: |call, context| listed(call.params, context, gauge::usage),
+        failures: &[AppError::BadRequest, AppError::Storage],
+        feature: "usage",
+        http: Http::Bound(
+            "get",
+            "/api/usage",
+            asked::<gauge::UsageRequest, gauge::UsageResponse>,
+        ),
+        trace: Trace::Full,
     },
 ];

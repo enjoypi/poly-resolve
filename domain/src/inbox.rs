@@ -103,6 +103,8 @@ pub struct Row {
     key: String,
     occurred_at_ms: u64,
     priority: Option<f64>,
+    #[serde(default)]
+    purged_at_ms: u64,
     reason: Option<String>,
     received_at_ms: u64,
     sender_id: String,

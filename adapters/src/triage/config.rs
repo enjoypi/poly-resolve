@@ -1,3 +1,4 @@
+mod questions;
 mod topics;
 
 use alloc::collections::BTreeMap;
@@ -9,6 +10,7 @@ use domain::redact::{Rule as Pattern, Seal, marks};
 use futures_util::future::join_all;
 use serde::{Deserialize, Serialize};
 
+use self::questions::Questions;
 use self::topics::{Notice, Topics};
 use super::endpoint::Http;
 use super::prompts::Folder;
@@ -71,6 +73,8 @@ impl Exec {
 #[serde(deny_unknown_fields)]
 struct Limits {
     batch: NonZeroU32,
+    daily_tokens: u64,
+    down_after_ms: u64,
     intake: NonZeroU32,
     lookback_ms: u64,
     max_attempts: NonZeroU32,
@@ -91,68 +95,12 @@ enum Mode {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Question {
-    name: String,
-}
-
-impl Question {
-    pub(crate) fn name(&self) -> &str {
-        &self.name
-    }
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Questions {
-    review: Review,
-    threshold: f64,
-    topic: Topic,
-    urgent: Question,
-}
-
-impl Questions {
-    pub(crate) const fn review(&self) -> &Review {
-        &self.review
-    }
-
-    pub(crate) const fn threshold(&self) -> f64 {
-        self.threshold
-    }
-
-    pub(crate) const fn topic(&self) -> &Topic {
-        &self.topic
-    }
-
-    pub(crate) const fn urgent(&self) -> &Question {
-        &self.urgent
-    }
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
 struct Redact {
     digest_min_chars: u32,
     hash_chars: NonZeroU32,
     hash_key: Var,
     patterns: Vec<Rule>,
     unknown_sender: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Review {
-    name: String,
-    threshold: f64,
-}
-
-impl Review {
-    pub(crate) fn name(&self) -> &str {
-        &self.name
-    }
-
-    pub(crate) const fn threshold(&self) -> f64 {
-        self.threshold
-    }
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -206,6 +154,7 @@ impl Screen {
 struct Session {
     fresh: Vec<String>,
     omitted: String,
+    purge: Exec,
     resume: Vec<String>,
 }
 
@@ -235,10 +184,14 @@ impl Settings {
     }
 
     pub async fn check(&self) -> Result<(), String> {
-        join_all([&self.codex, &self.notify].into_iter().map(probe))
-            .await
-            .into_iter()
-            .collect()
+        join_all(
+            [&self.codex, &self.notify, &self.session.purge]
+                .into_iter()
+                .map(probe),
+        )
+        .await
+        .into_iter()
+        .collect()
     }
 
     pub(crate) const fn codex(&self) -> &Exec {
@@ -249,12 +202,20 @@ impl Settings {
         self.sizes.context_max_chars.get()
     }
 
+    pub(crate) const fn daily_tokens(&self) -> u64 {
+        self.limits.daily_tokens
+    }
+
     pub(crate) const fn decide(&self) -> &Http {
         &self.decide
     }
 
     pub(crate) const fn digest_min_chars(&self) -> u32 {
         self.redact.digest_min_chars
+    }
+
+    pub(crate) const fn down_after_ms(&self) -> u64 {
+        self.limits.down_after_ms
     }
 
     #[must_use = "开关需用于决定是否运行"]
@@ -306,8 +267,10 @@ impl Settings {
             .chain(self.codex.endpoint.iter().flat_map(Http::vars))
             .chain(self.decide.vars())
             .chain(self.notify.vars.values())
+            .chain(self.session.purge.vars.values())
             .chain(self.codex.sandbox.vars())
             .chain(self.notify.sandbox.vars())
+            .chain(self.session.purge.sandbox.vars())
             .chain(self.screen.iter().flat_map(|screen| screen.http.vars()))
             .filter(|var| var.value().is_none())
             .map(|var| var.name.as_str())
@@ -358,6 +321,10 @@ impl Settings {
     #[must_use = "提示词存储需交给 Ports"]
     pub fn prompts(&self) -> Folder {
         Folder::new(self.prompts_dir.clone(), self.screen.as_ref())
+    }
+
+    pub(crate) const fn purge(&self) -> &Exec {
+        &self.session.purge
     }
 
     pub(crate) const fn questions(&self) -> &Questions {
@@ -419,33 +386,6 @@ struct Sizes {
     label_chars: NonZeroU32,
     result_max_chars: NonZeroU32,
     session_gap_ms: NonZeroU64,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Topic {
-    min_confidence: f64,
-    name: String,
-    new_label: String,
-    none_label: String,
-}
-
-impl Topic {
-    pub(crate) const fn min_confidence(&self) -> f64 {
-        self.min_confidence
-    }
-
-    pub(crate) fn name(&self) -> &str {
-        &self.name
-    }
-
-    pub(crate) fn new_label(&self) -> &str {
-        &self.new_label
-    }
-
-    pub(crate) fn none_label(&self) -> &str {
-        &self.none_label
-    }
 }
 
 #[derive(Clone, Debug, Deserialize)]

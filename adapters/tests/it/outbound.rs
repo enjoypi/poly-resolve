@@ -32,7 +32,7 @@ fn list_fails_on_missing_database() {
 fn list_fails_on_undecodable_row() {
     let sandbox = Sandbox::new("outbound-list-undecodable").unwrap();
     sandbox
-        .seed("CREATE TABLE lines (key TEXT, conversation_id TEXT, occurred_at_ms INTEGER, sender TEXT, text TEXT, state TEXT, reason TEXT, role TEXT, flag TEXT, batch_id TEXT); INSERT INTO lines VALUES ('k', 'c', 1, 's', 't', 'approved', '', '', '', 'abc'); CREATE TABLE messages (key TEXT, source TEXT, account TEXT);")
+        .seed("CREATE TABLE lines (key TEXT, conversation_id TEXT, occurred_at_ms INTEGER, sender TEXT, text TEXT, state TEXT, reason TEXT, role TEXT, flag TEXT, batch_id TEXT); INSERT INTO lines VALUES ('k', 'c', 1, 's', 't', 'approved', '', '', '', 'abc'); CREATE TABLE messages (key TEXT, source TEXT, account TEXT); CREATE TABLE batches (id INTEGER, version TEXT);")
         .unwrap();
     let path = sandbox.database();
     let shelf = Shelf::new(&path, BUSY);

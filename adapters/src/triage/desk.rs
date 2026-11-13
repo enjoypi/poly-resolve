@@ -17,17 +17,27 @@ const TRANSPORT: &str = "adapters";
 
 #[derive(Default, Deserialize)]
 pub(crate) struct Brief {
+    digest: String,
     prompt: String,
     start: String,
+    version: String,
 }
 
 impl Brief {
+    pub(crate) fn digest(&self) -> &str {
+        &self.digest
+    }
+
     pub(crate) fn prompt(&self) -> &str {
         &self.prompt
     }
 
     pub(crate) fn resumed(&self) -> bool {
         self.start == RESUME
+    }
+
+    pub(crate) fn version(&self) -> &str {
+        &self.version
     }
 }
 
@@ -237,6 +247,34 @@ impl<'desk> Desk<'desk> {
             .unwrap_or_default()
     }
 
+    pub(crate) fn remind(&self, row: &Value) -> String {
+        let alarm = self.triage.notice().alarm();
+        let values: Map<String, Value> = ["account", "source", "state"]
+            .into_iter()
+            .map(|key| (key.to_owned(), Value::from(text(row, key))))
+            .chain(
+                ["streak", "tokens"]
+                    .into_iter()
+                    .map(|key| (key.to_owned(), Value::from(number(row, key).to_string()))),
+            )
+            .collect();
+        let request = json!({
+            "names": alarm.names(),
+            "template": alarm.template(text(row, "kind")),
+            "times": {"since": number(row, "since_ms")},
+            "values": values,
+        });
+        self.call("remind", &request).map_or_default(|reply| {
+            from_str::<Value>(&reply).map_or_default(|rendered| {
+                rendered
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned()
+            })
+        })
+    }
+
     pub(crate) fn reply(&self, stdout: &str, state: &str) -> Option<Reply> {
         let request = json!({
             "max_chars": self.triage.result_max_chars(),
@@ -285,6 +323,11 @@ impl<'desk> Desk<'desk> {
         self.call("sort", &request)
             .map_or_default(|reply| from_str(&reply).ok())
     }
+
+    pub(crate) fn spent(&self, text: &str) -> Value {
+        self.call("spent", &json!({"text": text}))
+            .map_or_default(|reply| from_str(&reply).unwrap_or_default())
+    }
 }
 
 #[derive(Default, Deserialize)]
@@ -328,6 +371,7 @@ pub(crate) struct Packed {
     body: String,
     layout: Value,
     questions: u64,
+    version: String,
 }
 
 impl Packed {
@@ -341,6 +385,10 @@ impl Packed {
 
     pub(crate) const fn questions(&self) -> u64 {
         self.questions
+    }
+
+    pub(crate) fn version(&self) -> &str {
+        &self.version
     }
 }
 

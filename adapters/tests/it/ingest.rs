@@ -1,5 +1,6 @@
 mod busy;
 mod parallel;
+mod store;
 mod timeout;
 
 use std::io::ErrorKind;
@@ -8,9 +9,10 @@ use adapters::store::Archive;
 use serde_json::json;
 
 use crate::feeds::{barred, event, feed, fragment_event, fragment_page, page, sealed, sealed_page};
+use crate::peek::{health, keys, texts};
 use crate::support::{
-    BAD_SCHEMA, BUSY, FAILURE, FRAGMENTS, MANUAL, NOON, REFUSE_INSERT, REFUSE_UPDATE, SEALED,
-    Sandbox, TEXT_STAMP, envelope, keys, run_for, run_logged, sealed_envelope, stored, texts,
+    BUSY, FRAGMENTS, MANUAL, NOON, SEALED, Sandbox, envelope, run_for, run_logged, sealed_envelope,
+    stored,
 };
 
 const ASSEMBLED: &str = "title\nalice:hello\nbob:world";
@@ -172,6 +174,14 @@ async fn listen_ending_without_events_backs_off() {
         .unwrap();
     assert_eq!(run_for(&config, SHORT).await.unwrap(), 0);
     assert_eq!(keys(&sandbox.database()).unwrap(), Vec::<String>::new());
+    let marked = health(&sandbox.database()).unwrap();
+    assert!(
+        marked
+            .first()
+            .unwrap()
+            .starts_with("dingtalk|acct|retrying|"),
+        "{marked:?}"
+    );
 }
 
 #[tokio::test]
@@ -181,6 +191,10 @@ async fn listen_exit_code_requires_manual_action() {
         .config(&json!({"dws": {"env": {"FAKE_LISTEN": "exit", "FAKE_CODE": "2"}}}))
         .unwrap();
     assert_eq!(run_for(&config, LONG).await.unwrap(), MANUAL);
+    assert_eq!(
+        health(&sandbox.database()).unwrap(),
+        ["dingtalk|acct|manual|0"]
+    );
 }
 
 #[tokio::test]
@@ -280,6 +294,10 @@ async fn pull_requiring_manual_action_stops() {
         .config(&json!({"dws": {"env": {"FAKE_PULL": "fail", "FAKE_CODE": "4"}}}))
         .unwrap();
     assert_eq!(run_for(&config, LONG).await.unwrap(), MANUAL);
+    assert_eq!(
+        health(&sandbox.database()).unwrap(),
+        ["dingtalk|acct|manual|0"]
+    );
 }
 
 #[tokio::test]
@@ -419,61 +437,6 @@ async fn stop_during_pull_ends_run() {
         .config(&json!({"dws": {"env": {"FAKE_PULL": "slow"}}}))
         .unwrap();
     assert_eq!(run_for(&config, SHORT).await.unwrap(), 0);
-}
-
-#[tokio::test]
-async fn store_failure_is_fatal_for_events() {
-    let sandbox = Sandbox::new("ingest-store-events").unwrap();
-    drop(Archive::open(&sandbox.database(), BUSY).unwrap());
-    sandbox.seed(REFUSE_INSERT).unwrap();
-    sandbox.write("listen.txt", &feed(&[event("m1")])).unwrap();
-    let config = sandbox.config(&json!({})).unwrap();
-    assert_eq!(run_for(&config, LONG).await.unwrap(), FAILURE);
-}
-
-#[tokio::test]
-async fn store_failure_is_fatal_for_heal() {
-    let sandbox = Sandbox::new("ingest-store-heal").unwrap();
-    sandbox.seed(BAD_SCHEMA).unwrap();
-    let config = sandbox.config(&json!({})).unwrap();
-    assert_eq!(run_for(&config, LONG).await.unwrap(), FAILURE);
-}
-
-#[tokio::test]
-async fn store_failure_is_fatal_for_pages() {
-    let sandbox = Sandbox::new("ingest-store-pages").unwrap();
-    drop(Archive::open(&sandbox.database(), BUSY).unwrap());
-    sandbox.seed(REFUSE_INSERT).unwrap();
-    sandbox.write("pull.json", &page(&["m1"], None)).unwrap();
-    let config = sandbox.config(&json!({})).unwrap();
-    assert_eq!(run_for(&config, LONG).await.unwrap(), FAILURE);
-}
-
-#[tokio::test]
-async fn store_failure_is_fatal_for_replace() {
-    let sandbox = Sandbox::new("ingest-store-replace").unwrap();
-    let store = Archive::open(&sandbox.database(), BUSY).unwrap();
-    assert_eq!(store.save_event(&sealed_envelope("k1", NOON)).unwrap(), 1);
-    sandbox.seed(REFUSE_UPDATE).unwrap();
-    let config = sandbox.config(&json!({})).unwrap();
-    assert_eq!(run_for(&config, LONG).await.unwrap(), FAILURE);
-}
-
-#[tokio::test]
-async fn store_failure_is_fatal_for_watermark() {
-    let sandbox = Sandbox::new("ingest-store-watermark").unwrap();
-    sandbox.seed(TEXT_STAMP).unwrap();
-    let config = sandbox.config(&json!({})).unwrap();
-    assert_eq!(run_for(&config, LONG).await.unwrap(), FAILURE);
-}
-
-#[tokio::test]
-async fn store_open_failure_is_fatal() {
-    let sandbox = Sandbox::new("ingest-store-open").unwrap();
-    let config = sandbox
-        .config(&json!({"store_path": "/nonexistent/dir/store.db"}))
-        .unwrap();
-    assert_eq!(run_for(&config, LONG).await.unwrap(), FAILURE);
 }
 
 #[tokio::test]

@@ -20,6 +20,8 @@ pub struct Item {
     source: String,
     state: String,
     text: String,
+    #[serde(default)]
+    version: String,
 }
 
 #[derive(Clone, Copy, Debug)]

@@ -26,7 +26,7 @@ const BACKFILL: u64 = 3_600_000;
 const BACKOFF_INITIAL: u64 = 5;
 const BACKOFF_MAX: u64 = 20;
 pub(crate) const BAD_SCHEMA: &str = "CREATE TABLE messages (key TEXT PRIMARY KEY, source TEXT, account TEXT, occurred_at_ms INTEGER);";
-pub(crate) const BAD_STAMP: &str = "CREATE TABLE messages (key TEXT PRIMARY KEY, source TEXT, account TEXT, conversation_id TEXT, sender_id TEXT, sender_name TEXT, text TEXT, occurred_at_ms TEXT, received_at_ms INTEGER, raw TEXT); INSERT INTO messages VALUES ('k', 'dingtalk', 'acct', 'c', 'u', 'n', 't', 'abc', 1, '{}'); CREATE TABLE members (key TEXT, probability REAL, topic_id TEXT); CREATE TABLE topics (id TEXT, score REAL); CREATE TABLE alerts (topic_id TEXT, analysis TEXT, created_at_ms INTEGER); CREATE TABLE lines (key TEXT, reason TEXT, state TEXT);";
+pub(crate) const BAD_STAMP: &str = "CREATE TABLE messages (key TEXT PRIMARY KEY, source TEXT, account TEXT, conversation_id TEXT, sender_id TEXT, sender_name TEXT, text TEXT, occurred_at_ms TEXT, received_at_ms INTEGER, raw TEXT, purged_at_ms INTEGER); INSERT INTO messages VALUES ('k', 'dingtalk', 'acct', 'c', 'u', 'n', 't', 'abc', 1, '{}', 0); CREATE TABLE members (key TEXT, probability REAL, topic_id TEXT); CREATE TABLE topics (id TEXT, score REAL); CREATE TABLE alerts (topic_id TEXT, analysis TEXT, created_at_ms INTEGER); CREATE TABLE lines (key TEXT, reason TEXT, state TEXT);";
 const BATCH: u32 = 10;
 pub(crate) const BIN: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/it/fixtures/fake-dws.sh");
 pub(crate) const BUSY: u64 = 5_000;
@@ -284,6 +284,8 @@ impl Sandbox {
             "decide": self.http(DECISIONS),
             "limits": {
                 "batch": BATCH,
+                "daily_tokens": ZERO,
+                "down_after_ms": LOOKBACK,
                 "intake": INTAKE,
                 "lookback_ms": LOOKBACK,
                 "max_attempts": ATTEMPTS,
@@ -297,6 +299,7 @@ impl Sandbox {
             "mode": "enabled",
             "model": "m",
             "notice": {
+                "alarm": {"budget": "budget {tokens}", "down": "down {source} {account} {state} {streak} {since}", "names": {"retrying": "retry"}, "recovered": "up {source} {account}"},
                 "late": " late {time}",
                 "late_after_ms": LOOKBACK,
                 "origins": {"merge": " merged", "move": " moved", "split": " split"},
@@ -326,7 +329,7 @@ impl Sandbox {
                 "unknown_sender": "unknown",
             },
         });
-        merge(&mut base, &text_settings());
+        merge(&mut base, &text_settings(self));
         merge(&mut base, patch);
         Ok(from_value(base)?)
     }
@@ -381,17 +384,6 @@ pub(crate) fn envelope(key: &str, occurred_at_ms: u64) -> String {
         "text": "hello",
     })
     .to_string()
-}
-
-pub(crate) fn keys(database: &Path) -> Fallible<Vec<String>> {
-    let connection = Connection::open(database)?;
-    let mut statement = connection.prepare("SELECT key FROM messages ORDER BY key")?;
-    let mut rows = statement.query([])?;
-    let mut keys = Vec::new();
-    while let Some(row) = rows.next()? {
-        keys.push(row.get(0)?);
-    }
-    Ok(keys)
 }
 
 pub(crate) fn merge(base: &mut Value, patch: &Value) {
@@ -449,11 +441,12 @@ pub(crate) fn stored(key: &str, occurred_at_ms: u64, text: &str) -> String {
     .to_string()
 }
 
-fn text_settings() -> Value {
+fn text_settings(sandbox: &Sandbox) -> Value {
     json!({
         "session": {
             "fresh": ["-"],
             "omitted": "{count} held: {reason}",
+            "purge": sandbox.exec("purge"),
             "resume": ["resume", "{thread}", "-"],
         },
         "sizes": {
@@ -474,19 +467,9 @@ fn text_settings() -> Value {
             "review_max": REVIEWS,
             "split_after": VOTES,
             "reach": {"cap": REACH_CAP, "conversations": REACH_STEP, "people": REACH_STEP, "sources": REACH_STEP},
+            "retain": {"after_ms": LOOKBACK},
         },
     })
-}
-
-pub(crate) fn texts(database: &Path) -> Fallible<Vec<String>> {
-    let connection = Connection::open(database)?;
-    let mut statement = connection.prepare("SELECT text FROM messages ORDER BY key")?;
-    let mut rows = statement.query([])?;
-    let mut texts = Vec::new();
-    while let Some(row) = rows.next()? {
-        texts.push(row.get(0)?);
-    }
-    Ok(texts)
 }
 
 pub(crate) async fn triage_reach(triage: &Triage) -> Result<(), String> {

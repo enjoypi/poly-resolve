@@ -3,8 +3,9 @@ use domain::inbox::{Mark, Query, Reader as _, Row, Window};
 use rusqlite::{Connection, Error};
 use serde_json::{Value, from_str, json, to_value};
 
+use crate::peek::{keys, texts};
 use crate::support::{
-    BAD_SCHEMA, BAD_STAMP, BUSY, NOON, Sandbox, TEXT_STAMP, envelope, keys, sealed_envelope, texts,
+    BAD_SCHEMA, BAD_STAMP, BUSY, NOON, Sandbox, TEXT_STAMP, envelope, sealed_envelope,
 };
 
 const OTHER: &str = "INSERT INTO messages (key, source, account, conversation_id, sender_id, sender_name, text, occurred_at_ms, received_at_ms, raw) VALUES ('x1', 'dingtalk', 'other', 'c1', 'u1', 'bob', 'hi', 9, 9, '{}'), ('x2', 'slack', 'acct', 'c1', 'u1', 'bob', 'hi', 9, 9, '{}');";

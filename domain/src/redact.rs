@@ -1,6 +1,6 @@
 use core::cmp::Reverse;
 
-use blake3::{Hasher, derive_key};
+use blake3::{Hasher, derive_key, hash};
 
 use crate::AppError;
 use crate::features::triage::redact::{HASH, Mask, Rule as Step};
@@ -8,6 +8,7 @@ use crate::features::triage::redact::{HASH, Mask, Rule as Step};
 const DIGEST_CHARS: usize = 32;
 const DOMAIN: &str = "poly-resolve triage placeholder";
 const PLAIN: &str = "-";
+const SEPARATOR: &str = "\u{0}";
 
 #[derive(Debug)]
 pub struct Redactor {
@@ -85,6 +86,14 @@ impl Seal {
     pub(crate) fn tag(&self, value: &str) -> String {
         self.hex(value, self.chars)
     }
+}
+
+pub(crate) fn fingerprint(parts: &[&str], chars: usize) -> String {
+    hash(parts.join(SEPARATOR).as_bytes())
+        .to_hex()
+        .chars()
+        .take(chars)
+        .collect()
 }
 
 fn literal(template: &str) -> String {

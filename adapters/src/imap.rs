@@ -1,32 +1,31 @@
 pub(crate) mod config;
+mod login;
 mod utf7;
 mod wire;
 
 use core::convert::Infallible;
 use core::pin::pin;
-use core::sync::atomic::{AtomicU64, Ordering};
 use core::time::Duration;
 use std::sync::{Mutex, PoisonError};
 
 use domain::features::{Call, Context, Origin, Target as Route, dispatch};
-use http::Uri;
 use serde_json::{Value, from_str, json};
 use tokio::time::{Instant, sleep, timeout, timeout_at};
 
 use self::config::Settings;
+pub(crate) use self::login::check;
+use self::login::{capable, login};
 use self::utf7::encode;
-use self::wire::{Conn, Reply, escaped, quoted};
+use self::wire::{Conn, Reply, escaped};
 use crate::config::Settings as Shared;
 use crate::ingest::cycle::{Backoff, Halt, Retry, fault};
 use crate::ingest::{Site, now_ms};
-use crate::net::{Dial, Layer, Link, open};
 use crate::race::{Stop, race};
-use crate::store::{Archive, Scope};
+use crate::store::{Archive, Pulse, Scope};
 use crate::trace::{Caller, Outcome, external};
 
 const AUTH: &str = "imap:auth";
 const BACKFILL: u32 = 1;
-static CONNECTIONS: AtomicU64 = AtomicU64::new(0);
 const DAY_MS: u64 = 86_400_000;
 pub(crate) const SOURCE: &str = "imap";
 const TRANSPORT: &str = "adapters";
@@ -84,6 +83,12 @@ impl Run<'_> {
                 Some(Err(Halt::Exit(code))) => return code,
             };
             let wait = backoff.next(retry);
+            let pulse = if matches!(retry, Retry::Stalled) {
+                Pulse::manual(backoff.streak())
+            } else {
+                Pulse::retrying(backoff.streak())
+            };
+            self.worker.pulse(pulse);
             tracing::warn!(
                 account = self.worker.config.account(),
                 attempt = backoff.streak(),
@@ -168,6 +173,7 @@ impl Worker<'_> {
 
     async fn follow(&self, tally: &mut Tally) -> Result<Infallible, Cut> {
         let mut mailbox = self.open().await?;
+        self.pulse(Pulse::healthy());
         let date = self.since()?;
         let found = mailbox
             .conn
@@ -318,6 +324,15 @@ impl Worker<'_> {
         })
     }
 
+    fn pulse(&self, pulse: Pulse<'_>) {
+        let marked = self
+            .store
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .mark(self.scope(), pulse);
+        tracing::debug!(marked, "source health marked");
+    }
+
     fn scope(&self) -> Scope<'_> {
         Scope::new(SOURCE, self.config.account())
     }
@@ -380,82 +395,6 @@ impl Worker<'_> {
             Ok(())
         }
     }
-}
-
-fn capable(capabilities: &str, name: &str) -> bool {
-    capabilities
-        .split_whitespace()
-        .any(|found| found.eq_ignore_ascii_case(name))
-}
-
-pub(crate) async fn check(config: &Settings) -> Result<(), String> {
-    let (mut conn, _capabilities) = login(config)
-        .await
-        .map_err(|reason| format!("imap:{}: {reason}", config.account()))?;
-    let limit = Duration::from_millis(config.timeout_ms());
-    drop(conn.ask("LOGOUT", limit).await);
-    Ok(())
-}
-
-async fn connect(config: &Settings, caller: Caller<'_>) -> Result<Link, String> {
-    let target = config.target()?;
-    let dial = Dial::new(target.host(), target.port(), target.layer()).with_proxy(target.proxy());
-    let limit = Duration::from_millis(config.timeout_ms());
-    let started = Instant::now();
-    let mut stage = "connect";
-    let link = timeout(limit, open(&dial, &mut stage))
-        .await
-        .map_err(|_elapsed| format!("timeout:{stage}"))
-        .and_then(|opened| opened);
-    let layer = if target.layer() == Layer::Tls {
-        "tls"
-    } else {
-        "plain"
-    };
-    let route = target.proxy().and_then(Uri::scheme_str).unwrap_or("direct");
-    let elapsed = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
-    let status = link
-        .as_ref()
-        .map_or_else(Clone::clone, |_| "success".to_owned());
-    let outcome = Outcome::new(0, status, elapsed)
-        .within(caller)
-        .params(format!("{layer}+{route}"));
-    external("connect", 0, &outcome);
-    link
-}
-
-async fn login(config: &Settings) -> Result<(Conn, String), String> {
-    let session = format!(
-        "{}#{}",
-        config.account(),
-        CONNECTIONS.fetch_add(1, Ordering::Relaxed)
-    );
-    let caller = Caller::new(SOURCE, SOURCE, config.account()).session(&session);
-    let link = connect(config, caller).await?;
-    let limits = config.limits();
-    let limit = Duration::from_millis(config.timeout_ms());
-    let bytes = usize::try_from(limits.message_bytes()).unwrap_or(usize::MAX);
-    let mut conn =
-        Conn::new(link, limits.line_bytes(), bytes).named(config.account(), session.clone());
-    let greeting = timeout(limit, conn.response())
-        .await
-        .map_err(|_elapsed| "timeout:greeting".to_owned())??;
-    if !greeting.text().starts_with("* OK") {
-        return Err("imap:greeting".to_owned());
-    }
-    let listed = conn.ask("CAPABILITY", limit).await?;
-    let capabilities = listed
-        .untagged()
-        .iter()
-        .find(|line| line.text().starts_with("* CAPABILITY"))
-        .map_or_else(String::new, |line| line.text().to_owned());
-    if capable(&capabilities, "ID") {
-        drop(conn.ask("ID (\"name\" \"poly-resolve\")", limit).await?);
-    }
-    let user = quoted(&config.user())?;
-    let password = quoted(&config.password())?;
-    drop(conn.ask(&format!("LOGIN {user} {password}"), limit).await?);
-    Ok((conn, capabilities))
 }
 
 fn number_after(text: &str, marker: &str) -> u64 {

@@ -153,7 +153,8 @@ fn answers(behavior: &Value, body: &str) -> String {
                 .map(|question| answer(behavior, question))
                 .collect()
         });
-    to_string(&json!({ "answers": list })).unwrap_or_default()
+    to_string(&json!({ "answers": list, "usage": {"input_tokens": 11, "output_tokens": 3} }))
+        .unwrap_or_default()
 }
 
 fn confidence(behavior: &Value) -> f64 {

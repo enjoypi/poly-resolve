@@ -455,6 +455,57 @@ export interface paths {
         };
         trace?: never;
     };
+    "/api/sources": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: {
+            parameters: {
+                query?: never;
+                header?: {
+                    "x-session-id"?: string;
+                    "x-user"?: string;
+                };
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SourcesHealth"];
+                    };
+                };
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ErrorBody"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/topics": {
         parameters: {
             query?: never;
@@ -586,6 +637,67 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: {
+            parameters: {
+                query?: {
+                    limit?: number | null;
+                };
+                header?: {
+                    "x-session-id"?: string;
+                    "x-user"?: string;
+                };
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["UsageListResponse"];
+                    };
+                };
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ErrorBody"];
+                    };
+                };
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ErrorBody"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -627,6 +739,7 @@ export interface components {
             key: string;
             occurred_at_ms: number;
             priority?: number | null;
+            purged_at_ms: number;
             reason?: string | null;
             received_at_ms: number;
             sender_id: string;
@@ -659,6 +772,7 @@ export interface components {
             source: string;
             state: string;
             text: string;
+            version: string;
         };
         OutboundListRequest: {
             limit?: number | null;
@@ -685,6 +799,23 @@ export interface components {
         PromptsUpdateRequest: {
             text: string;
         };
+        SourcesHealth: {
+            sources: components["schemas"]["SourcesItem"][];
+            stages: components["schemas"]["SourcesStage"][];
+        };
+        SourcesItem: {
+            account: string;
+            down_at_ms: number;
+            kind: string;
+            last_at_ms?: number | null;
+            ok_at_ms: number;
+            state: string;
+            streak: number;
+        };
+        SourcesStage: {
+            kind: string;
+            streak: number;
+        };
         TopicChange: {
             at_ms: number;
             from_topic: string;
@@ -704,6 +835,7 @@ export interface components {
             conversation_id: string;
             key: string;
             occurred_at_ms: number;
+            purged_at_ms: number;
             reason: string;
             role: string;
             sender: string;
@@ -714,16 +846,19 @@ export interface components {
         };
         TopicItem: {
             conversations: number;
+            first_at_ms: number;
             label: string;
             last_at_ms: number;
             members: number;
             people: number;
+            previous?: number | null;
             score?: number | null;
             sources: string[];
             state: string;
             topic_id: string;
             urgency?: number | null;
             verdict: string;
+            version: string;
         };
         TopicKey: {
             topic_id: string;
@@ -741,6 +876,20 @@ export interface components {
             count: number;
             reason: string;
             state: string;
+        };
+        UsageDay: {
+            calls: number;
+            date: string;
+            failures: number;
+            input_tokens: number;
+            kind: string;
+            output_tokens: number;
+        };
+        UsageListRequest: {
+            limit?: number | null;
+        };
+        UsageListResponse: {
+            days: components["schemas"]["UsageDay"][];
         };
     };
     responses: never;

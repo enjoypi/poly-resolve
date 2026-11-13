@@ -3,7 +3,8 @@ use rusqlite::Connection;
 use serde_json::json;
 
 use crate::feeds::{event, feed};
-use crate::support::{Sandbox, keys, run_logged};
+use crate::peek::keys;
+use crate::support::{Sandbox, run_logged};
 
 const BRIEF: u64 = 50;
 const SHORT: u64 = 2_000;

@@ -11,15 +11,22 @@ type Item = components["schemas"]["TopicItem"];
 
 const ratio = (value?: number | null) => (typeof value === "number" ? value.toFixed(2) : TEXT.none);
 
+function trend(score?: number | null, previous?: number | null): string {
+  if (typeof score !== "number" || typeof previous !== "number" || score === previous) return "";
+  return score > previous ? TEXT.rise : TEXT.fall;
+}
+
 export function brief(item: Item, timeZone?: string): HTMLElement[] {
   const sources = item.sources.map((source) => SOURCES[source] ?? source).join("、");
   const notes = [
     TOPIC_STATES[item.state] ?? item.state,
-    TEXT.score(ratio(item.score), ratio(item.urgency)),
+    TEXT.score(`${ratio(item.score)}${trend(item.score, item.previous)}`, ratio(item.urgency)),
     TEXT.reach(item.people, item.conversations),
     sources,
     TEXT.members(item.members),
-    stamp(item.last_at_ms, timeZone),
+    TEXT.first(stamp(item.first_at_ms, timeZone)),
+    TEXT.latest(stamp(item.last_at_ms, timeZone)),
+    item.version === "" ? "" : TEXT.version(item.version),
   ].filter((part) => part !== "");
   const title = area("a", "title", item.label === "" ? item.topic_id : item.label) as HTMLAnchorElement;
   title.href = `${TOPIC_HASH}${encodeURIComponent(item.topic_id)}`;
@@ -63,7 +70,7 @@ class Topic {
       "article",
       held ? "review flagged" : "review",
       area("p", "meta", notes.join(" · ")),
-      ...(line.text === "" ? [] : [area("pre", "payload", line.text)]),
+      ...(line.purged_at_ms > 0 ? [area("pre", "payload", TEXT.purged)] : line.text === "" ? [] : [area("pre", "payload", line.text)]),
     );
   }
 

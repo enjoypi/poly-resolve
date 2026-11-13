@@ -1,4 +1,5 @@
 mod assets;
+mod gauge;
 mod host;
 mod messages;
 mod outbound;

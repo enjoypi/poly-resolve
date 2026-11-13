@@ -8,12 +8,13 @@ use serde_json::{Value, json};
 use super::redact::{Mask, Rule};
 use super::transcript::{Row, Style};
 use crate::AppError;
-use crate::redact::Seal;
+use crate::redact::{Seal, fingerprint};
 
 const ANALYSIS: &str = "{analysis}";
 const CHANGES: &str = "{changes}";
 const CONVERSATIONS: &str = "{conversations}";
 const COUNT: &str = "{count}";
+const DIGEST_CHARS: usize = 32;
 const ITEMS: &str = "{items}";
 const LABEL: &str = "{label}";
 const LATE: &str = "{late}";
@@ -25,9 +26,10 @@ const SCORE: &str = "{score}";
 const SOURCES: &str = "{sources}";
 const STATE: &str = "{state}";
 const TIME: &str = "{time}";
-const TIME_FORMAT: &str = "%Y-%m-%d %H:%M:%S UTC";
+pub(super) const TIME_FORMAT: &str = "%Y-%m-%d %H:%M:%S UTC";
 const TOPIC: &str = "{topic}";
 const URGENCY: &str = "{urgency}";
+pub(crate) const VERSION_CHARS: usize = 12;
 
 #[derive(Deserialize, JsonSchema)]
 #[schemars(rename = "TriageBriefRequest")]
@@ -45,8 +47,10 @@ pub(crate) struct BriefRequest {
 #[derive(JsonSchema, Serialize)]
 #[schemars(rename = "TriageBriefResponse")]
 pub(crate) struct BriefResponse {
+    digest: String,
     prompt: String,
     start: Start,
+    version: String,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -83,6 +87,12 @@ pub(crate) struct NoticeRequest {
 #[schemars(rename = "TriageNoticeResponse")]
 pub(crate) struct NoticeResponse {
     text: String,
+}
+
+impl NoticeResponse {
+    pub(super) const fn new(text: String) -> Self {
+        Self { text }
+    }
 }
 
 #[derive(Default, Deserialize, JsonSchema)]
@@ -149,9 +159,13 @@ pub(crate) fn brief(req: &BriefRequest, seal: Option<&Seal>) -> Result<BriefResp
             None => lines.extend(run.iter().map(|row| row.render(&style))),
         }
     }
+    let messages = Value::Array(lines).to_string();
+    let version = fingerprint(&[&req.template, &req.followup], VERSION_CHARS);
     Ok(BriefResponse {
-        prompt: template.replacen(MESSAGES, &Value::Array(lines).to_string(), 1),
+        digest: fingerprint(&[&version, &messages], DIGEST_CHARS),
+        prompt: template.replacen(MESSAGES, &messages, 1),
         start,
+        version,
     })
 }
 

@@ -1,5 +1,6 @@
 mod batches;
 pub mod catalog;
+mod gauge;
 mod health;
 mod ingest;
 mod messages;
@@ -19,6 +20,7 @@ use serde_urlencoded::from_str as from_query;
 
 use self::routes::ROUTES;
 use crate::batches::Roster;
+use crate::gauge::{Meter, Still};
 use crate::inbox::{Paging, Reader};
 use crate::outbound::Outbox;
 use crate::prompts::{Library, Vacant};
@@ -27,6 +29,7 @@ use crate::topics::{Blank, Board};
 use crate::{AppError, Errors};
 
 static BLANK: Blank = Blank;
+static STILL: Still = Still;
 static VACANT: Vacant = Vacant;
 
 type Binding = (&'static str, &'static str, Describer);
@@ -60,6 +63,7 @@ impl<'call> Call<'call> {
 pub struct Context<'ctx> {
     board: &'ctx dyn Board,
     errors: &'ctx Errors,
+    gauge: &'ctx dyn Meter,
     ports: Ports<'ctx>,
     rules: Rules<'ctx>,
 }
@@ -73,6 +77,10 @@ impl<'ctx> Context<'ctx> {
         self.errors
     }
 
+    const fn gauge(&self) -> &dyn Meter {
+        self.gauge
+    }
+
     const fn library(&self) -> &dyn Library {
         self.ports.library
     }
@@ -82,6 +90,7 @@ impl<'ctx> Context<'ctx> {
         Self {
             board: &BLANK,
             errors,
+            gauge: &STILL,
             ports,
             rules,
         }
@@ -114,6 +123,11 @@ impl<'ctx> Context<'ctx> {
     #[must_use = "上下文需交给 dispatch"]
     pub const fn with_board(self, board: &'ctx dyn Board) -> Self {
         Self { board, ..self }
+    }
+
+    #[must_use = "上下文需交给 dispatch"]
+    pub const fn with_gauge(self, gauge: &'ctx dyn Meter) -> Self {
+        Self { gauge, ..self }
     }
 
     #[must_use = "上下文需交给 dispatch"]

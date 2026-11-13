@@ -1,9 +1,10 @@
 import { connect } from "./client";
-import { FAILED_HASH, OUTBOUND_HASH, PROMPTS_HASH, TEXT, TOPIC_HASH, TOPICS_HASH } from "./config";
+import { FAILED_HASH, OUTBOUND_HASH, PROMPTS_HASH, SOURCES_HASH, TEXT, TOPIC_HASH, TOPICS_HASH } from "./config";
 import { renderFailed } from "./failed";
 import { renderMessages } from "./messages";
 import { renderOutbound } from "./outbound";
 import { renderPrompts } from "./prompts";
+import { renderSources } from "./sources";
 import { renderTopic } from "./topic";
 import { renderTopics } from "./topics";
 
@@ -25,6 +26,8 @@ if (root) {
     await renderFailed(client, root);
   } else if (location.hash === PROMPTS_HASH) {
     await renderPrompts(client, root);
+  } else if (location.hash === SOURCES_HASH) {
+    await renderSources(client, root);
   } else if (location.hash === TOPICS_HASH) {
     await renderTopics(client, root);
   } else if (location.hash.startsWith(TOPIC_HASH)) {
@@ -34,6 +37,7 @@ if (root) {
     link(root, TOPICS_HASH, TEXT.topics);
     link(root, OUTBOUND_HASH, TEXT.outbound);
     link(root, PROMPTS_HASH, TEXT.prompts);
+    link(root, SOURCES_HASH, TEXT.sources);
   }
   addEventListener("hashchange", () => location.reload());
 }

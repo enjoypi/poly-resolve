@@ -58,6 +58,8 @@ triage:
   decide: {key: \"${CARGO_PKG_NAME}\", timeout_ms: 1000, url: \"http://localhost:15801/decisions\"}
   limits:
     batch: 1
+    daily_tokens: 0
+    down_after_ms: 1000
     intake: 5
     lookback_ms: 1000
     max_attempts: 1
@@ -69,7 +71,7 @@ triage:
     retry_max_ms: 1000
   mode: disabled
   model: m
-  notice: {late: l, late_after_ms: 1000, origins: {}, states: {}, summary: {item: i, template: s}, template: n}
+  notice: {alarm: {budget: b, down: d, names: {}, recovered: u}, late: l, late_after_ms: 1000, origins: {}, states: {}, summary: {item: i, template: s}, template: n}
   notify: {args: [x], bin: /nonexistent/triage, env: {FAKE_DIR: /nonexistent}, sandbox: *fence, timeout_ms: 1000, vars: {PATH: \"${PATH}\"}}
   notify_target: \"${HOME}\"
   prompts_dir: /nonexistent/prompts
@@ -82,7 +84,7 @@ triage:
       - pattern: \"[0-9]{11,}\"
         placeholder: \"[num]\"
     unknown_sender: unknown
-  session: {fresh: [\"-\"], omitted: o, resume: [resume, \"{thread}\", \"-\"]}
+  session: {fresh: [\"-\"], omitted: o, purge: {args: [x], bin: /nonexistent/triage, env: {FAKE_DIR: /nonexistent}, sandbox: *fence, timeout_ms: 1000, vars: {PATH: \"${PATH}\"}}, resume: [resume, \"{thread}\", \"-\"]}
   sizes:
     context_max_chars: 1000
     label_chars: 10
@@ -96,6 +98,7 @@ triage:
     review_max: 3
     split_after: 2
     reach: {cap: 0.5, conversations: 0.1, people: 0.1, sources: 0.1}
+    retain: {after_ms: 1000000000000}
 ingest:
   backoff_initial_ms: 5
   backoff_max_ms: 20

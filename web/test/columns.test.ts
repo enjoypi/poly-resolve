@@ -7,6 +7,7 @@ const KNOWN = [
   "conversation_id",
   "sender_name",
   "text",
+  "purged_at_ms",
   "key",
   "received_at_ms",
   "sender_id",
@@ -29,6 +30,7 @@ test("没有数据时仍给出全部已知列，默认隐藏的列带标记", ()
   const columns = inferColumns([]);
   expect(columns.map((column) => column.key)).toEqual(KNOWN);
   expect(columns.filter((column) => column.hidden).map((column) => column.key)).toEqual([
+    "purged_at_ms",
     "key",
     "received_at_ms",
     "sender_id",
@@ -72,6 +74,9 @@ test("显示值：时间带格式、发送人回退、占位、对象转 JSON、
   expect(show({ sender_name: "alice", sender_id: "u9" }, "sender_name")).toBe("alice");
   expect(show({ text: "" }, "text")).toBe("[非文本消息]");
   expect(show({}, "text")).toBe("[非文本消息]");
+  expect(show({ purged_at_ms: NOON, text: "" }, "text")).toBe("[已清除]");
+  expect(show({ purged_at_ms: 0, text: "" }, "text")).toBe("[非文本消息]");
+  expect(show({ purged_at_ms: NOON }, "key")).toBe("");
   expect(show({ key: null }, "key")).toBe("");
   expect(show({ key: { a: 1 } }, "key")).toBe('{"a":1}');
   expect(show({ key: 7 }, "key")).toBe("7");

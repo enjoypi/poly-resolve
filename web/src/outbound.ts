@@ -43,6 +43,7 @@ class Outbox {
     const held = item.state === "withheld";
     const notes = [
       TEXT.batch(item.batch_id),
+      item.version === "" ? "" : TEXT.version(item.version),
       `${SOURCES[item.source] ?? item.source} ${item.account}`,
       item.conversation_id,
       item.sender,

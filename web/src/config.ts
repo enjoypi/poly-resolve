@@ -42,7 +42,13 @@ export const DETAIL = {
   topic: "topic",
 };
 
+export const SOURCE_STATES: Record<string, string> = { manual: "待人工处理", ok: "正常", retrying: "重连中" };
+
 export const SOURCES: Record<string, string> = { dingtalk: "钉钉", imap: "邮箱" };
+
+export const SOURCES_HASH = "#sources";
+
+export const STAGES: Record<string, string> = { analysis: "分析", decision: "决策", notify: "通知", screen: "筛查" };
 
 export const STATES: Record<string, string> = {
   approved: "已外发",
@@ -59,6 +65,7 @@ export const FIELDS: Record<string, Field> = {
   conversation_id: { label: "会话", look: "badge", primary: true },
   sender_name: { fallback: "sender_id", label: "发送人", primary: true },
   text: { label: "正文", look: "markdown", placeholder: "[非文本消息]", primary: true },
+  purged_at_ms: { hidden: true, kind: "time", label: "清除时间" },
   key: { hidden: true, label: "key" },
   received_at_ms: { hidden: true, kind: "time", label: "接收时间" },
   sender_id: { hidden: true, label: "发送人 ID" },
@@ -74,6 +81,8 @@ export const FIELDS: Record<string, Field> = {
 export const MAX_ROWS = 2000;
 
 export const MD_LIMIT = 20000;
+
+export const PAGE_DAYS = 14;
 
 export const PAGE_LIMIT = 200;
 
@@ -159,18 +168,27 @@ export const TEXT = {
   every: "全部",
   failed: "失败批",
   failedCount: (count: number) => `失败 ${count} 批`,
+  fall: "↓",
   failedMeta: (attempts: number, lines: number, reason: string) =>
     `已尝试 ${attempts} 次 · ${lines} 条 · ${reason}`,
   fields: "全部字段",
+  first: (time: string) => `始于 ${time}`,
   held: (reason: string) => `未外发：${reason}`,
+  latest: (time: string) => `最近 ${time}`,
+  lastAt: (time: string) => `最近消息 ${time}`,
   lineTally: (text: string) => `消息：${text}`,
   members: (count: number) => `${count} 条消息`,
   more: "加载更多",
   moved: (from: string, to: string, keys: number) => `${from} → ${to}（${keys} 条）`,
+  downSince: (time: string, streak: number) => `自 ${time} 起异常，连续失败 ${streak} 次`,
   noFailed: "没有失败的批。",
   noOutbound: "没有记录。",
+  noSources: "还没有数据源的记录。",
+  noUsage: "没有调用记录。",
   noTopics: "没有话题。",
   none: "无",
+  okAt: (time: string) => `最近成功 ${time}`,
+  purged: "[已清除]",
   outbound: "外发记录",
   outboundCount: (count: number) => `${count} 条`,
   outboundState: "状态",
@@ -181,6 +199,7 @@ export const TEXT = {
   range: "时间范围",
   reach: (people: number, conversations: number) => `${people} 人 ${conversations} 个会话`,
   rangeInvalid: "起止时间无效",
+  rise: "↑",
   refresh: "刷新",
   resend: "重发",
   revert: "撤销修改",
@@ -189,6 +208,10 @@ export const TEXT = {
   score: (score: string, urgency: string) => `优先级 ${score}（紧急 ${urgency}）`,
   search: "搜索全部字段",
   since: "起",
+  sources: "来源",
+  sourcesTitle: "数据源",
+  stage: (name: string, streak: number) => `${name}：连续失败 ${streak} 次`,
+  stagesTitle: "各环节",
   span: (text: string) => `时间范围：${text}。`,
   status: (state: string, reason: string) => (reason === "" ? state : `${state}：${reason}`),
   timeline: (count: number) => `时间线（${count}）`,
@@ -196,6 +219,10 @@ export const TEXT = {
   topics: "话题",
   unreachable: "unreachable",
   until: "止",
+  usage: (calls: number, failures: number, input: number, output: number) =>
+    `调用 ${calls} 次 · 失败 ${failures} 次 · 输入 ${input} · 输出 ${output} token`,
+  usageTitle: "调用量（UTC 日）",
+  version: (id: string) => `提示词 ${id}`,
 };
 
 export const TIP_DELAY_MS = 400;

@@ -64,6 +64,10 @@ impl Ledger {
         self.rows(sql::BATCH_LINES, args)
     }
 
+    pub(crate) fn called(&self, args: &Value) -> usize {
+        self.exec(sql::SETTLE_CALL, args)
+    }
+
     pub(crate) fn changes(&self) -> Vec<Value> {
         self.rows(sql::CHANGES, &Value::Null)
     }
@@ -86,6 +90,10 @@ impl Ledger {
         ])
     }
 
+    pub(crate) fn claim_reminder(&self, args: &Value) -> usize {
+        self.exec(sql::CLAIM_REMINDER, args)
+    }
+
     fn committed(&self, steps: &[Step]) -> usize {
         self.transact(steps).unwrap_or_else(|err| {
             tracing::warn!(error = %err, "ledger transaction failed");
@@ -97,6 +105,10 @@ impl Ledger {
 
     pub(crate) fn defer(&self, args: &Value) -> usize {
         self.exec(sql::DEFER, args)
+    }
+
+    pub(crate) fn doomed_threads(&self, args: &Value) -> Vec<Value> {
+        self.rows(sql::DOOMED_THREADS, args)
     }
 
     pub(crate) fn drift(&self, args: &Value) -> Vec<Value> {
@@ -127,6 +139,10 @@ impl Ledger {
 
     pub(crate) const fn faults(&self) -> u64 {
         self.faults.get()
+    }
+
+    pub(crate) fn forget_purged(&self, args: &Value) -> usize {
+        self.exec(sql::FORGET_PURGED, args)
     }
 
     pub(crate) fn forget_thread(&self, args: &Value) -> usize {
@@ -165,6 +181,10 @@ impl Ledger {
         self.rows(sql::BATCH_NEXT, args)
     }
 
+    pub(crate) fn note_call(&self, args: &Value) -> usize {
+        self.exec(sql::NOTE_CALL, args)
+    }
+
     pub(crate) fn open(path: &Path, busy_ms: u64) -> Fallible<Self> {
         let ledger = Self {
             connection: connect(path, busy_ms)?,
@@ -187,6 +207,18 @@ impl Ledger {
 
     pub(crate) fn propose(&self, args: &Value) -> usize {
         self.exec(sql::PROPOSE, args)
+    }
+
+    pub(crate) fn purge(&self, args: &Value) -> usize {
+        let steps: Vec<Step> = once(Step::new(sql::BEGIN, None))
+            .chain(
+                sql::PURGE
+                    .iter()
+                    .map(|&(statement, counted)| Step::new(statement, counted.then_some(args))),
+            )
+            .chain(once(Step::new(sql::COMMIT, None)))
+            .collect();
+        self.committed(&steps)
     }
 
     pub(crate) fn record_analysis(&self, args: &Value) -> usize {
@@ -230,6 +262,14 @@ impl Ledger {
             Step::new(sql::BATCH_RELEASE, Some(args)),
             Step::new(sql::COMMIT, None),
         ])
+    }
+
+    pub(crate) fn release_reminder(&self, args: &Value) -> usize {
+        self.exec(sql::RELEASE_REMINDER, args)
+    }
+
+    pub(crate) fn reminders(&self, args: &Value) -> Vec<Value> {
+        self.rows(sql::REMINDERS, args)
     }
 
     pub(crate) fn restate(&self, args: &Value) -> usize {
@@ -295,6 +335,10 @@ impl Ledger {
         self.committed(&steps)
     }
 
+    pub(crate) fn settle_reminder(&self, args: &Value) -> usize {
+        self.exec(sql::SETTLE_REMINDER, args)
+    }
+
     pub(crate) fn stale(&self, args: &Value) -> Vec<Value> {
         self.rows(sql::STALE, args)
     }
@@ -305,6 +349,10 @@ impl Ledger {
 
     pub(crate) fn stuck(&self, args: &Value) -> Vec<Value> {
         self.rows(sql::STUCK, args)
+    }
+
+    pub(crate) fn studied(&self, args: &Value) -> usize {
+        self.exec(sql::STUDIED, args)
     }
 
     pub(crate) fn supersede_notices(&self) -> usize {

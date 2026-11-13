@@ -5,7 +5,7 @@ use serde_json::{Value, from_str, json};
 
 use super::TRIAGE;
 use super::desk::{Packed, Sorted};
-use super::{NONE, Shift, current, number, pace, retry_in, text};
+use super::{FAILED, NONE, SUCCESS, Shift, current, ledgered, number, pace, retry_in, text};
 use crate::http::Call;
 use crate::ingest::now_ms;
 use crate::trace::{Outcome, external};
@@ -148,6 +148,7 @@ fn repacked(shift: &Shift<'_>, batch: &Value) -> Option<Value> {
         "payload": found.body(),
         "questions": found.questions(),
         "rev": rev,
+        "version": found.version(),
     }))
 }
 
@@ -163,9 +164,14 @@ async fn request(shift: &mut Shift<'_>, batch: &Value) -> Option<Option<Result<S
     let call = Call::new(&url, text(batch, "payload"), setup.timeout_ms())
         .with_key(key.as_deref())
         .with_proxy(proxy.as_ref());
+    let attempt = number(batch, "attempts").saturating_add(1);
     let claim = json!({
         "at_ms": now_ms(),
+        "attempt": attempt,
         "id": number(batch, "id"),
+        "kind": "decision",
+        "subject": number(batch, "id").to_string(),
+        "version": text(batch, "version"),
         "layout": text(batch, "layout"),
         "max_attempts": triage.max_attempts(),
         "payload": text(batch, "payload"),
@@ -176,7 +182,6 @@ async fn request(shift: &mut Shift<'_>, batch: &Value) -> Option<Option<Result<S
         return Some(None);
     }
     let started = Instant::now();
-    let attempt = number(batch, "attempts").saturating_add(1);
     let Some(done) = shift.post(&call).await else {
         let elapsed = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
         external(
@@ -204,6 +209,11 @@ async fn request(shift: &mut Shift<'_>, batch: &Value) -> Option<Option<Result<S
         text(batch, "payload").len(),
         &outcome.attempt(attempt),
     );
+    let (state, spent) = done.as_ref().map_or((FAILED, Value::Null), |reply| {
+        (SUCCESS, shift.desk.spent(reply.body()))
+    });
+    let counted = shift.ledger.called(&ledgered(&claim, state, &spent));
+    tracing::debug!(counted, "call settled");
     Some(Some(done.map(|reply| reply.body().to_owned())))
 }
 

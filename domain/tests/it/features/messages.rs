@@ -7,6 +7,7 @@ const FIRST: &str = "10:dingtalk:acct:m1";
 const LATEST: u64 = 30;
 const SECOND: &str = "20:dingtalk:acct:m2";
 const SINGLE: u32 = 1;
+const UNPURGED: u64 = 0;
 
 type Reply = Result<Value, u16>;
 
@@ -63,6 +64,7 @@ fn first_page_uses_default_limit() {
             "key": "dingtalk:acct:m3",
             "occurred_at_ms": LATEST,
             "priority": null,
+            "purged_at_ms": UNPURGED,
             "reason": null,
             "received_at_ms": LATEST,
             "sender_id": "u1",

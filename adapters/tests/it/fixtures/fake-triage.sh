@@ -2,6 +2,7 @@
 emit() {
   printf '{"type":"thread.started","thread_id":"%s"}\n' "$thread"
   printf '{"type":"item.completed","item":{"id":"i","type":"agent_message","text":"%s\\nANALYSIS"}}\n' "$header"
+  printf '{"type":"turn.completed","usage":{"input_tokens":20,"output_tokens":5}}\n'
 }
 echo "$@" > "$FAKE_DIR/$1-args.txt"
 echo x >> "$FAKE_DIR/$1-calls.txt"
@@ -36,6 +37,13 @@ codex)
     escape) cat "$FAKE_OUTSIDE/secret.txt" > "$FAKE_DIR/leaked.txt"; echo x > "$FAKE_OUTSIDE/escaped.txt"; emit ;;
     slow) exec sleep 30 ;;
     *) emit ;;
+  esac
+  ;;
+purge)
+  case "$FAKE_PURGE" in
+    fail) exit 6 ;;
+    slow) exec sleep 30 ;;
+    *) echo ok ;;
   esac
   ;;
 send)

@@ -1,4 +1,4 @@
-import { type Field, FIELDS, type Kind } from "./config";
+import { type Field, FIELDS, type Kind, TEXT } from "./config";
 import { clock } from "./stamp";
 
 export type Column = Field & { key: string; kind: Kind };
@@ -30,7 +30,9 @@ export function content(row: Row, column: Column, timeZone?: string): string {
 }
 
 export function display(row: Row, column: Column, timeZone?: string): string {
-  return content(row, column, timeZone) || (column.placeholder ?? "");
+  const shown = content(row, column, timeZone);
+  if (shown !== "") return shown;
+  return column.placeholder && typeof row.purged_at_ms === "number" && row.purged_at_ms > 0 ? TEXT.purged : (column.placeholder ?? "");
 }
 
 export function inferColumns(rows: Row[]): Column[] {

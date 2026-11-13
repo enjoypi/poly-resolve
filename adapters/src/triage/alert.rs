@@ -8,7 +8,10 @@ use serde_json::{Value, json};
 
 use super::TRIAGE;
 use super::desk::{Brief, Reply};
-use super::{ANALYZED, PENDING, QUIET, SENT, Shift, current, failure, number, retry_in, text};
+use super::{
+    ANALYZED, FAILED, PENDING, QUIET, SENT, SUCCESS, Shift, current, failure, ledgered, number,
+    retry_in, text,
+};
 use crate::ingest::now_ms;
 use crate::pipe::{Job, feed};
 use crate::race::race;
@@ -38,12 +41,15 @@ fn analysis_jobs(shift: &Shift<'_>, alerts: &[Value]) -> Vec<Analysis> {
                 return None;
             }
             let brief = brief(shift, alert)?;
+            if unchanged(shift, alert, &brief) {
+                return None;
+            }
             let args = if brief.resumed() {
                 shift.triage.resume_args(text(alert, "thread_id"))
             } else {
                 shift.triage.fresh_args()
             };
-            let claim = claim_of(shift, alert, PENDING);
+            let claim = claim_of(shift, alert, (PENDING, brief.version()));
             if shift.ledger.claim_alert(&claim) == 0 {
                 return None;
             }
@@ -80,6 +86,13 @@ fn analyze(shift: &Shift<'_>, job: &Analysis, done: &io::Result<Output>) {
                 text(&job.alert, "state"),
             )
         });
+    let spent = done
+        .as_ref()
+        .ok()
+        .map_or_default(|output| shift.desk.spent(&String::from_utf8_lossy(&output.stdout)));
+    let state = if reply.is_some() { SUCCESS } else { FAILED };
+    let counted = shift.ledger.called(&ledgered(&job.claim, state, &spent));
+    tracing::debug!(counted, "call settled");
     if let Some(found) = reply {
         conclude(shift, job, &found);
     } else {
@@ -113,15 +126,19 @@ fn brief(shift: &Shift<'_>, alert: &Value) -> Option<Brief> {
     }))
 }
 
-fn claim_of(shift: &Shift<'_>, alert: &Value, state: &str) -> Value {
+fn claim_of(shift: &Shift<'_>, alert: &Value, step: (&str, &str)) -> Value {
+    let (state, version) = step;
     let now = now_ms();
     json!({
         "at_ms": now,
+        "attempt": number(alert, "attempts").saturating_add(1),
         "created_at_ms": alert.get("created_at_ms"),
         "key": alert.get("key"),
         "kind": if state == PENDING { "analysis" } else { "notify" },
         "max_attempts": shift.triage.max_attempts(),
         "state": state,
+        "subject": alert.get("key"),
+        "version": version,
     })
 }
 
@@ -137,13 +154,21 @@ fn conclude(shift: &Shift<'_>, job: &Analysis, found: &Reply) {
         "thread_id": found.thread_id(),
         "title": found.title(),
         "topic_id": topic,
+        "version": job.brief.version(),
     }));
-    let quiet = found.quiet()
-        || shift.ledger.superseded(&json!({
-            "created_at_ms": job.alert.get("created_at_ms"),
-            "key": key,
+    let superseded = shift.ledger.superseded(&json!({
+        "created_at_ms": job.alert.get("created_at_ms"),
+        "key": key,
+        "topic_id": found.thread_id(),
+    }));
+    let quiet = found.quiet() || superseded;
+    if recorded > 0 && !superseded {
+        let studied = shift.ledger.studied(&json!({
+            "digest": job.brief.digest(),
             "topic_id": found.thread_id(),
         }));
+        tracing::debug!(studied, "analysis input remembered");
+    }
     let advanced = (recorded > 0).then(|| {
         shift.ledger.advance_alert(&json!({
             "analysis": null,
@@ -169,7 +194,13 @@ fn deliver(shift: &Shift<'_>, job: &Delivery, done: &io::Result<Output>) {
         job.notice.len(),
         &outcome(done, job.started, job.attempt),
     );
-    if done.as_ref().is_ok_and(|output| output.status.success()) {
+    let delivered = done.as_ref().is_ok_and(|output| output.status.success());
+    let state = if delivered { SUCCESS } else { FAILED };
+    let counted = shift
+        .ledger
+        .called(&ledgered(&job.claim, state, &Value::Null));
+    tracing::debug!(counted, "call settled");
+    if delivered {
         let rows = shift.ledger.advance_alert(&json!({
             "analysis": null,
             "at_ms": now_ms(),
@@ -198,7 +229,7 @@ fn delivery_jobs(shift: &Shift<'_>, alerts: &[Value]) -> Vec<Delivery> {
         .iter()
         .filter_map(|alert| {
             let key = text(alert, "key");
-            let claim = claim_of(shift, alert, ANALYZED);
+            let claim = claim_of(shift, alert, (ANALYZED, ""));
             if shift.ledger.claim_alert(&claim) == 0 {
                 return None;
             }
@@ -286,7 +317,7 @@ fn reserved(shift: &Shift<'_>, waiting: &[Value]) -> Vec<Value> {
     }
     let claims: Vec<Value> = waiting
         .iter()
-        .map(|alert| claim_of(shift, alert, ANALYZED))
+        .map(|alert| claim_of(shift, alert, (ANALYZED, "")))
         .collect();
     if claims
         .iter()
@@ -394,4 +425,19 @@ async fn summarize(shift: &mut Shift<'_>, waiting: &[Value], claims: &[Value]) -
     }
     tracing::info!(topics = claims.len(), "alerts summarized");
     Some(())
+}
+
+fn unchanged(shift: &Shift<'_>, alert: &Value, brief: &Brief) -> bool {
+    if text(alert, "studied") != brief.digest() {
+        return false;
+    }
+    let advanced = shift.ledger.advance_alert(&json!({
+        "analysis": null,
+        "at_ms": now_ms(),
+        "from": PENDING,
+        "key": text(alert, "key"),
+        "state": QUIET,
+    }));
+    tracing::info!(advanced, "alert unchanged");
+    true
 }

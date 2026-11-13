@@ -79,8 +79,16 @@
 - 脱敏（`triage/redact.rs`）：`Mask::new(&[Rule], Option<&Seal>)` 编译全部正则，任一无效、或有规则的 placeholder 含 `{hash}` 却没有密钥，返回 `BadRequest`（失败即不外发）；`apply` 按序 `replace_all`，placeholder 里可写 `${1}`；含 `{hash}` 的规则逐个匹配展开后把 `{hash}` 换成 `Seal::tag(值)`，值取 `Rule.group` 指定的分组（缺省整个匹配）；值本身已是这条规则产出的占位（`{hash}` 前后的字面量之间恰为 N 位十六进制）时原样保留，保证在已脱敏的文字上重复套用结果不变；日志用的 `Redactor` 没有密钥，把 `{hash}` 换成 `-`；`regex` 只开 `std`、`perf`、`unicode-perl`、`unicode-case`，无环视，规则里数字类用 `[0-9]`、不用 `\b`（CJK 属 word 字符）；每次调用现编译，不缓存：实测 `cli/config.yaml` 的 25 条规则 release 下每次约 3 ms，intake 每轮至多 `intake` 条，暂不改批量；学到的规则多到每轮耗时明显再改
 - 复核问题：`pack` 请求可带 `reviews[{left,right,tag}]` 与 `questions.review{instructions,name}`，每项出一道是非题（`{review}` 换成序号，两段文字按当前规则脱敏后放进输入），题目计入 `Layout::scored()`；`sort` 把各题概率连同原样的 `tag` 放回 `reviews[{probability,tag}]`，判定阈值与计数在 adapters
 - `regroup`（`triage/regroup.rs`，`typed`）：`{candidates[{from,into,keys,kind,reason,size}]}` → `{changes[{from,into,keys,kind,reason}]}`（`reason` 原样带出）；`apart` 且 `keys` 非空、少于 `size` 为 split，`clue` 且 `keys` 不到 `size` 一半为 move，其余为 merge（`keys` 清空）；一个话题一次只参与一条变更，按输入顺序先到先得
+- `brief`、`pack` 另给 `version`（模板或问题文字经 `redact::fingerprint` 取 12 位）；`brief` 另给 `digest`（`version` 加渲染后的消息 JSON 取 32 位），供 adapters 判断内容与提示词都没变
+- `spent`（`triage/usage.rs`，`typed`）：`{text}` → `{input_tokens,output_tokens}`；整段是 JSON 取其 `usage`，否则逐行累加各事件的 `usage`；解不出为 0
+- `remind`（`triage/remind.rs`，`typed`）：`{template, names, values, times}` → `{text}`；`values` 的值先按 `names` 映射再代入同名 `{key}`，`times` 的毫秒按 `%Y-%m-%d %H:%M:%S UTC` 代入
 - `recap`（`triage/prompt.rs`，`typed`）：`{item, items[{label,score?,state}], states, template}` → `{text}`，`{count}` 与 `{items}`（每项一行）代入汇总模板；`notice` 另代入 `{origin}`（按 `origins` 映射，没有为空）
 - 提示词模板里的“不可信数据”说明在配置里；domain 只做占位符替换
+
+## gauge
+
+- `Meter`（`gauge.rs`，`Debug + Sync`）：`sources()` → `Health{sources,stages}`，`usage(days)` → `Vec<Day>`；缺省实现 `Still`（空），`Context::with_gauge` 换成真实实现
+- 路由（`features/gauge.rs`，`Trace::Full`）：`sources.list`（`GET /api/sources`，`bare`）、`usage.list`（`GET /api/usage`，查询参数 `limit?` 为天数，规则同 `features::limit`）
 
 ## outbound
 

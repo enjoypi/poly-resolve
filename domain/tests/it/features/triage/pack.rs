@@ -364,6 +364,20 @@ fn pack_masks_open_topic_labels_with_current_rules() {
     assert!(!body.contains("abc1234"));
 }
 
+#[test]
+fn pack_names_the_question_version() {
+    let lines = json!([entry(["k1", "c1", "hello"], NOON)]);
+    let first = pack(&lines, &json!([]), &json!([])).unwrap().unwrap();
+    let mut changed = request(&lines, &json!([]), &json!([]));
+    if let Some(slot) = changed.pointer_mut("/questions/urgent/instructions") {
+        *slot = json!("hot {line}");
+    }
+    let other = call("pack", &changed.to_string()).unwrap().unwrap();
+    assert_ne!(first.get("version"), other.get("version"));
+    let version = first.get("version").and_then(Value::as_str).unwrap();
+    assert_eq!(version.len(), 12);
+}
+
 fn request(lines: &Value, attach: &Value, topics: &Value) -> Value {
     json!({
         "attach": attach,

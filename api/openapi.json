@@ -164,6 +164,12 @@
               "null"
             ]
           },
+          "purged_at_ms": {
+            "default": 0,
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
           "reason": {
             "type": [
               "string",
@@ -309,6 +315,10 @@
           },
           "text": {
             "type": "string"
+          },
+          "version": {
+            "default": "",
+            "type": "string"
           }
         },
         "required": [
@@ -436,6 +446,89 @@
         ],
         "type": "object"
       },
+      "SourcesHealth": {
+        "properties": {
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/SourcesItem"
+            },
+            "type": "array"
+          },
+          "stages": {
+            "items": {
+              "$ref": "#/components/schemas/SourcesStage"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "sources",
+          "stages"
+        ],
+        "type": "object"
+      },
+      "SourcesItem": {
+        "properties": {
+          "account": {
+            "type": "string"
+          },
+          "down_at_ms": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "last_at_ms": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "ok_at_ms": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "state": {
+            "type": "string"
+          },
+          "streak": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "account",
+          "down_at_ms",
+          "kind",
+          "ok_at_ms",
+          "state",
+          "streak"
+        ],
+        "type": "object"
+      },
+      "SourcesStage": {
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "streak": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "kind",
+          "streak"
+        ],
+        "type": "object"
+      },
       "TopicChange": {
         "properties": {
           "at_ms": {
@@ -519,6 +612,12 @@
             "minimum": 0,
             "type": "integer"
           },
+          "purged_at_ms": {
+            "default": 0,
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
           "reason": {
             "type": "string"
           },
@@ -562,6 +661,11 @@
             "minimum": 0,
             "type": "integer"
           },
+          "first_at_ms": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
           "label": {
             "type": "string"
           },
@@ -579,6 +683,13 @@
             "format": "uint64",
             "minimum": 0,
             "type": "integer"
+          },
+          "previous": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
           },
           "score": {
             "format": "double",
@@ -608,10 +719,15 @@
           },
           "verdict": {
             "type": "string"
+          },
+          "version": {
+            "default": "",
+            "type": "string"
           }
         },
         "required": [
           "conversations",
+          "first_at_ms",
           "label",
           "last_at_ms",
           "members",
@@ -699,6 +815,72 @@
           "count",
           "reason",
           "state"
+        ],
+        "type": "object"
+      },
+      "UsageDay": {
+        "properties": {
+          "calls": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "date": {
+            "type": "string"
+          },
+          "failures": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "input_tokens": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "output_tokens": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "calls",
+          "date",
+          "failures",
+          "input_tokens",
+          "kind",
+          "output_tokens"
+        ],
+        "type": "object"
+      },
+      "UsageListRequest": {
+        "properties": {
+          "limit": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "UsageListResponse": {
+        "properties": {
+          "days": {
+            "items": {
+              "$ref": "#/components/schemas/UsageDay"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "days"
         ],
         "type": "object"
       }
@@ -1275,6 +1457,55 @@
         }
       }
     },
+    "/api/sources": {
+      "get": {
+        "parameters": [
+          {
+            "description": "set by the gateway",
+            "in": "header",
+            "name": "x-session-id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "set by the gateway",
+            "in": "header",
+            "name": "x-user",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourcesHealth"
+                }
+              }
+            },
+            "description": "success"
+          },
+          "403": {
+            "description": "host not allowed"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "storage unavailable"
+          }
+        }
+      }
+    },
     "/api/topics": {
       "get": {
         "parameters": [
@@ -1421,6 +1652,78 @@
               }
             },
             "description": "not found"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "storage unavailable"
+          }
+        }
+      }
+    },
+    "/api/usage": {
+      "get": {
+        "parameters": [
+          {
+            "description": "set by the gateway",
+            "in": "header",
+            "name": "x-session-id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "set by the gateway",
+            "in": "header",
+            "name": "x-user",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UsageListResponse"
+                }
+              }
+            },
+            "description": "success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "bad request"
+          },
+          "403": {
+            "description": "host not allowed"
           },
           "503": {
             "content": {

@@ -1,4 +1,5 @@
 mod batches;
+mod gauge;
 mod health;
 mod ingest;
 mod mail;
