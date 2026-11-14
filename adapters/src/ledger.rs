@@ -142,7 +142,12 @@ impl Ledger {
     }
 
     pub(crate) fn forget_purged(&self, args: &Value) -> usize {
-        self.exec(sql::FORGET_PURGED, args)
+        self.committed(&[
+            Step::new(sql::BEGIN, None),
+            Step::new(sql::FORGET_PURGED, Some(args)),
+            Step::new(sql::FORGET_SESSION, Some(args)),
+            Step::new(sql::COMMIT, None),
+        ])
     }
 
     pub(crate) fn forget_thread(&self, args: &Value) -> usize {
@@ -183,6 +188,10 @@ impl Ledger {
 
     pub(crate) fn note_call(&self, args: &Value) -> usize {
         self.exec(sql::NOTE_CALL, args)
+    }
+
+    pub(crate) fn note_thread(&self, args: &Value) -> usize {
+        self.exec(sql::NOTE_THREAD, args)
     }
 
     pub(crate) fn open(path: &Path, busy_ms: u64) -> Fallible<Self> {
@@ -237,6 +246,7 @@ impl Ledger {
                 Step::new(sql::ALIAS_CHAIN, Some(args)),
                 Step::new(sql::ALIAS_TOPIC, Some(args)),
                 Step::new(sql::RENAME_DELETE, Some(args)),
+                Step::new(sql::NOTE_THREAD, Some(args)),
                 Step::new(sql::BIND_THREAD, Some(args)),
                 Step::new(sql::VERDICT, Some(args)),
                 Step::new(sql::RECORD_ANALYSIS, Some(args)),
@@ -389,7 +399,12 @@ impl Ledger {
     }
 
     pub(crate) fn wake_alerts(&self) -> usize {
-        self.exec(sql::WAKE_ALERTS, &Value::Null)
+        self.committed(&[
+            Step::new(sql::BEGIN, None),
+            Step::new(sql::WAKE_ALERTS, Some(&Value::Null)),
+            Step::new(sql::COLLAPSE_ALERTS, Some(&Value::Null)),
+            Step::new(sql::COMMIT, None),
+        ])
     }
 }
 

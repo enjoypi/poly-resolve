@@ -63,17 +63,28 @@ pub(crate) struct ReplyResponse {
     title: String,
 }
 
-pub(crate) fn reply(req: &ReplyRequest) -> Result<ReplyResponse, AppError> {
-    let events: Vec<Event> = req
-        .stdout
+#[derive(Deserialize, JsonSchema)]
+#[schemars(rename = "TriageStartedRequest")]
+pub(crate) struct StartedRequest {
+    stdout: String,
+}
+
+#[derive(JsonSchema, Serialize)]
+#[schemars(rename = "TriageStartedResponse")]
+pub(crate) struct StartedResponse {
+    thread_id: Option<String>,
+}
+
+fn events(stdout: &str) -> Vec<Event> {
+    stdout
         .lines()
         .filter_map(|line| from_str(line).ok())
-        .collect();
-    let thread_id = events
-        .iter()
-        .find(|event| event.kind == THREAD_STARTED)
-        .and_then(|event| event.thread_id.clone())
-        .ok_or(AppError::BadRequest)?;
+        .collect()
+}
+
+pub(crate) fn reply(req: &ReplyRequest) -> Result<ReplyResponse, AppError> {
+    let events = events(&req.stdout);
+    let thread_id = thread(&events).ok_or(AppError::BadRequest)?;
     let answer = events
         .iter()
         .rev()
@@ -103,4 +114,18 @@ pub(crate) fn reply(req: &ReplyRequest) -> Result<ReplyResponse, AppError> {
         thread_id,
         title: header.title.chars().take(max).collect(),
     })
+}
+
+pub(crate) fn started(req: StartedRequest) -> StartedResponse {
+    let StartedRequest { stdout } = req;
+    StartedResponse {
+        thread_id: thread(&events(&stdout)),
+    }
+}
+
+fn thread(events: &[Event]) -> Option<String> {
+    events
+        .iter()
+        .find(|event| event.kind == THREAD_STARTED)
+        .and_then(|event| event.thread_id.clone())
 }

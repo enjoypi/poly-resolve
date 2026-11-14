@@ -36,10 +36,13 @@ codex)
     resume_fail) case "$*" in *resume*) exit 5 ;; esac; emit ;;
     escape) cat "$FAKE_OUTSIDE/secret.txt" > "$FAKE_DIR/leaked.txt"; echo x > "$FAKE_OUTSIDE/escaped.txt"; emit ;;
     slow) exec sleep 30 ;;
+    lag) sleep 3; emit ;;
+    broken) printf '{"type":"thread.started","thread_id":"%s"}\n' "$thread" ;;
     *) emit ;;
   esac
   ;;
 purge)
+  echo "$@" >> "$FAKE_DIR/purge-log.txt"
   case "$FAKE_PURGE" in
     fail) exit 6 ;;
     slow) exec sleep 30 ;;

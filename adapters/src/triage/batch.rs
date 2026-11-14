@@ -15,26 +15,10 @@ const READY: &str = "ready";
 const SENT: &str = "sent";
 const SILENT: &str = r#"{"answers":[]}"#;
 
-fn alerts(shift: &Shift<'_>, found: &Sorted, batch_id: u64) -> Vec<Value> {
+fn alerts(shift: &Shift<'_>, batch_id: u64, topics: &BTreeSet<&str>) -> Vec<Value> {
     let now = now_ms();
-    let lookback = shift.triage.lookback_ms();
-    let lines = shift.ledger.batch_lines(&json!({"batch_id": batch_id}));
-    let fresh: Vec<&str> = lines
+    topics
         .iter()
-        .filter(|line| {
-            now.saturating_sub(number(line, "occurred_at_ms")) <= lookback
-                && text(line, "role") != AUTO
-        })
-        .map(|line| text(line, "key"))
-        .collect();
-    let live: BTreeSet<&str> = found
-        .placements()
-        .iter()
-        .filter(|placement| fresh.contains(&text(placement, "key")))
-        .map(|placement| text(placement, "topic"))
-        .filter(|topic| !topic.is_empty())
-        .collect();
-    live.into_iter()
         .map(|topic| {
             json!({
                 "at_ms": now,
@@ -43,6 +27,38 @@ fn alerts(shift: &Shift<'_>, found: &Sorted, batch_id: u64) -> Vec<Value> {
                 "topic_id": topic,
             })
         })
+        .collect()
+}
+
+fn decided(shift: &Shift<'_>, batch_id: u64, found: &Sorted) {
+    let live = live(shift, batch_id);
+    let opened = alerts(shift, batch_id, &hot(found, &live));
+    let rows = shift.ledger.apply(
+        &json!({
+            "at_ms": now_ms(),
+            "batch_id": batch_id,
+            "gap_ms": shift.triage.session_gap_ms(),
+            "live": live,
+            "placements": found.placements(),
+            "reach": shift.triage.topics().reach(),
+            "merge_after": shift.triage.topics().merge_after(),
+            "relations": found.relations(),
+            "review_threshold": shift.triage.questions().review().threshold(),
+            "reviews": found.reviews(),
+            "topics": found.topics(),
+        }),
+        &opened,
+    );
+    tracing::info!(rows, topics = found.topics().len(), "batch decided");
+}
+
+fn hot<'found>(found: &'found Sorted, live: &[String]) -> BTreeSet<&'found str> {
+    found
+        .placements()
+        .iter()
+        .filter(|placement| live.iter().any(|key| key == text(placement, "key")))
+        .map(|placement| text(placement, "topic"))
+        .filter(|topic| !topic.is_empty())
         .collect()
 }
 
@@ -56,29 +72,16 @@ fn judge(shift: &Shift<'_>, batch: &Value, reply: Result<String, String>) {
         .and_then(|body| shift.desk.sort(&layout, body));
     match (sorted, reply) {
         (Some(found), Ok(body)) => {
-            let saved = shift
-                .ledger
-                .answer(&json!({"batch_id": batch_id, "body": body}));
-            if saved == 0 {
+            if body != SILENT
+                && shift
+                    .ledger
+                    .answer(&json!({"batch_id": batch_id, "body": body}))
+                    == 0
+            {
                 tracing::warn!(batch_id, "decision answer store failed");
                 return;
             }
-            let rows = shift.ledger.apply(
-                &json!({
-                    "at_ms": now,
-                    "batch_id": batch_id,
-                    "gap_ms": shift.triage.session_gap_ms(),
-                    "placements": found.placements(),
-                    "reach": shift.triage.topics().reach(),
-                    "merge_after": shift.triage.topics().merge_after(),
-                    "relations": found.relations(),
-                    "review_threshold": shift.triage.questions().review().threshold(),
-                    "reviews": found.reviews(),
-                    "topics": found.topics(),
-                }),
-                &alerts(shift, &found, batch_id),
-            );
-            tracing::info!(saved, rows, topics = found.topics().len(), "batch decided");
+            decided(shift, batch_id, &found);
         }
         (_, outcome) => {
             let reason = outcome.map_or_else(|failed| failed, |_| "bad_answer".to_owned());
@@ -104,6 +107,21 @@ fn judge(shift: &Shift<'_>, batch: &Value, reply: Result<String, String>) {
             );
         }
     }
+}
+
+fn live(shift: &Shift<'_>, batch_id: u64) -> Vec<String> {
+    let now = now_ms();
+    let lookback = shift.triage.lookback_ms();
+    shift
+        .ledger
+        .batch_lines(&json!({"batch_id": batch_id}))
+        .iter()
+        .filter(|line| {
+            now.saturating_sub(number(line, "occurred_at_ms")) <= lookback
+                && text(line, "role") != AUTO
+        })
+        .map(|line| text(line, "key").to_owned())
+        .collect()
 }
 
 fn packed(shift: &Shift<'_>, batch_id: u64, rules: &Value) -> Option<Packed> {

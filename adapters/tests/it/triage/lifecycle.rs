@@ -2,12 +2,15 @@ use serde_json::json;
 
 use super::rig::{
     ALERTS, KEY, LATER, QUICK, SECOND, SHORT, THIRD, TOPICS, calls, decided, logged, now, one,
-    questions_of, seed, seed_from, seed_stamped, start, table, two_chats,
+    questions_of, seed, seed_from, seed_raw, start, table, two_chats,
 };
-use crate::support::Sandbox;
+use crate::support::{Fallible, NOON, SEALED, Sandbox};
 
 const CLOSED: &str = "SELECT CAST(COUNT(*) AS TEXT) AS item FROM topics WHERE closed_at_ms > 0";
+const FOURTH: &str = "dingtalk:acct:m4";
 const IDLE: u64 = 60_000;
+const MEMBERS: &str =
+    "SELECT CAST(COUNT(*) AS TEXT) AS item FROM members WHERE topic_id IN ('T1', 't1-0')";
 const NONE: f64 = 0.0;
 const ONE: u32 = 1;
 const SCORES: &str =
@@ -15,6 +18,17 @@ const SCORES: &str =
 const SOON: u64 = 1;
 const STATES: &str = "SELECT id || '|' || state AS item FROM topics ORDER BY id";
 const WIDE: f64 = 0.9;
+
+#[tokio::test]
+async fn auto_mail_leaves_resolved_topics_closed() {
+    let sandbox = resolved("life-closed-auto").await.unwrap();
+    let rows = [((SECOND, "u1", "c1", "receipt"), r#"{"bulk":"auto"}"#)];
+    seed_raw(&sandbox, &rows, LATER).unwrap();
+    start(&sandbox, &json!({}), SHORT).await.unwrap();
+    assert_eq!(table(&sandbox, MEMBERS).unwrap(), ["2"]);
+    assert_eq!(table(&sandbox, STATES).unwrap(), ["T1|resolved"]);
+    assert_eq!(calls(&sandbox, "codex").unwrap(), 1);
+}
 
 #[tokio::test]
 async fn higher_scores_are_analysed_first() {
@@ -31,9 +45,10 @@ async fn higher_scores_are_analysed_first() {
 }
 
 #[tokio::test]
-async fn idle_topics_are_archived_until_a_clue_brings_them_back() {
+async fn idle_topics_are_archived_until_a_strong_clue_brings_them_back() {
     let sandbox = Sandbox::new("life-archive").unwrap();
-    seed(&sandbox, &[(KEY, "u1", "c1", "OPS-1 down")]).unwrap();
+    let first = [((KEY, "u1", "c1", "OPS-1 down"), r#"{"message_id":"x1"}"#)];
+    seed_raw(&sandbox, &first, 0).unwrap();
     let patch = json!({
         "stub": {"decide": {"p": "0.1"}},
         "topics": {"archive_after_ms": IDLE},
@@ -48,8 +63,22 @@ async fn idle_topics_are_archived_until_a_clue_brings_them_back() {
         table(&sandbox, STATES).unwrap(),
         ["t1-0|archived", "t2-0|archived"]
     );
-    let fresh = now().unwrap();
-    seed_stamped(&sandbox, &[((THIRD, "u1", "c3", "OPS-1 again"), fresh)]).unwrap();
+    let stale = [(
+        (THIRD, "u1", "c3", "old reply"),
+        r#"{"in_reply_to":"x1","message_id":"x3"}"#,
+    )];
+    seed_raw(&sandbox, &stale, 2 * LATER).unwrap();
+    start(&sandbox, &patch, QUICK).await.unwrap();
+    assert_eq!(table(&sandbox, MEMBERS).unwrap(), ["2"]);
+    assert_eq!(
+        table(&sandbox, STATES).unwrap(),
+        ["t1-0|archived", "t2-0|archived"]
+    );
+    let fresh = [(
+        (FOURTH, "u1", "c4", "new reply"),
+        r#"{"in_reply_to":"x1","message_id":"x4"}"#,
+    )];
+    seed_raw(&sandbox, &fresh, now().unwrap().saturating_sub(NOON)).unwrap();
     start(&sandbox, &patch, QUICK).await.unwrap();
     assert_eq!(
         table(&sandbox, STATES).unwrap(),
@@ -95,8 +124,16 @@ async fn reach_lifts_a_quiet_topic_over_the_threshold() {
     );
 }
 
+async fn resolved(name: &str) -> Fallible<Sandbox> {
+    let sandbox = Sandbox::new(name)?;
+    seed(&sandbox, &one())?;
+    let patch = json!({"codex": {"env": {"FAKE_CODEX": "resolved"}}});
+    start(&sandbox, &patch, SHORT).await?;
+    Ok(sandbox)
+}
+
 #[tokio::test]
-async fn resolved_topics_reopen_on_new_members() {
+async fn resolved_topics_reopen_when_the_analysis_says_so() {
     let sandbox = Sandbox::new("life-reopen").unwrap();
     seed(&sandbox, &one()).unwrap();
     let resolved = json!({"codex": {"env": {"FAKE_CODEX": "resolved"}}});
@@ -116,6 +153,17 @@ async fn resolved_topics_reopen_on_new_members() {
         table(&sandbox, ALERTS).unwrap(),
         ["T1@2|sent|0|ANALYSIS|", "t1-0@1|sent|0|ANALYSIS|"]
     );
+}
+
+#[tokio::test]
+async fn stale_members_leave_resolved_topics_closed() {
+    let sandbox = resolved("life-closed-stale").await.unwrap();
+    seed_from(&sandbox, &[(SECOND, "u1", "c1", "still down")], LATER).unwrap();
+    let patch = json!({"limits": {"lookback_ms": IDLE}});
+    start(&sandbox, &patch, SHORT).await.unwrap();
+    assert_eq!(table(&sandbox, MEMBERS).unwrap(), ["2"]);
+    assert_eq!(table(&sandbox, STATES).unwrap(), ["T1|resolved"]);
+    assert_eq!(calls(&sandbox, "codex").unwrap(), 1);
 }
 
 #[tokio::test]
@@ -144,4 +192,19 @@ async fn unchanged_conclusions_stay_quiet() {
         ["T1@2|quiet|0|ANALYSIS|", "t1-0@1|sent|0|ANALYSIS|"]
     );
     assert_eq!(calls(&sandbox, "send").unwrap(), 1);
+}
+
+#[tokio::test]
+async fn withheld_neighbours_leave_resolved_topics_closed() {
+    let sandbox = resolved("life-closed-withheld").await.unwrap();
+    let rows = [(SECOND, "u1", "c1", SEALED), (THIRD, "u2", "c9", "lunch")];
+    seed_from(&sandbox, &rows, LATER).unwrap();
+    let quiet = json!({"stub": {"decide": {"p": "0.1"}}});
+    start(&sandbox, &quiet, SHORT).await.unwrap();
+    assert_eq!(table(&sandbox, MEMBERS).unwrap(), ["2"]);
+    assert_eq!(
+        table(&sandbox, STATES).unwrap(),
+        ["T1|resolved", "t2-0|open"]
+    );
+    assert_eq!(calls(&sandbox, "codex").unwrap(), 1);
 }

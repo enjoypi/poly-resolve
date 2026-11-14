@@ -328,6 +328,16 @@ impl<'desk> Desk<'desk> {
         self.call("spent", &json!({"text": text}))
             .map_or_default(|reply| from_str(&reply).unwrap_or_default())
     }
+
+    pub(crate) fn started(&self, stdout: &str) -> Option<String> {
+        let found: Value = self
+            .call("started", &json!({"stdout": stdout}))
+            .map_or_default(|reply| from_str(&reply).unwrap_or_default());
+        found
+            .get("thread_id")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+    }
 }
 
 #[derive(Default, Deserialize)]

@@ -1,12 +1,15 @@
+use std::fs;
+
 use serde_json::json;
 
 use super::rig::{
-    ALERTS, BATCHES, KEY, NOTHING, PLACEMENTS, QUICK, SECOND, SHORT, calls, logged, one, seed,
-    table,
+    ALERTS, BATCHES, KEY, LATER, NOTHING, PLACEMENTS, QUICK, SECOND, SHORT, calls, logged, one,
+    seed, seed_from, start, table,
 };
 use crate::support::Sandbox;
 
 const ONE: u32 = 1;
+const PAIR: u32 = 2;
 const TWICE: usize = 2;
 
 #[tokio::test]
@@ -106,4 +109,26 @@ async fn delivery_waits_when_the_claim_cannot_be_stored() {
     drop(logged(&sandbox, &json!({}), QUICK).await.unwrap());
     assert_eq!(calls(&sandbox, "codex").unwrap(), 1);
     assert_eq!(calls(&sandbox, "send").unwrap(), 0);
+}
+
+#[tokio::test]
+async fn one_pending_analysis_per_topic() {
+    let sandbox = Sandbox::new("triage-claim-collapse").unwrap();
+    seed(&sandbox, &one()).unwrap();
+    let template = sandbox.prompts().unwrap().join("session.md");
+    fs::remove_file(&template).unwrap();
+    start(&sandbox, &json!({}), QUICK).await.unwrap();
+    sandbox
+        .seed("UPDATE alerts SET attempts = 1, reason = 'exit:3';")
+        .unwrap();
+    seed_from(&sandbox, &[(SECOND, "u1", "c1", "still down")], LATER).unwrap();
+    start(&sandbox, &json!({}), QUICK).await.unwrap();
+    fs::write(&template, "ctx:{messages}").unwrap();
+    let patch = json!({"limits": {"parallel": PAIR}});
+    start(&sandbox, &patch, SHORT).await.unwrap();
+    assert_eq!(calls(&sandbox, "codex").unwrap(), 1);
+    assert_eq!(
+        table(&sandbox, ALERTS).unwrap(),
+        ["t1-0@1|merged|1||exit:3", "t1-0@2|sent|0|ANALYSIS|"]
+    );
 }

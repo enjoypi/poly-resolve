@@ -80,6 +80,7 @@
 - 复核问题：`pack` 请求可带 `reviews[{left,right,tag}]` 与 `questions.review{instructions,name}`，每项出一道是非题（`{review}` 换成序号，两段文字按当前规则脱敏后放进输入），题目计入 `Layout::scored()`；`sort` 把各题概率连同原样的 `tag` 放回 `reviews[{probability,tag}]`，判定阈值与计数在 adapters
 - `regroup`（`triage/regroup.rs`，`typed`）：`{candidates[{from,into,keys,kind,reason,size}]}` → `{changes[{from,into,keys,kind,reason}]}`（`reason` 原样带出）；`apart` 且 `keys` 非空、少于 `size` 为 split，`clue` 且 `keys` 不到 `size` 一半为 move，其余为 merge（`keys` 清空）；一个话题一次只参与一条变更，按输入顺序先到先得
 - `brief`、`pack` 另给 `version`（模板或问题文字经 `redact::fingerprint` 取 12 位）；`brief` 另给 `digest`（`version` 加渲染后的消息 JSON 取 32 位），供 adapters 判断内容与提示词都没变
+- `started`（`triage/reply.rs`，`typed`）：`{stdout}` → `{thread_id}`，取首个 `thread.started` 的会话 ID，没有为 null；分析失败时 adapters 用它记下已建的会话，供保留期清除
 - `spent`（`triage/usage.rs`，`typed`）：`{text}` → `{input_tokens,output_tokens}`；整段是 JSON 取其 `usage`，否则逐行累加各事件的 `usage`；解不出为 0
 - `remind`（`triage/remind.rs`，`typed`）：`{template, names, values, times}` → `{text}`；`values` 的值先按 `names` 映射再代入同名 `{key}`，`times` 的毫秒按 `%Y-%m-%d %H:%M:%S UTC` 代入
 - `recap`（`triage/prompt.rs`，`typed`）：`{item, items[{label,score?,state}], states, template}` → `{text}`，`{count}` 与 `{items}`（每项一行）代入汇总模板；`notice` 另代入 `{origin}`（按 `origins` 映射，没有为空）

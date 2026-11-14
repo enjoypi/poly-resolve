@@ -15,6 +15,7 @@
 - 给用户的选项带数字编号，第 1 项为推荐或 All
 - Plan 用 subagent 从至少 3 个角度（含 1 个批判角度）推敲；定稿后把 `~/.claude/plans/<name>.md` 移到项目根目录，无需确认；Plan 完成后删除
 - 批量改动用脚本或工具完成；脚本用 Bun + TypeScript
+- 后台长任务（如 `bun scripts/check.ts`）同时起一个定时监控：进程还在却长时间没有子进程、不占 CPU 即视为卡住，先查原因再处理，不干等完成通知
 - 不自行新建 git branch 或 worktree
 - 多轮改动合并为一个 commit；message 单行、不多于 64 个 UTF-8 字符、不含 Co-Authored-By 或 Claude 签名
 - commit 格式 `[TASK-ID ]type: 业务描述`；type ∈ build/chore/ci/docs/feat/fix/perf/refactor/revert/style/test；TASK-ID 用用户提供的，否则沿用最近一次 commit 的，都没有则连同空格省略

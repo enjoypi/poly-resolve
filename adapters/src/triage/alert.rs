@@ -17,6 +17,8 @@ use crate::pipe::{Job, feed};
 use crate::race::race;
 use crate::trace::{Outcome, external, finished};
 
+const UNSTORED: &str = "store";
+
 struct Analysis {
     alert: Value,
     args: Vec<String>,
@@ -99,11 +101,21 @@ fn analyze(shift: &Shift<'_>, job: &Analysis, done: &io::Result<Output>) {
         let reason = failure(done);
         let failed = shift.ledger.fail_alert(&failed_of(&job.claim, &reason));
         let dropped = shift.ledger.forget_thread(&json!({"topic_id": topic}));
+        let noted = done
+            .as_ref()
+            .ok()
+            .and_then(|output| shift.desk.started(&String::from_utf8_lossy(&output.stdout)))
+            .map(|thread| {
+                shift
+                    .ledger
+                    .note_thread(&json!({"thread_id": thread, "topic_id": topic}))
+            });
         let attempt = number(&job.alert, "attempts").saturating_add(1);
         tracing::warn!(
             key,
             failed,
             dropped,
+            noted,
             reason,
             attempt,
             exhausted = attempt >= u64::from(shift.triage.max_attempts()),
@@ -157,6 +169,11 @@ fn conclude(shift: &Shift<'_>, job: &Analysis, found: &Reply) {
         "topic_id": topic,
         "version": job.brief.version(),
     }));
+    if recorded == 0 {
+        let failed = shift.ledger.fail_alert(&failed_of(&job.claim, UNSTORED));
+        tracing::warn!(key, failed, "alert analysis not stored");
+        return;
+    }
     let superseded = shift.ledger.superseded(&json!({
         "created_at_ms": job.alert.get("created_at_ms"),
         "key": key,
@@ -170,15 +187,13 @@ fn conclude(shift: &Shift<'_>, job: &Analysis, found: &Reply) {
         }));
         tracing::debug!(studied, "analysis input remembered");
     }
-    let advanced = (recorded > 0).then(|| {
-        shift.ledger.advance_alert(&json!({
-            "analysis": null,
-            "at_ms": now_ms(),
-            "from": PENDING,
-            "key": key,
-            "state": if quiet { QUIET } else { ANALYZED },
-        }))
-    });
+    let advanced = shift.ledger.advance_alert(&json!({
+        "analysis": null,
+        "at_ms": now_ms(),
+        "from": PENDING,
+        "key": key,
+        "state": if quiet { QUIET } else { ANALYZED },
+    }));
     tracing::info!(
         recorded,
         advanced,

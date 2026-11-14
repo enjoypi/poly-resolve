@@ -1,9 +1,12 @@
 use serde_json::json;
 
-use super::rig::{BATCHES, KEY, QUICK, SECOND, calls, logged, seed, start, table};
+use super::rig::{
+    BATCHES, KEY, LATER, QUICK, SECOND, calls, home, logged, seed, seed_from, start, table,
+};
 use crate::support::Sandbox;
 
 const BACKOFF: u64 = 3_600_000;
+const IDLE: u64 = 60_000;
 const LEARNED: &str = "INSERT INTO learned_rules (pattern, placeholder, source_key, reviewer, created_at_ms) VALUES ('abc\\-secret\\-9', '[x]', 'k', '', 1);";
 const ONE: u32 = 1;
 const PAYLOAD: &str = "SELECT payload AS item FROM batches ORDER BY id";
@@ -46,6 +49,31 @@ async fn invalid_stored_rules_hold_a_waiting_batch() {
     assert!(logs.contains("batch repack failed"));
     assert_eq!(calls(&sandbox, "decide").unwrap(), 1);
     assert_eq!(table(&sandbox, BATCHES).unwrap(), ["1|ready|1|http:500"]);
+}
+
+#[tokio::test]
+async fn silent_batches_replay_with_their_own_layout() {
+    let sandbox = Sandbox::new("repack-silent").unwrap();
+    seed(&sandbox, &[(KEY, "u1", "c1", "server down")]).unwrap();
+    let quiet = json!({"stub": {"decide": {"p": "0.1"}}});
+    start(&sandbox, &quiet, QUICK).await.unwrap();
+    let own = home().unwrap();
+    seed_from(&sandbox, &[(SECOND, own.as_str(), "c2", "on it")], LATER).unwrap();
+    sandbox
+        .seed("CREATE TRIGGER refuse BEFORE INSERT ON members BEGIN SELECT RAISE(ABORT, 'refused'); END;")
+        .unwrap();
+    let idle = json!({"topics": {"archive_after_ms": IDLE}});
+    start(&sandbox, &idle, QUICK).await.unwrap();
+    assert_eq!(calls(&sandbox, "decide").unwrap(), 1);
+    sandbox
+        .seed(r#"DROP TRIGGER refuse; INSERT OR REPLACE INTO answers (batch_id, body) SELECT id, '{"answers":[]}' FROM batches WHERE state = 'ready';"#)
+        .unwrap();
+    start(&sandbox, &idle, QUICK).await.unwrap();
+    assert_eq!(calls(&sandbox, "decide").unwrap(), 1);
+    assert_eq!(
+        table(&sandbox, BATCHES).unwrap(),
+        ["1|sent|0|", "2|sent|0|"]
+    );
 }
 
 #[tokio::test]

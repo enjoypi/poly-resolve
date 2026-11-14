@@ -142,6 +142,23 @@ async fn two_rounds(name: &str, second: &Value) -> Fallible<Sandbox> {
 }
 
 #[tokio::test]
+async fn unrecorded_conclusions_are_analysed_again() {
+    let sandbox = Sandbox::new("thread-unrecorded").unwrap();
+    seed(&sandbox, &one()).unwrap();
+    start(&sandbox, &json!({}), SHORT).await.unwrap();
+    seed_from(&sandbox, &[(SECOND, "u1", "c1", "still down")], LATER).unwrap();
+    sandbox
+        .seed("CREATE TRIGGER refuse BEFORE UPDATE OF changes ON alerts BEGIN SELECT RAISE(ABORT, 'refused'); END;")
+        .unwrap();
+    start(&sandbox, &json!({}), SHORT).await.unwrap();
+    assert_eq!(calls(&sandbox, "codex").unwrap(), 3);
+    assert_eq!(
+        table(&sandbox, ALERTS).unwrap(),
+        ["T1@2|failed|2||store", "t1-0@1|sent|0|ANALYSIS|"]
+    );
+}
+
+#[tokio::test]
 async fn unusable_codex_output_is_a_failure() {
     let sandbox = Sandbox::new("thread-junk").unwrap();
     seed(&sandbox, &one()).unwrap();

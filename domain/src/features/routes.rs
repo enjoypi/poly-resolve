@@ -8,7 +8,7 @@ use crate::AppError;
 use crate::gauge::Health;
 use crate::topics::{Detail, Overview};
 
-pub(super) static ROUTES: [Route; 35] = [
+pub(super) static ROUTES: [Route; 36] = [
     Route {
         action: "list",
         call: |call, context| listed(call.params, context, batches::list),
@@ -314,6 +314,14 @@ pub(super) static ROUTES: [Route; 35] = [
     Route {
         action: "spent",
         call: |call, _context| typed(call.request, triage::usage::spent),
+        failures: &[],
+        feature: "triage",
+        http: Http::Hidden,
+        trace: Trace::Redacted,
+    },
+    Route {
+        action: "started",
+        call: |call, _context| typed(call.request, triage::reply::started),
         failures: &[],
         feature: "triage",
         http: Http::Hidden,

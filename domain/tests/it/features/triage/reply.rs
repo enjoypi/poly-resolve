@@ -104,3 +104,19 @@ fn reply_truncates_by_characters() {
     assert_eq!(done.get("changes"), Some(&json!("abcde")));
     assert_eq!(done.get("title"), Some(&json!("abcde")));
 }
+
+#[test]
+fn started_finds_the_thread_of_a_failed_run() {
+    let found = call(
+        "started",
+        &json!({"stdout": format!("noise\n{START}\n")}).to_string(),
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(found, json!({"thread_id": "t-1"}));
+    let none = call("started", &json!({"stdout": TOOL}).to_string())
+        .unwrap()
+        .unwrap();
+    assert_eq!(none, json!({"thread_id": null}));
+    assert_eq!(call("started", "nope").unwrap(), Err(400));
+}

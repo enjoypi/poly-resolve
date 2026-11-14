@@ -1,6 +1,8 @@
-use std::fs;
+use core::time::Duration;
 
+use futures_util::future::join;
 use serde_json::json;
+use tokio::time::sleep;
 
 use super::rig::{
     ALERTS, LATER, QUICK, SECOND, SHORT, calls, logged, one, seed, seed_from, start, table,
@@ -8,12 +10,15 @@ use super::rig::{
 };
 use crate::support::{Fallible, Sandbox};
 
+const CLAIMED: &str = "SELECT CAST(COUNT(*) AS TEXT) AS item FROM alerts WHERE attempts = 1";
 const COOLDOWN: u64 = 3_600_000;
-const ONE: u32 = 1;
+const LONG: u64 = 12_000;
 const REOPEN: &str =
     "UPDATE alerts SET state = 'analyzed', attempts = 0; DELETE FROM calls WHERE kind = 'notify';";
 const STATES: &str =
     "SELECT key || '|' || state || '|' || attempts AS item FROM alerts ORDER BY key";
+const STEP: u64 = 50;
+const TRIES: u32 = 200;
 
 async fn analysed(name: &str) -> Fallible<Sandbox> {
     let sandbox = Sandbox::new(name)?;
@@ -61,6 +66,22 @@ async fn cooldown_holds_the_next_notice_of_a_topic() {
 }
 
 #[tokio::test]
+async fn failed_sends_give_way_to_newer_conclusions() {
+    let sandbox = Sandbox::new("notices-supersede-failed").unwrap();
+    seed(&sandbox, &one()).unwrap();
+    start(&sandbox, &json!({}), SHORT).await.unwrap();
+    sandbox
+        .seed("INSERT INTO alerts (key, topic_id, state, attempts, analysis, reason, created_at_ms, updated_at_ms) VALUES ('T1@7', 'T1', 'analyzed', 1, 'older', 'exit:4', 7, 0), ('T1@8', 'T1', 'analyzed', 0, 'newer', '', 8, 0);")
+        .unwrap();
+    start(&sandbox, &json!({}), QUICK).await.unwrap();
+    assert_eq!(
+        table(&sandbox, STATES).unwrap(),
+        ["T1@7|merged|1", "T1@8|sent|0", "t1-0@1|sent|0"]
+    );
+    assert!(sandbox.read("send-stdin.txt").unwrap().ends_with("|newer"));
+}
+
+#[tokio::test]
 async fn failed_summary_falls_back_to_single_notices() {
     let sandbox = analysed("notices-recap-fail").await.unwrap();
     let patch = json!({"notify": {"env": {"FAKE_SEND": "fail"}}});
@@ -69,6 +90,16 @@ async fn failed_summary_falls_back_to_single_notices() {
         table(&sandbox, STATES).unwrap(),
         ["t1-0@1|failed|2", "t1-1@1|failed|2"]
     );
+}
+
+async fn feed_once_claimed(sandbox: &Sandbox) -> Fallible<()> {
+    for _ in 0..TRIES {
+        if table(sandbox, CLAIMED)? == ["1"] {
+            return seed_from(sandbox, &[(SECOND, "u1", "c1", "still down")], LATER);
+        }
+        sleep(Duration::from_millis(STEP)).await;
+    }
+    Err("analysis never claimed".into())
 }
 
 #[tokio::test]
@@ -103,21 +134,13 @@ async fn older_conclusions_give_way_to_newer_ones() {
 async fn pending_newer_alerts_keep_the_older_round_quiet() {
     let sandbox = Sandbox::new("notices-quiet").unwrap();
     seed(&sandbox, &one()).unwrap();
-    fs::remove_file(sandbox.prompts().unwrap().join("session.md")).unwrap();
-    start(&sandbox, &json!({}), QUICK).await.unwrap();
-    sandbox
-        .seed("INSERT INTO alerts (key, topic_id, state, attempts, analysis, reason, created_at_ms, updated_at_ms) VALUES ('t1-0@9', 't1-0', 'waiting', 0, NULL, '', 9999999999999999, 0);")
-        .unwrap();
-    fs::write(
-        sandbox.prompts().unwrap().join("session.md"),
-        "ctx:{messages}",
-    )
-    .unwrap();
-    let patch = json!({"limits": {"parallel": ONE}});
-    start(&sandbox, &patch, SHORT).await.unwrap();
+    let patch = json!({"codex": {"env": {"FAKE_CODEX": "lag"}}});
+    let (ran, fed) = join(start(&sandbox, &patch, LONG), feed_once_claimed(&sandbox)).await;
+    ran.unwrap();
+    fed.unwrap();
     assert_eq!(
         table(&sandbox, ALERTS).unwrap(),
-        ["t1-0@1|quiet|0|ANALYSIS|", "t1-0@9|sent|0|ANALYSIS|"]
+        ["t1-0@1|quiet|0|ANALYSIS|", "t1-0@2|sent|0|ANALYSIS|"]
     );
 }
 

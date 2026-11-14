@@ -8,6 +8,7 @@ use super::rig::{
 use crate::support::{BUSY, NOON, Sandbox};
 
 const APART: u64 = 7_200_000;
+const ARCHIVE: &str = "UPDATE topics SET state = 'archived';";
 const CHANGES: &str = "SELECT kind || '|' || from_topic || '|' || to_topic || '|' || reason AS item FROM changes ORDER BY id";
 const CLUES: &str = "SELECT kind || '|' || value || '|' || key AS item FROM clues WHERE kind <> 'seen' ORDER BY kind, value, key";
 const ONE: u32 = 1;
@@ -15,6 +16,39 @@ const RELATIONS: &str =
     "SELECT a || '|' || b || '|' || kind AS item FROM relations ORDER BY a, b, kind";
 const TWO: u32 = 2;
 const VIA: &str = "SELECT key || '|' || via AS item FROM members ORDER BY key";
+
+#[tokio::test]
+async fn archived_topics_do_not_take_weak_clues() {
+    let sandbox = Sandbox::new("clues-archived").unwrap();
+    let quiet = json!({"stub": {"decide": {"p": "0.1"}}});
+    seed(&sandbox, &[(KEY, "u1", "c1", "OPS-1 down")]).unwrap();
+    start(&sandbox, &quiet, QUICK).await.unwrap();
+    sandbox.seed(ARCHIVE).unwrap();
+    seed_from(&sandbox, &[(SECOND, "u2", "c2", "see OPS-1")], LATER).unwrap();
+    start(&sandbox, &quiet, QUICK).await.unwrap();
+    seed_from(&sandbox, &[(THIRD, "u3", "c3", "OPS-1 again")], 2 * LATER).unwrap();
+    start(&sandbox, &quiet, QUICK).await.unwrap();
+    assert_eq!(
+        questions_of(&decided(&sandbox).unwrap()),
+        ["urgent_1", "review_1"]
+    );
+    assert_eq!(
+        table(&sandbox, PLACEMENTS).unwrap(),
+        [
+            format!("{KEY}|t1-0|0.1"),
+            format!("{SECOND}|t2-0|0.1"),
+            format!("{THIRD}|t2-0|0.1"),
+        ]
+    );
+    assert_eq!(
+        table(
+            &sandbox,
+            "SELECT id || '|' || state AS item FROM topics ORDER BY id"
+        )
+        .unwrap(),
+        ["t1-0|archived", "t2-0|open"]
+    );
+}
 
 fn capped(limit: u32) -> Value {
     json!({"stub": {"decide": {"p": "0.1"}}, "topics": {"clues": {"max_conversations": limit}}})

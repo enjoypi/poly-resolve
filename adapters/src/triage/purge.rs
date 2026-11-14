@@ -16,6 +16,7 @@ async fn drop_thread(shift: &mut Shift<'_>, doomed: &Value) -> Option<()> {
     let status = finished(&done);
     let forgotten = shift.ledger.forget_purged(&json!({
         "at_ms": now_ms(),
+        "thread_id": text(doomed, "thread_id"),
         "topic_id": text(doomed, "topic_id"),
     }));
     if status == SUCCESS {

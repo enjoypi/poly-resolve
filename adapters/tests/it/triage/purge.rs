@@ -1,10 +1,11 @@
 use serde_json::json;
 
-use super::rig::{QUICK, SHORT, calls, one, seed, start, table};
+use super::rig::{LATER, QUICK, SECOND, SHORT, calls, one, seed, seed_from, start, table};
 use crate::support::Sandbox;
 
 const AGED: &str =
     "UPDATE topics SET state = 'archived', last_at_ms = 1; UPDATE messages SET occurred_at_ms = 1;";
+const ATTEMPTS: u32 = 2;
 const SOON: u64 = 1;
 const TEXTS: &str = "SELECT m.text || '|' || m.raw || '|' || (m.purged_at_ms > 0) || '|' || l.text AS item FROM messages m JOIN lines l ON l.key = m.key ORDER BY m.key";
 
@@ -57,6 +58,26 @@ async fn interrupted_session_purge_is_retried() {
 }
 
 #[tokio::test]
+async fn merged_away_sessions_are_purged_too() {
+    let sandbox = Sandbox::new("purge-merged").unwrap();
+    seed(&sandbox, &one()).unwrap();
+    start(&sandbox, &json!({}), SHORT).await.unwrap();
+    sandbox
+        .seed("INSERT INTO topic_aliases VALUES ('X9', 'T1');")
+        .unwrap();
+    sandbox.seed(AGED).unwrap();
+    let patch = json!({"topics": {"retain": {"after_ms": SOON}}});
+    start(&sandbox, &patch, QUICK).await.unwrap();
+    let log = sandbox.read("purge-log.txt").unwrap();
+    assert!(
+        log.contains("purge X9\n") && log.contains("purge T1\n"),
+        "{log}"
+    );
+    start(&sandbox, &patch, QUICK).await.unwrap();
+    assert_eq!(calls(&sandbox, "purge").unwrap(), 2);
+}
+
+#[tokio::test]
 async fn open_topics_keep_their_text() {
     let sandbox = Sandbox::new("purge-open").unwrap();
     seed(&sandbox, &one()).unwrap();
@@ -88,4 +109,47 @@ async fn reopened_topics_note_the_purged_messages() {
     assert_eq!(sandbox.read("codex-args.txt").unwrap(), "codex -\n");
     let prompt = sandbox.read("codex-stdin.txt").unwrap();
     assert!(prompt.contains("1 held: purged"), "{prompt}");
+}
+
+#[tokio::test]
+async fn retired_sessions_are_purged_with_the_topic() {
+    let sandbox = Sandbox::new("purge-retired").unwrap();
+    seed(&sandbox, &one()).unwrap();
+    start(&sandbox, &json!({}), SHORT).await.unwrap();
+    seed_from(&sandbox, &[(SECOND, "u1", "c1", "still down")], LATER).unwrap();
+    let dropped = json!({"codex": {"env": {"FAKE_CODEX": "resume_fail"}}});
+    start(&sandbox, &dropped, SHORT).await.unwrap();
+    assert_eq!(
+        table(&sandbox, "SELECT id AS item FROM topics").unwrap(),
+        ["T2"]
+    );
+    sandbox.seed(AGED).unwrap();
+    let patch = json!({"topics": {"retain": {"after_ms": SOON}}});
+    start(&sandbox, &patch, QUICK).await.unwrap();
+    let log = sandbox.read("purge-log.txt").unwrap();
+    assert!(
+        log.contains("purge T1\n") && log.contains("purge T2\n"),
+        "{log}"
+    );
+    assert_eq!(calls(&sandbox, "purge").unwrap(), 2);
+}
+
+#[tokio::test]
+async fn sessions_of_failed_analyses_are_purged() {
+    let sandbox = Sandbox::new("purge-broken").unwrap();
+    seed(&sandbox, &one()).unwrap();
+    let broken = json!({"codex": {"env": {"FAKE_CODEX": "broken"}}});
+    start(&sandbox, &broken, SHORT).await.unwrap();
+    assert_eq!(
+        calls(&sandbox, "codex").unwrap(),
+        usize::try_from(ATTEMPTS).unwrap()
+    );
+    sandbox.seed(AGED).unwrap();
+    let patch = json!({"topics": {"retain": {"after_ms": SOON}}});
+    start(&sandbox, &patch, QUICK).await.unwrap();
+    let log = sandbox.read("purge-log.txt").unwrap();
+    assert!(
+        log.contains("purge T1\n") && log.contains("purge T2\n"),
+        "{log}"
+    );
 }
